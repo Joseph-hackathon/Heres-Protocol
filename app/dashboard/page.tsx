@@ -13,13 +13,13 @@ import {
   Signal,
   User,
 } from 'lucide-react'
-import { Connection, PublicKey } from '@solana/web3.js'
+import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG, getExplorerUrl } from '@/constants'
 import { getEnhancedTransactions } from '@/lib/helius'
 import { initFeeConfig } from '@/lib/solana'
-import { getFeeConfigPDA } from '@/lib/program'
+import { getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
 
 type CapsuleEvent = {
@@ -54,6 +54,11 @@ type CapsuleRow = {
 }
 
 const formatNumber = (value: number) => value.toLocaleString('en-US')
+const formatSolAmount = (lamports: number, fractionDigits = 2) =>
+  (lamports / LAMPORTS_PER_SOL).toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits,
+  })
 
 const formatDuration = (seconds: number | null) => {
   if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '...'
@@ -405,6 +410,21 @@ export default function DashboardPage() {
     expired: 0,
     proofs: 0,
     successRate: 0,
+    totalValueSecuredLamports: 0,
+    totalValueExecutedLamports: 0,
+    activeValueLockedLamports: 0,
+  })
+
+  const normalizeSummary = (source: any) => ({
+    total: Number(source?.total || 0),
+    active: Number(source?.active || 0),
+    executed: Number(source?.executed || 0),
+    expired: Number(source?.expired || 0),
+    proofs: Number(source?.proofs || 0),
+    successRate: Number(source?.successRate || 0),
+    totalValueSecuredLamports: Number(source?.totalValueSecuredLamports || 0),
+    totalValueExecutedLamports: Number(source?.totalValueExecutedLamports || 0),
+    activeValueLockedLamports: Number(source?.activeValueLockedLamports || 0),
   })
 
   useEffect(() => {
@@ -497,14 +517,7 @@ export default function DashboardPage() {
         if (snapshot?.capsules && snapshot?.summary) {
           if (isMounted) {
             setCapsules(snapshot.capsules)
-            setSummary({
-              total: Number(snapshot.summary.total || 0),
-              active: Number(snapshot.summary.active || 0),
-              executed: Number(snapshot.summary.executed || 0),
-              expired: Number(snapshot.summary.expired || 0),
-              proofs: Number(snapshot.summary.proofs || 0),
-              successRate: Number(snapshot.summary.successRate || 0),
-            })
+            setSummary(normalizeSummary(snapshot.summary))
             setLastUpdated(typeof snapshot.timestamp === 'number' ? snapshot.timestamp : Date.now())
             setError(null)
 
@@ -512,14 +525,7 @@ export default function DashboardPage() {
               sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
                 data: {
                   capsules: snapshot.capsules,
-                  summary: {
-                    total: Number(snapshot.summary.total || 0),
-                    active: Number(snapshot.summary.active || 0),
-                    executed: Number(snapshot.summary.executed || 0),
-                    expired: Number(snapshot.summary.expired || 0),
-                    proofs: Number(snapshot.summary.proofs || 0),
-                    successRate: Number(snapshot.summary.successRate || 0),
-                  },
+                  summary: normalizeSummary(snapshot.summary),
                 },
                 timestamp: typeof snapshot.timestamp === 'number' ? snapshot.timestamp : Date.now(),
               }))
@@ -769,14 +775,45 @@ export default function DashboardPage() {
             return true
           })
 
-        const totalEventSignatures = eventRows.length
-        const executedEventSignatures = eventRows.filter((row) => row.status === 'Executed').length
-
+        const totalCreatedCapsules = eventRows.filter((row) => row.status === 'Created').length
         const activeCapsules = capsuleRows.filter((capsule) => capsule.status === 'Active').length
         const executedCapsules = capsuleRows.filter((capsule) => capsule.status === 'Executed').length
         const expiredCapsules = capsuleRows.filter((capsule) => capsule.status === 'Expired').length
         const successRate =
           totalProofsSubmitted > 0 ? (verifiedProofs / totalProofsSubmitted) * 100 : 0
+        const totalValueSecuredLamports = transactions.reduce((sum, record) => {
+          const locked = (record.logs || []).reduce((logSum: number, log: string) => {
+            const amount = log.match(/Locked (\d+) lamports in vault/i)?.[1]
+            return logSum + Number(amount || 0)
+          }, 0)
+          return sum + locked
+        }, 0)
+        const totalValueExecutedLamports = transactions.reduce((sum, record) => {
+          const transferred = (record.logs || []).reduce((logSum: number, log: string) => {
+            const amount = log.match(/Transferred (\d+) to beneficiary/i)?.[1]
+            return logSum + Number(amount || 0)
+          }, 0)
+          return sum + transferred
+        }, 0)
+
+        let activeValueLockedLamports = 0
+        if (capsuleRows.length > 0) {
+          try {
+            const rentExemptLamports = await connection.getMinimumBalanceForRentExemption(9)
+            const activeVaultPdas = capsuleRows
+              .filter((capsule) => capsule.status === 'Active' && capsule.owner)
+              .map((capsule) => getCapsuleVaultPDA(new PublicKey(capsule.owner!))[0])
+            if (activeVaultPdas.length > 0) {
+              const vaultInfos = await connection.getMultipleAccountsInfo(activeVaultPdas)
+              activeValueLockedLamports = vaultInfos.reduce(
+                (sum, accountInfo) => sum + Math.max(0, (accountInfo?.lamports || 0) - rentExemptLamports),
+                0
+              )
+            }
+          } catch {
+            activeValueLockedLamports = 0
+          }
+        }
 
         const combinedRows: CapsuleRow[] = [...capsuleRows, ...eventRows].sort((a, b) => {
           const aTime = a.lastActivityMs || a.executedAtMs || 0
@@ -786,22 +823,25 @@ export default function DashboardPage() {
 
         if (isMounted) {
           const summaryData = {
-            total: totalEventSignatures,
+            total: Math.max(totalCreatedCapsules, decodedCapsules.length),
             active: activeCapsules,
-            executed: executedEventSignatures,
+            executed: executedCapsules,
             expired: expiredCapsules,
             proofs: verifiedProofs,
             successRate,
+            totalValueSecuredLamports,
+            totalValueExecutedLamports,
+            activeValueLockedLamports,
           }
           setCapsules(combinedRows)
-          setSummary(summaryData)
+          setSummary(normalizeSummary(summaryData))
           setLastUpdated(Date.now())
           setError(null)
 
           // Cache to sessionStorage
           try {
             sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
-              data: { capsules: combinedRows, summary: summaryData },
+              data: { capsules: combinedRows, summary: normalizeSummary(summaryData) },
               timestamp: Date.now(),
             }))
           } catch { /* ignore quota errors */ }
@@ -854,26 +894,34 @@ export default function DashboardPage() {
   const pagedCapsules = filteredCapsules.slice(pageStart, pageStart + pageSize)
 
   const totalBase = Math.max(summary.total, 1)
+  const trackedCapsules = summary.active + summary.executed + summary.expired
   const activeDelta = (summary.active / totalBase) * 100
   const executedDelta = (summary.executed / totalBase) * 100
-  const proofDelta = summary.successRate
-  const totalDelta = ((summary.active + summary.proofs) / totalBase) * 100
+  const trackedDelta = (trackedCapsules / totalBase) * 100
+  const lockedSolDelta =
+    summary.totalValueSecuredLamports > 0
+      ? (summary.activeValueLockedLamports / summary.totalValueSecuredLamports) * 100
+      : 0
+  const executedSolDelta =
+    summary.totalValueSecuredLamports > 0
+      ? (summary.totalValueExecutedLamports / summary.totalValueSecuredLamports) * 100
+      : 0
 
   const statCards = [
     {
-      label: 'Total Capsule Events',
+      label: 'All-Time Capsules',
       value: formatNumber(summary.total),
-      metaLabel: 'Active + Verified',
-      metaValue: formatNumber(summary.active + summary.proofs),
-      delta: formatDelta(totalDelta),
+      metaLabel: 'Currently tracked',
+      metaValue: formatNumber(trackedCapsules),
+      delta: formatDelta(trackedDelta),
       accent: 'cyan' as const,
       linePath: 'M8 80 C28 18, 54 70, 74 40 S112 28, 132 20',
     },
     {
       label: 'Active Capsules',
       value: formatNumber(summary.active),
-      metaLabel: 'Live on dashboard',
-      metaValue: `${activeDelta.toFixed(1)}%`,
+      metaLabel: 'Currently locked',
+      metaValue: `${formatSolAmount(summary.activeValueLockedLamports)} SOL`,
       delta: formatDelta(activeDelta),
       accent: 'cyan' as const,
       linePath: 'M8 78 C24 62, 40 44, 58 38 S92 34, 112 20 S126 12, 132 14',
@@ -881,20 +929,20 @@ export default function DashboardPage() {
     {
       label: 'Executed Capsules',
       value: formatNumber(summary.executed),
-      metaLabel: 'Execution share',
-      metaValue: `${executedDelta.toFixed(1)}%`,
+      metaLabel: 'Lifetime transferred',
+      metaValue: `${formatSolAmount(summary.totalValueExecutedLamports)} SOL`,
       delta: formatDelta(executedDelta),
       accent: 'purple' as const,
       linePath: 'M8 84 C28 66, 42 76, 58 56 S86 32, 100 30 S120 18, 132 12',
     },
     {
-      label: 'PER (TEE) Verified',
-      value: formatNumber(summary.proofs),
-      metaLabel: 'Proof success rate',
-      metaValue: `${proofDelta.toFixed(1)}%`,
-      delta: formatDelta(proofDelta),
-      accent: 'cyan' as const,
-      linePath: 'M8 82 C24 70, 40 48, 58 52 S86 42, 100 26 S122 18, 132 8',
+      label: 'Total SOL Secured',
+      value: `${formatSolAmount(summary.totalValueSecuredLamports)} SOL`,
+      metaLabel: 'Still locked',
+      metaValue: `${formatSolAmount(summary.activeValueLockedLamports)} SOL`,
+      delta: formatDelta(executedSolDelta || lockedSolDelta),
+      accent: 'purple' as const,
+      linePath: 'M8 84 C26 72, 44 62, 58 44 S84 24, 102 24 S122 16, 132 10',
     },
   ]
 
