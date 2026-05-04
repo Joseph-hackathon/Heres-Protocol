@@ -38,9 +38,20 @@ export function getAssetMintEnvKey(symbol: string): string {
 }
 
 export function getAssetMintFromEnv(symbol: string): string | null {
-  const genericKey = getAssetMintEnvKey(symbol)
-  const legacyDevnetKey = `NEXT_PUBLIC_${symbol}_DEVNET_MINT`
-  const value = process.env[genericKey] || process.env[legacyDevnetKey]
+  // Next.js only exposes NEXT_PUBLIC_* values reliably in client bundles when accessed statically.
+  // Avoid dynamic process.env[key] lookups here or token mints will appear unset in the browser UI.
+  let value: string | undefined
+  switch (symbol) {
+    case 'BTC':
+      value = process.env.NEXT_PUBLIC_BTC_MINT || process.env.NEXT_PUBLIC_BTC_DEVNET_MINT
+      break
+    case 'ETH':
+      value = process.env.NEXT_PUBLIC_ETH_MINT || process.env.NEXT_PUBLIC_ETH_DEVNET_MINT
+      break
+    default:
+      value = process.env[getAssetMintEnvKey(symbol)]
+      break
+  }
   if (!value || !value.trim()) return null
   return value.trim()
 }
