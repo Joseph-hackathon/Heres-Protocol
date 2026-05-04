@@ -2,16 +2,25 @@ import 'server-only'
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import path from 'path'
-import { CreDeliveryLedgerRecord, CreSecretRecord } from '@/lib/cre/types'
+import {
+  CreDeliveryLedgerRecord,
+  CreReminderDeliveryRecord,
+  CreReminderRecord,
+  CreSecretRecord,
+} from '@/lib/cre/types'
 
 type CreStoreState = {
   secrets: Map<string, CreSecretRecord>
   deliveries: Map<string, CreDeliveryLedgerRecord>
+  reminders: Map<string, CreReminderRecord>
+  reminderDeliveries: Map<string, CreReminderDeliveryRecord>
 }
 
 type PersistedCreStoreState = {
   secrets: CreSecretRecord[]
   deliveries: CreDeliveryLedgerRecord[]
+  reminders: CreReminderRecord[]
+  reminderDeliveries: CreReminderDeliveryRecord[]
 }
 
 declare global {
@@ -31,6 +40,8 @@ function loadStateFromDisk(): CreStoreState {
     return {
       secrets: new Map<string, CreSecretRecord>(),
       deliveries: new Map<string, CreDeliveryLedgerRecord>(),
+      reminders: new Map<string, CreReminderRecord>(),
+      reminderDeliveries: new Map<string, CreReminderDeliveryRecord>(),
     }
   }
 
@@ -38,15 +49,21 @@ function loadStateFromDisk(): CreStoreState {
     const parsed = JSON.parse(readFileSync(storePath, 'utf8')) as PersistedCreStoreState
     const secrets = Array.isArray(parsed.secrets) ? parsed.secrets : []
     const deliveries = Array.isArray(parsed.deliveries) ? parsed.deliveries : []
+    const reminders = Array.isArray(parsed.reminders) ? parsed.reminders : []
+    const reminderDeliveries = Array.isArray(parsed.reminderDeliveries) ? parsed.reminderDeliveries : []
 
     return {
       secrets: new Map(secrets.map((entry) => [entry.secretRef, entry])),
       deliveries: new Map(deliveries.map((entry) => [entry.idempotencyKey, entry])),
+      reminders: new Map(reminders.map((entry) => [entry.reminderId, entry])),
+      reminderDeliveries: new Map(reminderDeliveries.map((entry) => [entry.idempotencyKey, entry])),
     }
   } catch {
     return {
       secrets: new Map<string, CreSecretRecord>(),
       deliveries: new Map<string, CreDeliveryLedgerRecord>(),
+      reminders: new Map<string, CreReminderRecord>(),
+      reminderDeliveries: new Map<string, CreReminderDeliveryRecord>(),
     }
   }
 }
@@ -59,6 +76,8 @@ function persistState(state: CreStoreState): void {
   const data: PersistedCreStoreState = {
     secrets: Array.from(state.secrets.values()),
     deliveries: Array.from(state.deliveries.values()),
+    reminders: Array.from(state.reminders.values()),
+    reminderDeliveries: Array.from(state.reminderDeliveries.values()),
   }
 
   const tmpPath = `${storePath}.tmp`
@@ -93,6 +112,31 @@ export function getCreSecret(secretRef: string): CreSecretRecord | null {
 export function listCreSecrets(): CreSecretRecord[] {
   const state = getState()
   return Array.from(state.secrets.values())
+}
+
+export function upsertCreReminder(reminder: CreReminderRecord): CreReminderRecord {
+  const state = getState()
+  state.reminders.set(reminder.reminderId, reminder)
+  persistState(state)
+  return reminder
+}
+
+export function getCreReminder(reminderId: string): CreReminderRecord | null {
+  const state = getState()
+  return state.reminders.get(reminderId) ?? null
+}
+
+export function getCreReminderByCapsule(capsuleAddress: string): CreReminderRecord | null {
+  const state = getState()
+  for (const reminder of state.reminders.values()) {
+    if (reminder.capsuleAddress === capsuleAddress) return reminder
+  }
+  return null
+}
+
+export function listCreReminders(): CreReminderRecord[] {
+  const state = getState()
+  return Array.from(state.reminders.values()).sort((a, b) => a.nextReminderAt - b.nextReminderAt)
 }
 
 export function upsertDeliveryLedger(
@@ -137,6 +181,52 @@ export function getDeliveryLedger(idempotencyKey: string): CreDeliveryLedgerReco
 export function listDeliveryByCapsule(capsuleAddress: string): CreDeliveryLedgerRecord[] {
   const state = getState()
   return Array.from(state.deliveries.values())
+    .filter((entry) => entry.capsuleAddress === capsuleAddress)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function upsertReminderDeliveryLedger(
+  idempotencyKey: string,
+  patch: Partial<CreReminderDeliveryRecord> & {
+    reminderId: string
+    capsuleAddress: string
+    owner?: string
+    recipientEmail?: string
+    scheduledAt: number
+    status: CreReminderDeliveryRecord['status']
+  }
+): CreReminderDeliveryRecord {
+  const state = getState()
+  const now = Date.now()
+  const existing = state.reminderDeliveries.get(idempotencyKey)
+  const next: CreReminderDeliveryRecord = {
+    idempotencyKey,
+    reminderId: patch.reminderId,
+    capsuleAddress: patch.capsuleAddress,
+    owner: coalesceNonEmpty(patch.owner, existing?.owner),
+    recipientEmail: coalesceNonEmpty(patch.recipientEmail, existing?.recipientEmail),
+    scheduledAt: patch.scheduledAt,
+    status: patch.status,
+    attempts: patch.attempts ?? existing?.attempts ?? 0,
+    providerMessageId: patch.providerMessageId ?? existing?.providerMessageId,
+    lastError: patch.lastError ?? existing?.lastError,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  }
+
+  state.reminderDeliveries.set(idempotencyKey, next)
+  persistState(state)
+  return next
+}
+
+export function getReminderDeliveryLedger(idempotencyKey: string): CreReminderDeliveryRecord | null {
+  const state = getState()
+  return state.reminderDeliveries.get(idempotencyKey) ?? null
+}
+
+export function listReminderDeliveriesByCapsule(capsuleAddress: string): CreReminderDeliveryRecord[] {
+  const state = getState()
+  return Array.from(state.reminderDeliveries.values())
     .filter((entry) => entry.capsuleAddress === capsuleAddress)
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }

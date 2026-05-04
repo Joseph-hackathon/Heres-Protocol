@@ -1,4 +1,9 @@
-export type CreSignedAction = 'register-secret' | 'delivery-status' | 'dispatch'
+export type CreSignedAction =
+  | 'register-secret'
+  | 'delivery-status'
+  | 'dispatch'
+  | 'register-reminder'
+  | 'reminder-status'
 
 type BuildSignedMessageInput = {
   action: CreSignedAction

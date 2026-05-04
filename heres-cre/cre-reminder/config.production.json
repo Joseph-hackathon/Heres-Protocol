@@ -1,0 +1,6 @@
+{
+  "callbackUrl": "https://heres.vercel.app/api/cre/reminder-callback",
+  "callbackAuthHeader": "",
+  "providerMessagePrefix": "cre-reminder-prod",
+  "forceFailure": false
+}

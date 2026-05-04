@@ -116,6 +116,7 @@ export default function CreatePage() {
   // Intent Statement email delivery (CRE)
   const [creEmail, setCreEmail] = useState('')
   const [creUnlockCode, setCreUnlockCode] = useState('')
+  const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
   // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
   useEffect(() => {
@@ -569,25 +570,43 @@ export default function CreatePage() {
 
       if (publicKey) {
         const [capsulePDA] = getCapsulePDA(publicKey)
-        try {
-          await fetch('/api/intent-reminder/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              capsuleAddress: capsulePDA.toBase58(),
+        if (creReminderEnabled) {
+          try {
+            const reminderTimestamp = Date.now()
+            const reminderSignatureMessage = buildCreSignedMessage({
+              action: 'register-reminder',
               owner: publicKey.toBase58(),
-              recipientEmail: normalizedEmail,
-              assetSymbol: tokenAssetConfig.symbol,
-              assetLabel: tokenAssetConfig.label,
-              totalAmount: capsuleType === 'token' ? totalAmount : undefined,
-              beneficiaryCount: capsuleType === 'token' ? beneficiaries.filter((b) => b.address.trim()).length : nftRecipients.filter((r) => r.address.trim()).length,
-              inactivityLabel: formatInactivityLabel(inactivityDays, inactivityUnit) || 'Not configured',
-              delayDays: parseInt(delayDays, 10) || 0,
-              createdAt: Date.now(),
-            }),
-          })
-        } catch (reminderErr) {
-          console.warn('[Reminder] Failed to register recurring reminder:', reminderErr)
+              capsuleAddress: capsulePDA.toBase58(),
+              timestamp: reminderTimestamp,
+              recipientEmailHash,
+            })
+            const reminderSignatureBytes = await signMessage(new TextEncoder().encode(reminderSignatureMessage))
+            const reminderSignature = bytesToBase64(reminderSignatureBytes)
+
+            await fetch('/api/intent-reminder/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                capsuleAddress: capsulePDA.toBase58(),
+                owner: publicKey.toBase58(),
+                recipientEmail: normalizedEmail,
+                assetSymbol: tokenAssetConfig.symbol,
+                assetLabel: tokenAssetConfig.label,
+                totalAmount: capsuleType === 'token' ? totalAmount : undefined,
+                beneficiaryCount:
+                  capsuleType === 'token'
+                    ? beneficiaries.filter((b) => b.address.trim()).length
+                    : nftRecipients.filter((r) => r.address.trim()).length,
+                inactivityLabel: formatInactivityLabel(inactivityDays, inactivityUnit) || 'Not configured',
+                delayDays: parseInt(delayDays, 10) || 0,
+                createdAt: Date.now(),
+                timestamp: reminderTimestamp,
+                signature: reminderSignature,
+              }),
+            })
+          } catch (reminderErr) {
+            console.warn('[Reminder] Failed to register recurring reminder:', reminderErr)
+          }
         }
       }
 
@@ -1478,6 +1497,20 @@ export default function CreatePage() {
                       />
                       <p className="mt-2 text-xs text-Heres-muted">This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload.</p>
                     </div>
+                    <label className="flex items-start gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={creReminderEnabled}
+                        onChange={(e) => setCreReminderEnabled(e.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-Heres-border bg-Heres-surface text-Heres-accent focus:ring-Heres-accent/40"
+                      />
+                      <span className="space-y-1">
+                        <span className="block text-sm font-medium text-Heres-white">Send recurring reminder emails before execution</span>
+                        <span className="block text-xs text-Heres-muted">
+                          Heres will use Chainlink CRE to remind the representative about this capsule on a monthly cadence until the capsule is executed or deactivated.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </div>
 
@@ -1582,6 +1615,12 @@ export default function CreatePage() {
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Representative</span>
                         <span className="max-w-[180px] truncate font-medium text-Heres-white">{creEmail || 'Pending'}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-Heres-muted">Reminder Emails</span>
+                        <span className={`font-medium ${creReminderEnabled ? 'text-Heres-accent' : 'text-Heres-muted'}`}>
+                          {creReminderEnabled ? 'Enabled' : 'Off'}
+                        </span>
                       </div>
                       <div className="border-t border-Heres-border pt-4">
                         <button onClick={simulateExecution} className="btn-secondary mb-3 flex w-full items-center justify-center gap-2 py-3.5">
@@ -1699,6 +1738,14 @@ export default function CreatePage() {
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
                     <p className="mb-1 text-xs text-Heres-accent">Intent Statement Delivery</p>
                     <p className="text-Heres-white">An encrypted intent statement package will be sent to {creEmail || 'representative email'} when execution is confirmed.</p>
+                  </div>
+                  <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                    <p className="mb-1 text-xs text-Heres-accent">Reminder Cadence</p>
+                    <p className="text-Heres-white">
+                      {creReminderEnabled
+                        ? `Monthly reminder emails will continue to ${creEmail || 'the representative'} until the capsule executes or is deactivated.`
+                        : 'Recurring reminder emails are disabled for this capsule.'}
+                    </p>
                   </div>
                   <div className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 p-4">
                     <p className="flex items-center gap-2 font-semibold text-Heres-accent">

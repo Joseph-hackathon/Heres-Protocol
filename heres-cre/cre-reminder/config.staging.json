@@ -1,0 +1,6 @@
+{
+  "callbackUrl": "http://127.0.0.1:3000/api/cre/reminder-callback",
+  "callbackAuthHeader": "",
+  "providerMessagePrefix": "cre-reminder-staging",
+  "forceFailure": false
+}
