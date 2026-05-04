@@ -72,16 +72,6 @@ function mask(value) {
   return `${value.slice(0, 4)}...${value.slice(-4)}`
 }
 
-function trimTrailingSlash(value) {
-  return value.replace(/\/+$/, '')
-}
-
-function getConfiguredBaseUrl(envContent) {
-  const appBaseUrl = envContent.match(/^APP_BASE_URL=(.*)$/m)?.[1]?.trim()
-  const indexerBaseUrl = envContent.match(/^INDEXER_BASE_URL=(.*)$/m)?.[1]?.trim()
-  return trimTrailingSlash(appBaseUrl || indexerBaseUrl || 'http://127.0.0.1:3000')
-}
-
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const mode = (args.mode || 'mock').toLowerCase()
@@ -105,21 +95,20 @@ function main() {
 
   ensureEnvFile()
   let envContent = fs.readFileSync(ENV_PATH, 'utf8')
-  const mockBaseUrl = getConfiguredBaseUrl(envContent)
 
   const signingSecret = args['signing-secret'] || randomSecret()
   const callbackSecret = args['callback-secret'] || ''
   const dispatchSecret = args['dispatch-secret'] || randomSecret()
 
   if (mode === 'mock') {
-    envContent = upsertEnv(envContent, 'CHAINLINK_CRE_WEBHOOK_URL', `${mockBaseUrl}/api/mock/cre`)
+    envContent = upsertEnv(envContent, 'CHAINLINK_CRE_WEBHOOK_URL', 'http://127.0.0.1:3000/api/mock/cre')
     envContent = upsertEnv(envContent, 'CHAINLINK_CRE_API_KEY', '')
     envContent = upsertEnv(envContent, 'CHAINLINK_CRE_SIGNING_SECRET', args['signing-secret'] || 'dev-cre-signing-secret')
     envContent = upsertEnv(envContent, 'CHAINLINK_CRE_CALLBACK_SECRET', args['callback-secret'] || 'dev-cre-callback-secret')
     envContent = upsertEnv(envContent, 'CRE_DISPATCH_SECRET', args['dispatch-secret'] || 'dev-cre-dispatch-secret')
     envContent = upsertEnv(envContent, 'MOCK_CRE_AUTO_CALLBACK', 'true')
     envContent = upsertEnv(envContent, 'MOCK_CRE_FORCE_FAIL', 'false')
-    envContent = upsertEnv(envContent, 'MOCK_CRE_CALLBACK_BASE_URL', mockBaseUrl)
+    envContent = upsertEnv(envContent, 'MOCK_CRE_CALLBACK_BASE_URL', 'http://127.0.0.1:3000')
   } else {
     envContent = upsertEnv(envContent, 'CHAINLINK_CRE_WEBHOOK_URL', args['webhook-url'])
     envContent = upsertEnv(envContent, 'CHAINLINK_CRE_API_KEY', args['api-key'] || '')
@@ -134,7 +123,7 @@ function main() {
 
   console.log(`CRE setup completed: ${mode}`)
   console.log(`- file: ${ENV_PATH}`)
-  console.log(`- CHAINLINK_CRE_WEBHOOK_URL: ${mode === 'mock' ? `${mockBaseUrl}/api/mock/cre` : args['webhook-url']}`)
+  console.log(`- CHAINLINK_CRE_WEBHOOK_URL: ${mode === 'mock' ? 'http://127.0.0.1:3000/api/mock/cre' : args['webhook-url']}`)
   console.log(`- CHAINLINK_CRE_API_KEY: ${args['api-key'] ? '(set)' : '(empty)'}`)
   console.log(`- CHAINLINK_CRE_SIGNING_SECRET: ${mask(mode === 'mock' ? args['signing-secret'] || 'dev-cre-signing-secret' : signingSecret)}`)
   console.log(`- CHAINLINK_CRE_CALLBACK_SECRET: ${mask(mode === 'mock' ? args['callback-secret'] || 'dev-cre-callback-secret' : callbackSecret)}`)

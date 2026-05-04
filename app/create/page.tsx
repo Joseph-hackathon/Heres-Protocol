@@ -2,21 +2,28 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
-import type { WalletName } from '@solana/wallet-adapter-base'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Database, Coins, ImageIcon, ExternalLink } from 'lucide-react'
+import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink } from 'lucide-react'
 
 // Dynamic import to prevent hydration errors
 const WalletMultiButton = dynamic(
   async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
   { ssr: false }
 )
-import Link from 'next/link'
 import { createCapsule, getCapsule, delegateCapsule, scheduleExecuteIntent, registerCapsuleOwnerForAutomation } from '@/lib/solana'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
 import { Beneficiary } from '@/types'
-import { DEFAULT_VALUES, STORAGE_KEYS, SOLANA_CONFIG, PLATFORM_FEE, MAGICBLOCK_ER, MAX_CAPSULE_MODIFICATIONS } from '@/constants'
+import {
+  DEFAULT_VALUES,
+  STORAGE_KEYS,
+  SOLANA_CONFIG,
+  PLATFORM_FEE,
+  MAGICBLOCK_ER,
+  MAX_CAPSULE_MODIFICATIONS,
+  getAssetMintEnvKey,
+} from '@/constants'
 import { encodeIntentData, daysToSeconds } from '@/utils/intent'
+import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
 import {
@@ -28,6 +35,7 @@ import {
 } from '@/utils/validation'
 import { getSolanaConnection, isValidSolanaAddress } from '@/config/solana'
 import { PublicKey } from '@solana/web3.js'
+import { SectionEyebrow, ServiceAccordionSection, ServiceMetaCard, ServicePageHeader } from '@/components/ui/service-page'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
@@ -36,12 +44,52 @@ type InactivityUnit = 'days' | 'minutes'
 
 export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?: string }
 
+const CREATE_STEPS = [
+  { key: 'asset', label: 'Select Asset Type' },
+  { key: 'beneficiary', label: 'Configure Beneficiaries' },
+  { key: 'intent', label: 'Declare Your Intent' },
+  { key: 'review', label: 'Review & Create' },
+] as const
+
+const CREATE_FAQS = [
+  {
+    key: 'capsule',
+    question: 'What Is a Capsule?',
+    answer: 'A capsule is an on-chain instruction set that defines who receives your assets and under which inactivity conditions execution can happen.',
+  },
+  {
+    key: 'intent',
+    question: 'What Is Intent?',
+    answer: 'Intent is the human-readable instruction attached to your capsule. It helps explain the purpose of the transfer and can be delivered securely to your representative.',
+  },
+  {
+    key: 'count',
+    question: 'How Many Capsules Can I Create at a time?',
+    answer: 'One wallet manages one active capsule flow at a time. After execution or deactivation, you can create or recreate another capsule.',
+  },
+  {
+    key: 'representative',
+    question: 'What Is a Representative?',
+    answer: 'A representative is the single email recipient who receives the encrypted intent package once execution is confirmed.',
+  },
+  {
+    key: 'beneficiaries',
+    question: 'Can I Change My Beneficiaries?',
+    answer: 'You can update beneficiaries while you still have modification quota remaining and the capsule has not reached a terminal state.',
+  },
+] as const
+
 export default function CreatePage() {
   const wallet = useWallet()
-  const { publicKey, connected, disconnect, select, wallets } = wallet
-  const [showWalletMenu, setShowWalletMenu] = useState(false)
+  const { publicKey, connected } = wallet
+  const [completedSections, setCompletedSections] = useState({
+    asset: false,
+    beneficiaries: false,
+    intent: false,
+  })
   const [intent, setIntent] = useState('')
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
+  const [selectedTokenAsset, setSelectedTokenAsset] = useState<SupportedAssetSymbol>('SOL')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([
     { chain: 'solana', address: '', amount: '', amountType: 'fixed', destinationChainSelector: '' }
   ])
@@ -57,6 +105,8 @@ export default function CreatePage() {
   const [error, setError] = useState<string | null>(null)
   const [existingCapsule, setExistingCapsule] = useState<boolean>(false)
   const [modifyCount, setModifyCount] = useState<number>(0)
+  const [openSection, setOpenSection] = useState<'asset' | 'beneficiaries' | 'intent' | 'review'>('asset')
+  const [openFaq, setOpenFaq] = useState<string | null>(CREATE_FAQS[0].key)
   // NFT flow
   const [nftList, setNftList] = useState<NftItem[]>([])
   const [nftListLoading, setNftListLoading] = useState(false)
@@ -66,17 +116,6 @@ export default function CreatePage() {
   // Intent Statement email delivery (CRE)
   const [creEmail, setCreEmail] = useState('')
   const [creUnlockCode, setCreUnlockCode] = useState('')
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement
-      if (showWalletMenu && !target.closest('.wallet-menu-container')) {
-        setShowWalletMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showWalletMenu])
 
   // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
   useEffect(() => {
@@ -179,6 +218,9 @@ export default function CreatePage() {
   }
 
   const supportsMinuteMode = SOLANA_CONFIG.NETWORK === 'devnet'
+  const tokenAssetConfig = getAssetConfig(selectedTokenAsset)
+  const tokenAssetUnit = tokenAssetConfig.symbol
+  const tokenAssetReady = isAssetConfigured(selectedTokenAsset)
 
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
@@ -283,6 +325,11 @@ export default function CreatePage() {
   }
 
   const validateBeneficiaries = (): boolean => {
+    if (!tokenAssetReady) {
+      alert(`${selectedTokenAsset} mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
+      return false
+    }
+
     if (!validateBeneficiaryAddresses(beneficiaries)) {
       alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x...).')
       return false
@@ -368,8 +415,8 @@ export default function CreatePage() {
     setError(null)
 
     try {
-
       const inactivityValueNum = parseInt(inactivityDays, 10)
+      const selectedMint = capsuleType === 'token' ? getAssetMintPublicKey(selectedTokenAsset) : undefined
       let intentData: Uint8Array
       let creMeta: {
         enabled: true
@@ -434,6 +481,8 @@ export default function CreatePage() {
           inactivityValue: inactivityValueNum,
           inactivityUnit,
           delayDays: parseInt(delayDays),
+          assetSymbol: selectedTokenAsset,
+          assetMint: tokenAssetConfig.mint,
           cre: creMeta,
         }
         intentData = new TextEncoder().encode(JSON.stringify(payload))
@@ -442,6 +491,8 @@ export default function CreatePage() {
           intent,
           beneficiaries,
           totalAmount,
+          assetSymbol: selectedTokenAsset,
+          assetMint: tokenAssetConfig.mint,
           inactivityDays: inactivityUnit === 'days' ? inactivityValueNum : 0,
           inactivityValue: inactivityValueNum,
           inactivityUnit,
@@ -465,7 +516,8 @@ export default function CreatePage() {
           hash = await recreateCapsule(
             wallet as any,
             inactivityPeriodSeconds,
-            intentData
+            intentData,
+            selectedMint
           )
         } else if (existingCapsule && existingCapsule.isActive) {
           // Active capsule exists — cannot create new one (on-chain constraint)
@@ -474,14 +526,16 @@ export default function CreatePage() {
           hash = await createCapsule(
             wallet as any,
             inactivityPeriodSeconds,
-            intentData
+            intentData,
+            selectedMint
           )
         }
       } else {
         hash = await createCapsule(
           wallet as any,
           inactivityPeriodSeconds,
-          intentData
+          intentData,
+          selectedMint
         )
       }
 
@@ -513,6 +567,30 @@ export default function CreatePage() {
         localStorage.setItem(txKey, hash)
       }
 
+      if (publicKey) {
+        const [capsulePDA] = getCapsulePDA(publicKey)
+        try {
+          await fetch('/api/intent-reminder/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              capsuleAddress: capsulePDA.toBase58(),
+              owner: publicKey.toBase58(),
+              recipientEmail: normalizedEmail,
+              assetSymbol: tokenAssetConfig.symbol,
+              assetLabel: tokenAssetConfig.label,
+              totalAmount: capsuleType === 'token' ? totalAmount : undefined,
+              beneficiaryCount: capsuleType === 'token' ? beneficiaries.filter((b) => b.address.trim()).length : nftRecipients.filter((r) => r.address.trim()).length,
+              inactivityLabel: formatInactivityLabel(inactivityDays, inactivityUnit) || 'Not configured',
+              delayDays: parseInt(delayDays, 10) || 0,
+              createdAt: Date.now(),
+            }),
+          })
+        } catch (reminderErr) {
+          console.warn('[Reminder] Failed to register recurring reminder:', reminderErr)
+        }
+      }
+
       if (ownerBase58) {
         setCurrentStep('Registering automation...')
         console.log('[Automation] Registering capsule owner for crank discovery...')
@@ -534,9 +612,9 @@ export default function CreatePage() {
 
       let delegatedToEr = false
 
-      // ===== Step 2: Delegate to ER (Asia devnet) =====
+      // ===== Step 2: Delegate to ER =====
       setCurrentStep('Delegating to ER...')
-      console.log('[Step 2/3] Delegating capsule to Asia ER validator...')
+      console.log('[Step 2/3] Delegating capsule to active ER validator...')
       for (let attempt = 0; attempt < 2 && !delegatedToEr; attempt++) {
         try {
           const delegateTx = await delegateCapsule(wallet as any, new PublicKey(MAGICBLOCK_ER.ACTIVE_VALIDATOR))
@@ -576,7 +654,7 @@ export default function CreatePage() {
       // ===== Step 3: Schedule Crank on ER =====
       if (delegatedToEr && erSynced && publicKey) {
         setCurrentStep('Scheduling crank...')
-        console.log('[Step 3/3] Scheduling crank on ER (Asia devnet)...')
+        console.log('[Step 3/3] Scheduling crank on ER...')
         let scheduled = false
         for (let attempt = 0; attempt < 3 && !scheduled; attempt++) {
           try {
@@ -658,236 +736,401 @@ export default function CreatePage() {
     }
   }
 
-
   const simulateExecution = () => {
     setShowSimulation(true)
   }
 
+  const hasAssetSelection = capsuleType !== null && (
+    capsuleType === 'token'
+      ? Boolean(totalAmount.trim())
+      : selectedNftMints.length > 0
+  )
+  const hasBeneficiaryDetails = capsuleType === 'token'
+    ? beneficiaries.some((b) => b.address.trim() && b.amount.trim()) && Boolean(inactivityDays)
+    : capsuleType === 'nft'
+      ? selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()) && Boolean(inactivityDays)
+      : false
+  const hasIntentDetails = Boolean(intent.trim() && isValidEmail(creEmail) && creUnlockCode.trim().length >= 6)
+  const canCompleteAsset = hasAssetSelection
+  const canCompleteBeneficiaries = hasBeneficiaryDetails
+  const canCompleteIntent = hasIntentDetails
+  const isCreateReady = Boolean(
+    connected &&
+    publicKey &&
+    hasAssetSelection &&
+    hasBeneficiaryDetails &&
+    hasIntentDetails &&
+    !isPending &&
+    modifyCount < MAX_CAPSULE_MODIFICATIONS &&
+    wallet.signMessage &&
+    isValidEmail(creEmail) &&
+    creUnlockCode.trim().length >= 6 &&
+    inactivityDays &&
+    parseInt(inactivityDays) > 0 &&
+    (
+      (capsuleType === 'token' && beneficiaries.length > 0 && beneficiaries.every((b) => !b.address || !b.amount ? false : true)) ||
+      (capsuleType === 'nft' && selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()))
+    )
+  )
+  const currentStepIndex = !completedSections.asset
+    ? 1
+    : !completedSections.beneficiaries
+      ? 2
+      : !completedSections.intent
+        ? 3
+        : 4
+  const currentStepMeta = !completedSections.asset
+    ? 'Choose what goes into the capsule first.'
+    : !completedSections.beneficiaries
+      ? 'Set recipients, timing, and secure delivery.'
+      : !completedSections.intent
+        ? 'Write the instruction beneficiaries will receive.'
+        : 'Review the final payload and create the capsule.'
+  const isFaqOpen = (key: string) => openFaq === key
+
+  useEffect(() => {
+    setCompletedSections((prev) => ({
+      asset: canCompleteAsset ? prev.asset : false,
+      beneficiaries: canCompleteBeneficiaries && canCompleteAsset ? prev.beneficiaries : false,
+      intent: canCompleteIntent && canCompleteBeneficiaries && canCompleteAsset ? prev.intent : false,
+    }))
+  }, [canCompleteAsset, canCompleteBeneficiaries, canCompleteIntent])
+
   return (
     <div className="min-h-screen bg-hero pt-24 pb-16">
-      {/* Mobile: Heres nav as horizontal strip */}
-      <div className="lg:hidden border-b border-Heres-border/50 bg-Heres-card/50 mb-6 -mt-2">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-Heres-muted mr-2">Heres</span>
-          <Link href="/create" className="rounded-lg px-3 py-1.5 text-sm font-medium bg-Heres-accent/20 text-Heres-accent border border-Heres-accent/40">
-            Create Capsule
-          </Link>
-          <Link href="/capsules" className="rounded-lg px-3 py-1.5 text-sm font-medium text-Heres-muted hover:text-Heres-white hover:bg-Heres-surface/80">
-            My Capsules
-          </Link>
-          <Link href="/dashboard" className="rounded-lg px-3 py-1.5 text-sm font-medium text-Heres-muted hover:text-Heres-white hover:bg-Heres-surface/80">
-            Dashboard
-          </Link>
-        </div>
-      </div>
-
-      {/* Left sidebar + main content */}
-      <div className="flex max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Left sidebar */}
-        <aside className="hidden lg:block w-56 shrink-0 pt-2">
-          <nav className="sticky top-24 space-y-1 rounded-2xl border border-Heres-border bg-Heres-card/80 backdrop-blur-xl p-3">
-            <p className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-Heres-muted">Heres</p>
-            <Link
-              href="/create"
-              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-Heres-accent bg-Heres-accent/10 border border-Heres-accent/30"
-            >
-              <Shield className="w-4 h-4 shrink-0" />
-              Create Capsule
-            </Link>
-            <Link
-              href="/capsules"
-              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-Heres-muted hover:text-Heres-white hover:bg-Heres-surface/80 transition-colors"
-            >
-              <User className="w-4 h-4 shrink-0" />
-              My Capsules
-            </Link>
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-Heres-muted hover:text-Heres-white hover:bg-Heres-surface/80 transition-colors"
-            >
-              <Database className="w-4 h-4 shrink-0" />
-              Dashboard
-            </Link>
-            <div className="border-t border-Heres-border my-2" />
-            <Link
-              href="/"
-              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-Heres-muted hover:text-Heres-white hover:bg-Heres-surface/80 transition-colors"
-            >
-              ??Back to Home
-            </Link>
-          </nav>
-        </aside>
-
-        {/* Main content - right of sidebar */}
-        <div className="flex-1 min-w-0 lg:pl-8">
-          <header className="mb-8">
-            <h1 className="text-3xl font-bold text-Heres-white sm:text-4xl">
-              Create Capsule
-            </h1>
-            <p className="mt-2 max-w-2xl text-Heres-muted">
-              Define your intent, set beneficiaries and conditions. Your capsule lives on Solana; delegate to Magicblock ER or PER (TEE) for private monitoring.
-            </p>
-            <p className="mt-1 text-xs text-Heres-muted/80">
-              Delegation defaults to TEE (Private Ephemeral Rollup) for confidential conditions.
-            </p>
-          </header>
-
-          {!connected ? (
-            <div className="card-Heres p-12 text-center">
-              <Shield className="mx-auto mb-6 h-16 w-16 text-Heres-accent" />
-              <h2 className="mb-4 text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
-              <p className="mb-8 text-Heres-muted">
-                Connect Phantom or another Solana wallet to create a capsule.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {connected && modifyCount >= MAX_CAPSULE_MODIFICATIONS && (
-                <div className="card-Heres p-6 border-red-500/40 bg-red-500/5">
-                  <div className="flex items-start gap-4">
-                    <Shield className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-red-400 mb-2">Modification Limit Reached</h3>
-                      <p className="text-Heres-muted">
-                        You have used all {MAX_CAPSULE_MODIFICATIONS} capsule modifications for this wallet. No further changes are allowed.
-                      </p>
-                    </div>
-                  </div>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <header className="mb-6">
+          <ServicePageHeader
+            eyebrow={<SectionEyebrow>Capsule Builder</SectionEyebrow>}
+            title="Create Capsule"
+            description="Build the asset payload, define beneficiaries, set trigger conditions, then encrypt the human instruction that accompanies the capsule."
+            statusLine={currentStepMeta}
+            badges={
+              <>
+                <span className="create-status-chip">
+                  <span className="create-status-chip__dot" />
+                  {SOLANA_CONFIG.NETWORK}
+                </span>
+                <span className="create-status-chip">
+                  <span className="create-status-chip__dot" />
+                  {capsuleType === 'token' ? `Asset: ${tokenAssetUnit}` : capsuleType === 'nft' ? `NFTs: ${selectedNftMints.length}` : 'Asset pending'}
+                </span>
+                <span className="create-status-chip">
+                  <span className="create-status-chip__dot" />
+                  PER (TEE) secured
+                </span>
+              </>
+            }
+            aside={
+              <div className="service-meta-card service-meta-card--accent p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-Heres-muted">Current Snapshot</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                  <ServiceMetaCard label="Asset" className="bg-Heres-surface/20 shadow-none">
+                    <p className="text-[15px] font-semibold text-Heres-white">
+                      {capsuleType === 'token' ? `${tokenAssetUnit} capsule` : capsuleType === 'nft' ? 'NFT capsule' : 'Not selected'}
+                    </p>
+                  </ServiceMetaCard>
+                  <ServiceMetaCard label="Recipients" className="bg-Heres-surface/20 shadow-none">
+                    <p className="text-[15px] font-semibold text-Heres-white">
+                      {capsuleType === 'token'
+                        ? beneficiaries.filter((b) => b.address.trim()).length
+                        : nftRecipients.filter((r) => r.address.trim()).length}
+                    </p>
+                  </ServiceMetaCard>
+                  <ServiceMetaCard label="Readiness" className="bg-Heres-surface/20 shadow-none">
+                    <p className={`text-[15px] font-semibold ${isCreateReady ? 'text-emerald-400' : 'text-Heres-accent'}`}>
+                      {isCreateReady ? 'Ready to create' : `Step ${currentStepIndex} of ${CREATE_STEPS.length}`}
+                    </p>
+                  </ServiceMetaCard>
                 </div>
-              )}
-
-              {connected && modifyCount > 0 && modifyCount < MAX_CAPSULE_MODIFICATIONS && (
-                <div className="rounded-lg border border-Heres-border bg-Heres-surface/50 px-4 py-3 text-sm text-Heres-muted">
-                  Capsule modifications used: <span className="text-Heres-white font-medium">{modifyCount}</span> / {MAX_CAPSULE_MODIFICATIONS}
-                </div>
-              )}
-
-              <div className="card-Heres p-6 sm:p-8">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                    <Shield className="w-5 h-5 text-Heres-accent" />
-                  </div>
-                  <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 1</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Intent Statement</h2>
-                    </div>
-                  </div>
-                <textarea
-                  value={intent}
-                  onChange={(e) => setIntent(e.target.value)}
-                  placeholder="If I am inactive for one year, transfer my assets to my family, and delegate DAO permissions to my co-founder."
-                  className="w-full h-32 rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 transition-colors resize-none"
-                />
-                <p className="text-sm text-Heres-muted mt-3">
-                  Describe your inheritance intent and executor notes. This is a support instruction, not a formal legal will.
-                </p>
               </div>
+            }
+          />
+          <div className="mt-4 h-1 w-full overflow-hidden rounded-full bg-Heres-surface/80">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-Heres-cyan via-Heres-cyan to-emerald-400 transition-all duration-500"
+              style={{ width: `${(currentStepIndex / CREATE_STEPS.length) * 100}%` }}
+            />
+          </div>
+          <div className="mt-3.5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {CREATE_STEPS.map((step, index) => {
+              const isCompleted = (
+                (step.key === 'asset' && completedSections.asset) ||
+                (step.key === 'beneficiary' && completedSections.beneficiaries) ||
+                (step.key === 'intent' && completedSections.intent) ||
+                (step.key === 'review' && isCreateReady)
+              )
+              const isCurrent = (
+                (step.key === 'asset' && !completedSections.asset) ||
+                (step.key === 'beneficiary' && completedSections.asset && !completedSections.beneficiaries) ||
+                (step.key === 'intent' && completedSections.beneficiaries && !completedSections.intent) ||
+                (step.key === 'review' && completedSections.intent)
+              )
+              return (
+                <button
+                  type="button"
+                  key={step.key}
+                  onClick={() => setOpenSection(
+                    step.key === 'asset'
+                      ? 'asset'
+                      : step.key === 'beneficiary'
+                        ? 'beneficiaries'
+                        : step.key === 'intent'
+                          ? 'intent'
+                          : 'review'
+                  )}
+                  className={`rounded-xl border px-3 py-2.5 transition-colors ${
+                    isCurrent
+                      ? 'border-Heres-accent/40 bg-Heres-accent/10'
+                      : isCompleted
+                        ? 'border-emerald-400/20 bg-emerald-400/5'
+                        : 'border-Heres-border bg-Heres-card/40'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className={`inline-flex h-5.5 w-5.5 items-center justify-center rounded-full text-[10px] font-semibold ${
+                      isCompleted
+                        ? 'bg-emerald-400 text-Heres-bg'
+                        : isCurrent
+                          ? 'bg-Heres-accent text-Heres-bg'
+                          : 'bg-Heres-surface text-Heres-muted'
+                    }`}>
+                      {index + 1}
+                    </span>
+                    <span className={`text-[12px] font-medium ${isCurrent ? 'text-Heres-white' : isCompleted ? 'text-emerald-300' : 'text-Heres-muted'}`}>
+                      {step.label}
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </header>
 
-              {/* Getting Started style: choose Token or NFT */}
-              <div className="card-Heres p-6 sm:p-8">
-                <h2 className="text-xl font-bold text-Heres-white mb-2">Choose asset type</h2>
-                <p className="text-sm text-Heres-muted mb-6">
-                  Follow these steps to create your capsule successfully. Select whether to transfer tokens (SOL) or NFTs.
-                </p>
+        <div className="space-y-5">
+          {!connected && (
+            <div className="card-Heres p-8 text-center">
+              <Shield className="mx-auto mb-5 h-14 w-14 text-Heres-accent" />
+              <h2 className="text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
+              <p className="mx-auto mt-3 max-w-2xl text-Heres-muted">
+                Connect Phantom or another Solana wallet to unlock capsule creation and NFT/token selection.
+              </p>
+              <div className="mt-6 flex justify-center">
+                <WalletMultiButton className="!h-11 !rounded-xl !bg-Heres-surface !px-5 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!bg-Heres-card active:scale-95" />
+              </div>
+            </div>
+          )}
+
+          {connected && modifyCount >= MAX_CAPSULE_MODIFICATIONS && (
+            <div className="card-Heres border-red-500/40 bg-red-500/5 p-6">
+              <div className="flex items-start gap-4">
+                <Shield className="mt-0.5 h-6 w-6 flex-shrink-0 text-red-400" />
+                <div className="flex-1">
+                  <h3 className="mb-2 text-lg font-semibold text-red-400">Modification Limit Reached</h3>
+                  <p className="text-Heres-muted">
+                    You have used all {MAX_CAPSULE_MODIFICATIONS} capsule modifications for this wallet. No further changes are allowed.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {connected && modifyCount > 0 && modifyCount < MAX_CAPSULE_MODIFICATIONS && (
+            <div className="rounded-lg border border-Heres-border bg-Heres-surface/50 px-4 py-3 text-sm text-Heres-muted">
+              Capsule modifications used: <span className="font-medium text-Heres-white">{modifyCount}</span> / {MAX_CAPSULE_MODIFICATIONS}
+            </div>
+          )}
+
+          <ServiceAccordionSection
+            step="Step 1"
+            title="Select Asset Type"
+            description="Select your preferred asset type."
+            open={openSection === 'asset'}
+            onToggle={() => setOpenSection((prev) => (prev === 'asset' ? 'beneficiaries' : 'asset'))}
+          >
+              <div>
                 <div className="flex flex-wrap gap-4">
                   <button
                     type="button"
-                    onClick={() => setCapsuleType('token')}
-                    className={`inline-flex items-center gap-3 rounded-xl border px-6 py-4 text-sm font-medium transition-colors ${capsuleType === 'token'
+                    onClick={() => {
+                      setCapsuleType('token')
+                      setCompletedSections((prev) => ({ ...prev, asset: false, beneficiaries: false, intent: false }))
+                    }}
+                    className={`inline-flex items-center gap-3 rounded-xl border px-5 py-3 text-sm font-medium transition-colors ${capsuleType === 'token'
                       ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
-                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'
-                      }`}
+                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'}`}
                   >
                     <Coins className="h-5 w-5 shrink-0" />
                     Token
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCapsuleType('nft')}
-                    className={`inline-flex items-center gap-3 rounded-xl border px-6 py-4 text-sm font-medium transition-colors ${capsuleType === 'nft'
+                    onClick={() => {
+                      setCapsuleType('nft')
+                      setCompletedSections((prev) => ({ ...prev, asset: false, beneficiaries: false, intent: false }))
+                    }}
+                    className={`inline-flex items-center gap-3 rounded-xl border px-5 py-3 text-sm font-medium transition-colors ${capsuleType === 'nft'
                       ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
-                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'
-                      }`}
+                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'}`}
                   >
                     <ImageIcon className="h-5 w-5 shrink-0" />
                     NFT
                     <ExternalLink className="h-4 w-4 shrink-0 opacity-70" />
                   </button>
                 </div>
-              </div>
 
-              {/* Token path: Step 2 Total Amount */}
-              {capsuleType === 'token' && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                      <User className="w-5 h-5 text-Heres-accent" />
-                    </div>
+                {capsuleType === 'token' && (
+                  <div className="mt-5 space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 2</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Total Token Amount</h2>
+                      <label className="mb-2 block text-sm text-Heres-muted">Asset</label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {SUPPORTED_TOKEN_ASSETS.map((asset) => {
+                          const configured = isAssetConfigured(asset.symbol)
+                          return (
+                            <button
+                              key={asset.symbol}
+                              type="button"
+                              onClick={() => configured && setSelectedTokenAsset(asset.symbol)}
+                              disabled={!configured}
+                              className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                                selectedTokenAsset === asset.symbol
+                                  ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
+                                  : configured
+                                    ? 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
+                                    : 'cursor-not-allowed border-Heres-border/60 bg-Heres-card/40 text-Heres-muted opacity-60'
+                              }`}
+                            >
+                              <p className="text-sm font-semibold">{asset.symbol}</p>
+                              <p className="text-xs text-Heres-muted">{asset.label}</p>
+                              {!configured && <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Env required</p>}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                  <label className="block text-sm text-Heres-muted mb-2">Total Amount (SOL)</label>
-                  <input
-                    type="number"
-                    value={totalAmount}
-                    onChange={(e) => {
-                      const value = e.target.value
-                      setTotalAmount(value)
-                      if (value && beneficiaries.some(b => b.amountType === 'percentage')) {
-                        const total = parseFloat(value)
-                        if (total > 0) {
-                          const updated = beneficiaries.map(b => {
-                            if (b.amountType === 'percentage' && b.amount) {
-                              const percentage = parseFloat(b.amount)
-                              return { ...b, amount: ((total * percentage) / 100).toFixed(6) }
+                    {!tokenAssetReady && (
+                      <p className="text-xs text-amber-300">
+                        {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid token mint for the active network.
+                      </p>
+                    )}
+                    <div>
+                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({tokenAssetUnit})</label>
+                      <input
+                        type="number"
+                        value={totalAmount}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setTotalAmount(value)
+                          if (value && beneficiaries.some((b) => b.amountType === 'percentage')) {
+                            const total = parseFloat(value)
+                            if (total > 0) {
+                              const updated = beneficiaries.map((b) => {
+                                if (b.amountType === 'percentage' && b.amount) {
+                                  const percentage = parseFloat(b.amount)
+                                  return { ...b, amount: ((total * percentage) / 100).toFixed(6) }
+                                }
+                                return b
+                              })
+                              setBeneficiaries(updated)
                             }
-                            return b
-                          })
-                          setBeneficiaries(updated)
-                        }
-                      }
-                    }}
-                    placeholder="0.0"
-                    step="0.001"
-                    className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 transition-colors"
-                  />
-                  <p className="text-sm text-Heres-muted mt-3">Amount to be distributed. Percentages are calculated automatically.</p>
-                </div>
-              )}
-
-              {/* Token path: Step 3 Beneficiaries */}
-              {capsuleType === 'token' && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                        <User className="w-5 h-5 text-Heres-accent" />
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 3</p>
-                        <h2 className="text-xl font-bold text-Heres-white">Beneficiaries</h2>
-                      </div>
+                          }
+                        }}
+                        placeholder="0.0"
+                        step="0.001"
+                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3.5 text-sm text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
+                      />
+                      <p className="mt-3 text-sm text-Heres-muted">Amount to be distributed in {tokenAssetUnit}. Percentages are calculated automatically.</p>
                     </div>
                   </div>
-                  <div className="space-y-4">
+                )}
+
+                {capsuleType === 'nft' && (
+                  <div className="mt-5 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                    <p className="mb-4 text-sm text-Heres-muted">
+                      Choose which NFTs from your wallet to include in this capsule. When conditions are met, they will be transferred to the recipients you set below.
+                    </p>
+                    {nftListLoading ? (
+                      <p className="py-6 text-sm text-Heres-muted">Loading your NFTs...</p>
+                    ) : nftList.length === 0 ? (
+                      <p className="rounded-xl border border-Heres-border bg-Heres-surface/50 px-4 py-6 text-sm text-Heres-muted">No NFTs found in this wallet.</p>
+                    ) : (
+                      <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border border-Heres-border bg-Heres-surface/50 p-3">
+                        {nftList.map((nft) => (
+                          <label
+                            key={nft.mint}
+                            className="flex cursor-pointer items-center gap-3 rounded-lg border border-Heres-border bg-Heres-card/80 p-3 transition-colors hover:border-Heres-accent/30"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedNftMints.includes(nft.mint)}
+                              onChange={() => toggleNftSelection(nft.mint)}
+                              className="h-4 w-4 rounded border-Heres-border bg-Heres-surface text-Heres-accent focus:ring-Heres-accent"
+                            />
+                            <span className="min-w-0 flex-1 truncate font-mono text-sm text-Heres-white" title={nft.mint}>
+                              {nft.mint.slice(0, 8)}...{nft.mint.slice(-8)}
+                            </span>
+                            {nft.name && <span className="max-w-[120px] truncate text-sm text-Heres-muted">{nft.name}</span>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {selectedNftMints.length > 0 && (
+                      <p className="mt-3 text-sm text-Heres-accent">{selectedNftMints.length} NFT(s) selected</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-col gap-3 border-t border-Heres-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-Heres-muted">
+                    {canCompleteAsset ? 'Asset selection is ready. Continue to recipient setup.' : 'Choose the asset payload before continuing.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletedSections((prev) => ({ ...prev, asset: true }))
+                      setOpenSection('beneficiaries')
+                    }}
+                    disabled={!canCompleteAsset}
+                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Complete Step 1
+                  </button>
+                </div>
+              </div>
+          </ServiceAccordionSection>
+
+          <ServiceAccordionSection
+            step="Step 2"
+            title="Beneficiary Information and Trigger Conditions"
+            description="Enter recipient details, choose timing, and define when the capsule should execute."
+            open={openSection === 'beneficiaries'}
+            onToggle={() => setOpenSection((prev) => (prev === 'beneficiaries' ? 'intent' : 'beneficiaries'))}
+          >
+              <div className="space-y-4">
+                {capsuleType === null && (
+                  <div className="rounded-2xl border border-dashed border-Heres-border bg-Heres-surface/20 p-5 text-sm text-Heres-muted">
+                    Choose an asset type in Step 1 first. The beneficiary and trigger inputs will adapt to token or NFT flow automatically.
+                  </div>
+                )}
+                {capsuleType === 'token' && (
+                  <div className="space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Token Beneficiaries</p>
                     {beneficiaries.map((beneficiary, index) => (
                       <div key={index} className="space-y-2">
-                        <div className="flex flex-col sm:flex-row gap-3 items-start">
-                          <div className="flex-1 w-full min-w-0">
-                            <div className="mb-2 inline-flex rounded-xl overflow-hidden border border-Heres-border bg-Heres-surface/80 h-[36px]">
+                        <div className="flex flex-col items-start gap-3 sm:flex-row">
+                          <div className="w-full min-w-0 flex-1">
+                            <div className="mb-2 inline-flex h-[36px] overflow-hidden rounded-xl border border-Heres-border bg-Heres-surface/80">
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'solana')}
-                                className={`px-3 text-xs font-semibold transition-colors h-full ${beneficiary.chain !== 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain !== 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
-                                SOL
+                                {tokenAssetUnit}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'evm')}
-                                className={`px-3 text-xs font-semibold transition-colors h-full ${beneficiary.chain === 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
                                 EVM
                               </button>
@@ -897,7 +1140,7 @@ export default function CreatePage() {
                               value={beneficiary.address}
                               onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
                               placeholder={beneficiary.chain === 'evm' ? '0xEvmAddress...' : 'Solana address...'}
-                              className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 font-mono text-sm"
+                              className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                             />
                             {beneficiary.chain === 'evm' && (
                               <input
@@ -905,33 +1148,31 @@ export default function CreatePage() {
                                 value={beneficiary.destinationChainSelector || ''}
                                 onChange={(e) => updateBeneficiary(index, 'destinationChainSelector', e.target.value.trim())}
                                 placeholder="Destination chain selector (default: Ethereum Sepolia)"
-                                className="w-full mt-2 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 font-mono text-xs"
+                                className="mt-2 w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-xs text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                               />
                             )}
                           </div>
-                          <div className="flex gap-2 items-center flex-shrink-0">
+                          <div className="flex flex-shrink-0 items-center gap-2">
                             <input
                               type="number"
                               value={beneficiary.amount}
                               onChange={(e) => updateBeneficiary(index, 'amount', e.target.value)}
                               placeholder={beneficiary.amountType === 'percentage' ? '0%' : '0.0'}
                               step={beneficiary.amountType === 'percentage' ? '0.1' : '0.001'}
-                              className="w-24 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 text-sm"
+                              className="w-24 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                             />
-                            <div className="flex rounded-xl overflow-hidden border border-Heres-border bg-Heres-surface/80 h-[46px]">
+                            <div className="flex h-[46px] overflow-hidden rounded-xl border border-Heres-border bg-Heres-surface/80">
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'amountType', 'fixed')}
-                                className={`px-3 text-xs font-semibold transition-colors h-full ${beneficiary.amountType === 'fixed' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'
-                                  }`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.amountType === 'fixed' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
-                                SOL
+                                {tokenAssetUnit}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'amountType', 'percentage')}
-                                className={`px-3 text-xs font-semibold transition-colors h-full ${beneficiary.amountType === 'percentage' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'
-                                  }`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.amountType === 'percentage' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
                                 %
                               </button>
@@ -940,9 +1181,9 @@ export default function CreatePage() {
                               <button
                                 type="button"
                                 onClick={() => removeBeneficiary(index)}
-                                className="p-3 rounded-xl border border-Heres-border text-red-400 hover:bg-red-500/10 transition-colors"
+                                className="rounded-xl border border-Heres-border p-3 text-red-400 transition-colors hover:bg-red-500/10"
                               >
-                                <X className="w-5 h-5" />
+                                <X className="h-5 w-5" />
                               </button>
                             )}
                           </div>
@@ -953,7 +1194,7 @@ export default function CreatePage() {
                           </p>
                         )}
                         {beneficiary.address && beneficiary.amount && totalAmount && (
-                          <div className="mt-2 p-3 rounded-xl border border-Heres-border bg-Heres-surface/50">
+                          <div className="mt-2 rounded-xl border border-Heres-border bg-Heres-surface/50 p-3">
                             {(() => {
                               const total = parseFloat(totalAmount)
                               let actualAmount = 0
@@ -967,9 +1208,9 @@ export default function CreatePage() {
                               }
                               return (
                                 <p className="text-sm text-Heres-muted">
-                                  <span className="text-Heres-accent font-semibold">{actualAmount.toFixed(6)} SOL</span>
-                                  {' '}(<span className="text-Heres-accent font-semibold">{percentage.toFixed(2)}%</span>)
-                                  {' '}of <span className="text-Heres-white font-semibold">{total} SOL</span>
+                                  <span className="font-semibold text-Heres-accent">{actualAmount.toFixed(6)} {tokenAssetUnit}</span>{' '}
+                                  (<span className="font-semibold text-Heres-accent">{percentage.toFixed(2)}%</span>) of{' '}
+                                  <span className="font-semibold text-Heres-white">{total} {tokenAssetUnit}</span>
                                 </p>
                               )
                             })()}
@@ -977,12 +1218,12 @@ export default function CreatePage() {
                         )}
                       </div>
                     ))}
-                    {totalAmount && beneficiaries.some(b => b.address && b.amount) && (
-                      <div className="mt-4 p-4 rounded-xl border border-Heres-border bg-Heres-surface/50 space-y-2">
+                    {totalAmount && beneficiaries.some((b) => b.address && b.amount) && (
+                      <div className="mt-4 space-y-2 rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
                         {(() => {
                           const total = parseFloat(totalAmount) || 0
                           let totalDistributed = 0
-                          beneficiaries.forEach(b => {
+                          beneficiaries.forEach((b) => {
                             if (b.address && b.amount) {
                               const amt = b.amountType === 'fixed' ? parseFloat(b.amount) || 0 : (total * (parseFloat(b.amount) || 0)) / 100
                               totalDistributed += amt
@@ -994,12 +1235,12 @@ export default function CreatePage() {
                             <>
                               <div className="flex justify-between text-sm">
                                 <span className="text-Heres-muted">Total to distribute</span>
-                                <span className={isExceeded ? 'text-red-400 font-semibold' : 'text-Heres-accent font-semibold'}>
-                                  {totalDistributed.toFixed(6)} / {total} SOL
+                                <span className={isExceeded ? 'font-semibold text-red-400' : 'font-semibold text-Heres-accent'}>
+                                  {totalDistributed.toFixed(6)} / {total} {tokenAssetUnit}
                                 </span>
                               </div>
-                              {isExceeded && <p className="text-sm text-red-400">Distribution exceeds total by {Math.abs(remaining).toFixed(6)} SOL</p>}
-                              {!isExceeded && remaining > 0 && <p className="text-sm text-Heres-muted">Remaining: {remaining.toFixed(6)} SOL</p>}
+                              {isExceeded && <p className="text-sm text-red-400">Distribution exceeds total by {Math.abs(remaining).toFixed(6)} {tokenAssetUnit}</p>}
+                              {!isExceeded && remaining > 0 && <p className="text-sm text-Heres-muted">Remaining: {remaining.toFixed(6)} {tokenAssetUnit}</p>}
                               {!isExceeded && remaining === 0 && <p className="text-sm text-Heres-accent">All tokens distributed</p>}
                             </>
                           )
@@ -1009,112 +1250,52 @@ export default function CreatePage() {
                     <button
                       type="button"
                       onClick={addBeneficiary}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-Heres-border text-Heres-accent hover:border-Heres-accent/50 hover:bg-Heres-accent/5 transition-colors text-sm font-medium"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-Heres-border py-3 text-sm font-medium text-Heres-accent transition-colors hover:border-Heres-accent/50 hover:bg-Heres-accent/5"
                     >
-                      <Plus className="w-5 h-5" />
+                      <Plus className="h-5 w-5" />
                       Add Beneficiary
                     </button>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* NFT path: Step 2 Select NFTs */}
-              {capsuleType === 'nft' && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                      <ImageIcon className="w-5 h-5 text-Heres-accent" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 2</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Select NFTs</h2>
-                    </div>
-                  </div>
-                  <p className="text-sm text-Heres-muted mb-4">Choose which NFTs from your wallet to include in this capsule. When conditions are met, they will be transferred to the recipients you set in the next step.</p>
-                  {nftListLoading ? (
-                    <p className="text-sm text-Heres-muted py-6">Loading your NFTs...</p>
-                  ) : nftList.length === 0 ? (
-                    <p className="text-sm text-Heres-muted py-6 rounded-xl border border-Heres-border bg-Heres-surface/50 px-4">No NFTs found in this wallet.</p>
-                  ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto rounded-xl border border-Heres-border bg-Heres-surface/50 p-3">
-                      {nftList.map((nft) => (
-                        <label
-                          key={nft.mint}
-                          className="flex items-center gap-3 rounded-lg border border-Heres-border bg-Heres-card/80 p-3 cursor-pointer hover:border-Heres-accent/30 transition-colors"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedNftMints.includes(nft.mint)}
-                            onChange={() => toggleNftSelection(nft.mint)}
-                            className="h-4 w-4 rounded border-Heres-border bg-Heres-surface text-Heres-accent focus:ring-Heres-accent"
-                          />
-                          <span className="font-mono text-sm text-Heres-white truncate flex-1 min-w-0" title={nft.mint}>
-                            {nft.mint.slice(0, 8)}...{nft.mint.slice(-8)}
-                          </span>
-                          {nft.name && <span className="text-sm text-Heres-muted truncate max-w-[120px]">{nft.name}</span>}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {selectedNftMints.length > 0 && (
-                    <p className="text-sm text-Heres-accent mt-3">{selectedNftMints.length} NFT(s) selected</p>
-                  )}
-                </div>
-              )}
+                {capsuleType === 'nft' && (
+                  <div className="space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">NFT Recipients</p>
+                    {nftRecipients.map((r, i) => (
+                      <div key={i} className="mb-2 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={r.address}
+                          onChange={(e) => setNftRecipientAddress(i, e.target.value.trim())}
+                          placeholder="Solana address..."
+                          className="flex-1 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
+                        />
+                        {nftRecipients.length > 1 && (
+                          <button type="button" onClick={() => removeNftRecipient(i)} className="rounded-lg border border-Heres-border p-2 text-red-400 hover:bg-red-500/10">
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={addNftRecipient} className="mt-2 flex items-center gap-1 text-sm text-Heres-accent hover:underline">
+                      <Plus className="h-4 w-4" /> Add recipient
+                    </button>
 
-              {/* NFT path: Step 3 Recipients & assignment */}
-              {capsuleType === 'nft' && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                      <User className="w-5 h-5 text-Heres-accent" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 3</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Recipients & assignment</h2>
-                    </div>
-                  </div>
-                  <p className="text-sm text-Heres-muted mb-4">Add recipient wallet(s) and assign each selected NFT to a recipient. When the capsule executes, each NFT will be sent to its assigned recipient.</p>
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-muted mb-2">Recipient addresses</p>
-                      {nftRecipients.map((r, i) => (
-                        <div key={i} className="flex gap-2 items-center mb-2">
-                          <input
-                            type="text"
-                            value={r.address}
-                            onChange={(e) => setNftRecipientAddress(i, e.target.value.trim())}
-                            placeholder="Solana address..."
-                            className="flex-1 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 font-mono text-sm"
-                          />
-                          {nftRecipients.length > 1 && (
-                            <button type="button" onClick={() => removeNftRecipient(i)} className="p-2 rounded-lg border border-Heres-border text-red-400 hover:bg-red-500/10">
-                              <X className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                      <button type="button" onClick={addNftRecipient} className="text-sm text-Heres-accent hover:underline flex items-center gap-1 mt-2">
-                        <Plus className="w-4 h-4" /> Add recipient
-                      </button>
-                    </div>
-
-                    {/* ??긽 ?쒖떆: ?좏깮??NFT蹂꾨줈 ?섏떊 吏媛?吏??*/}
                     {selectedNftMints.length > 0 && (
                       <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-Heres-accent mb-1">Which wallet receives which NFT</p>
-                        <p className="text-sm text-Heres-muted mb-4">Select the recipient for each NFT. When the capsule executes, each NFT will be sent to the selected wallet.</p>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-Heres-accent">Which wallet receives which NFT</p>
+                        <p className="mb-4 text-sm text-Heres-muted">Select the recipient for each NFT. When the capsule executes, each NFT will be sent to the selected wallet.</p>
                         <div className="space-y-3">
                           {selectedNftMints.map((mint) => (
-                            <div key={mint} className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
-                              <span className="font-mono text-sm text-Heres-white truncate min-w-[120px] sm:w-40" title={mint}>
+                            <div key={mint} className="flex flex-wrap items-center gap-3 sm:flex-nowrap">
+                              <span className="min-w-[120px] truncate font-mono text-sm text-Heres-white sm:w-40" title={mint}>
                                 NFT: {mint.slice(0, 8)}...{mint.slice(-8)}
                               </span>
-                              <span className="text-Heres-muted shrink-0">??send to</span>
+                              <span className="shrink-0 text-Heres-muted">send to</span>
                               <select
                                 value={nftAssignments[mint] ?? 0}
                                 onChange={(e) => setNftAssignment(mint, Number(e.target.value))}
-                                className="flex-1 min-w-0 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-2.5 text-sm text-Heres-white focus:outline-none focus:border-Heres-accent/50"
+                                className="min-w-0 flex-1 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-2.5 text-sm text-Heres-white focus:border-Heres-accent/50 focus:outline-none"
                               >
                                 {nftRecipients.map((r, i) => (
                                   <option key={i} value={i} className="bg-Heres-card text-Heres-white">
@@ -1128,332 +1309,409 @@ export default function CreatePage() {
                           ))}
                         </div>
                         {!nftRecipients.some((r) => r.address.trim()) && (
-                          <p className="text-xs text-Heres-accent mt-3">Above, add at least one recipient address; then choose who receives each NFT here.</p>
+                          <p className="mt-3 text-xs text-Heres-accent">Add at least one recipient address, then choose who receives each NFT here.</p>
                         )}
                       </div>
                     )}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Step 4 Trigger Conditions (shared) */}
-              {capsuleType !== null && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                      <Clock className="w-5 h-5 text-Heres-accent" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 4</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Trigger Conditions</h2>
-                    </div>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm text-Heres-muted mb-2">Target Date</label>
-                      <input
-                        type="date"
-                        value={targetDate}
-                        onChange={(e) => {
-                          setTargetDate(e.target.value)
-                          if (e.target.value) {
-                            setInactivityUnit('days')
-                            const selectedDate = new Date(e.target.value)
-                            const today = new Date()
-                            today.setHours(0, 0, 0, 0)
-                            selectedDate.setHours(0, 0, 0, 0)
-                            const diffDays = Math.ceil((selectedDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-                            if (diffDays > 0) setInactivityDays(diffDays.toString())
-                            else { setInactivityDays(''); alert('Please select a future date') }
-                          }
-                        }}
-                        min={new Date().toISOString().split('T')[0]}
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white focus:outline-none focus:border-Heres-accent/50"
-                      />
-                      {targetDate && inactivityDays && <p className="text-xs text-Heres-accent mt-2">{formatInactivityLabel(inactivityDays, 'days')} until execution</p>}
-                    </div>
-                    <div>
-                      <label className="block text-sm text-Heres-muted mb-2">Delay Window (days)</label>
-                      <input
-                        type="number"
-                        value={delayDays}
-                        onChange={(e) => setDelayDays(e.target.value)}
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white focus:outline-none focus:border-Heres-accent/50"
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <label className="block text-sm text-Heres-muted mb-2">
-                      {supportsMinuteMode ? 'Inactivity period' : 'Or inactivity period (days)'}
-                    </label>
-                    {supportsMinuteMode && (
-                      <div className="mb-3 inline-flex rounded-xl border border-Heres-border bg-Heres-surface/70 p-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInactivityUnit('days')
-                            syncTargetDateFromDays(inactivityDays)
+                {capsuleType !== null && (
+                  <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                    <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Trigger Conditions</p>
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm text-Heres-muted">Target Date</label>
+                        <input
+                          type="date"
+                          value={targetDate}
+                          onChange={(e) => {
+                            setTargetDate(e.target.value)
+                            if (e.target.value) {
+                              setInactivityUnit('days')
+                              const selectedDate = new Date(e.target.value)
+                              const today = new Date()
+                              today.setHours(0, 0, 0, 0)
+                              selectedDate.setHours(0, 0, 0, 0)
+                              const diffDays = Math.ceil((selectedDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                              if (diffDays > 0) setInactivityDays(diffDays.toString())
+                              else { setInactivityDays(''); alert('Please select a future date') }
+                            }
                           }}
-                          className={`rounded-lg px-4 py-2 text-sm transition ${
-                            inactivityUnit === 'days'
-                              ? 'bg-Heres-accent/15 text-Heres-accent'
-                              : 'text-Heres-muted hover:text-Heres-white'
-                          }`}
-                        >
-                          Days
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInactivityUnit('minutes')
-                            setTargetDate('')
-                          }}
-                          className={`rounded-lg px-4 py-2 text-sm transition ${
-                            inactivityUnit === 'minutes'
-                              ? 'bg-Heres-accent/15 text-Heres-accent'
-                              : 'text-Heres-muted hover:text-Heres-white'
-                          }`}
-                        >
-                          Minutes
-                        </button>
+                          min={new Date().toISOString().split('T')[0]}
+                          className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white focus:border-Heres-accent/50 focus:outline-none"
+                        />
+                        {targetDate && inactivityDays && <p className="mt-2 text-xs text-Heres-accent">{formatInactivityLabel(inactivityDays, 'days')} until execution</p>}
                       </div>
-                    )}
-                    <input
-                      type="number"
-                      value={inactivityDays}
-                      onChange={(e) => {
-                        setInactivityDays(e.target.value)
-                        if (inactivityUnit === 'days') {
-                          syncTargetDateFromDays(e.target.value)
-                        } else {
-                          setTargetDate('')
-                        }
-                      }}
-                      placeholder={inactivityUnit === 'minutes' ? 'Enter minutes' : 'Enter days'}
-                      className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50"
-                    />
-                    {SOLANA_CONFIG.NETWORK === 'devnet' && (
-                      <div className="flex gap-2 mt-2">
-                        {[1, 3, 5, 10].map((m) => (
+                      <div>
+                        <label className="mb-2 block text-sm text-Heres-muted">Delay Window (days)</label>
+                        <input
+                          type="number"
+                          value={delayDays}
+                          onChange={(e) => setDelayDays(e.target.value)}
+                          className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white focus:border-Heres-accent/50 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <label className="mb-2 block text-sm text-Heres-muted">
+                        {supportsMinuteMode ? 'Inactivity period' : 'Or inactivity period (days)'}
+                      </label>
+                      {supportsMinuteMode && (
+                        <div className="mb-3 inline-flex rounded-xl border border-Heres-border bg-Heres-surface/70 p-1">
                           <button
-                            key={m}
+                            type="button"
+                            onClick={() => {
+                              setInactivityUnit('days')
+                              syncTargetDateFromDays(inactivityDays)
+                            }}
+                            className={`rounded-lg px-4 py-2 text-sm transition ${inactivityUnit === 'days' ? 'bg-Heres-accent/15 text-Heres-accent' : 'text-Heres-muted hover:text-Heres-white'}`}
+                          >
+                            Days
+                          </button>
+                          <button
                             type="button"
                             onClick={() => {
                               setInactivityUnit('minutes')
-                              setInactivityDays(String(m))
                               setTargetDate('')
                             }}
-                            className="rounded-lg border border-Heres-accent/30 bg-Heres-accent/10 px-3 py-1 text-xs text-Heres-accent hover:bg-Heres-accent/20"
+                            className={`rounded-lg px-4 py-2 text-sm transition ${inactivityUnit === 'minutes' ? 'bg-Heres-accent/15 text-Heres-accent' : 'text-Heres-muted hover:text-Heres-white'}`}
                           >
-                            {m}min
+                            Minutes
                           </button>
-                        ))}
-                      </div>
-                    )}
+                        </div>
+                      )}
+                      <input
+                        type="number"
+                        value={inactivityDays}
+                        onChange={(e) => {
+                          setInactivityDays(e.target.value)
+                          if (inactivityUnit === 'days') syncTargetDateFromDays(e.target.value)
+                          else setTargetDate('')
+                        }}
+                        placeholder={inactivityUnit === 'minutes' ? 'Enter minutes' : 'Enter days'}
+                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
+                      />
+                      {SOLANA_CONFIG.NETWORK === 'devnet' && (
+                        <div className="mt-2 flex gap-2">
+                          {[1, 3, 5, 10].map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => {
+                                setInactivityUnit('minutes')
+                                setInactivityDays(String(m))
+                                setTargetDate('')
+                              }}
+                              className="rounded-lg border border-Heres-accent/30 bg-Heres-accent/10 px-3 py-1 text-xs text-Heres-accent hover:bg-Heres-accent/20"
+                            >
+                              {m}min
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-4 text-sm text-Heres-muted">
+                      {targetDate
+                        ? `Triggers on ${new Date(targetDate).toLocaleDateString()}, ${delayDays}-day delay.`
+                        : inactivityDays
+                          ? `After ${formatInactivityLabel(inactivityDays, inactivityUnit)} of inactivity, ${delayDays}-day delay.`
+                          : 'Set target date or inactivity period.'}
+                    </p>
                   </div>
-                  <p className="text-sm text-Heres-muted mt-4">
-                    {targetDate
-                      ? `Triggers on ${new Date(targetDate).toLocaleDateString()}, ${delayDays}-day delay.`
-                      : inactivityDays
-                        ? `After ${formatInactivityLabel(inactivityDays, inactivityUnit)} of inactivity, ${delayDays}-day delay.`
-                        : 'Set target date or inactivity period.'}
+                )}
+
+                <div className="flex flex-col gap-3 border-t border-Heres-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-Heres-muted">
+                    {canCompleteBeneficiaries ? 'Recipients and trigger conditions are ready.' : 'Finish recipient and trigger setup before continuing.'}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletedSections((prev) => ({ ...prev, beneficiaries: true }))
+                      setOpenSection('intent')
+                    }}
+                    disabled={!canCompleteBeneficiaries}
+                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Complete Step 2
+                  </button>
                 </div>
-              )}
+              </div>
+          </ServiceAccordionSection>
 
-              {capsuleType !== null && (
-                <div className="card-Heres p-6 sm:p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-border flex items-center justify-center">
-                      <Shield className="w-5 h-5 text-Heres-accent" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-Heres-accent">Step 5 (Required)</p>
-                      <h2 className="text-xl font-bold text-Heres-white">Intent Statement Delivery</h2>
-                    </div>
+          <ServiceAccordionSection
+            step="Step 3"
+            title="Declare Your Intent"
+            description="Describe your inheritance intent and executor notes. This is a support instruction, not a formal legal will."
+            open={openSection === 'intent'}
+            onToggle={() => setOpenSection((prev) => (prev === 'intent' ? 'review' : 'intent'))}
+          >
+              <div className="space-y-4">
+                {capsuleType === null && (
+                  <div className="rounded-2xl border border-dashed border-Heres-border bg-Heres-surface/20 p-5 text-sm text-Heres-muted">
+                    Select an asset type and configure the recipient flow first, then write the intent statement that accompanies the capsule.
                   </div>
-
-                  <p className="text-sm text-Heres-white mb-4">
-                    Email encrypted Intent Statement to a single representative (powered by CRE)
-                  </p>
-
+                )}
+                <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                  <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Encrypted Delivery</p>
+                  <p className="mb-4 text-sm text-Heres-white">Choose who receives the encrypted intent statement after execution is confirmed.</p>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm text-Heres-muted mb-2">Representative Email</label>
+                      <label className="mb-2 block text-sm text-Heres-muted">Representative Email</label>
                       <input
                         type="email"
                         value={creEmail}
                         onChange={(e) => setCreEmail(e.target.value)}
                         placeholder="executor@example.com"
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50"
+                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-Heres-muted mb-2">Access Code (share offline with representative)</label>
+                      <label className="mb-2 block text-sm text-Heres-muted">Access Code</label>
                       <input
                         type="password"
                         value={creUnlockCode}
                         onChange={(e) => setCreUnlockCode(e.target.value)}
                         placeholder="At least 6 characters"
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50"
+                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                       />
-                      <p className="text-xs text-Heres-muted mt-2">
-                        Your Intent Statement is encrypted in-browser before upload and delivered through CRE when execution is confirmed.
-                      </p>
-                      <p className="text-xs text-amber-400 mt-1">
-                        Do not put private keys, seed phrases, or master passwords in the Intent Statement.
-                      </p>
+                      <p className="mt-2 text-xs text-Heres-muted">This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload.</p>
                     </div>
                   </div>
                 </div>
-              )}
 
-              {capsuleType !== null && (
-                <>
-                  <div className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 p-4 mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Shield className="w-4 h-4 text-Heres-accent" />
-                      <span className="text-xs font-bold uppercase tracking-wider text-Heres-accent">Privacy Tier: PER (TEE)</span>
+                <textarea
+                  value={intent}
+                  onChange={(e) => setIntent(e.target.value)}
+                  placeholder="If I am inactive for one year, transfer my assets to my family, and delegate DAO permissions to my co-founder."
+                  className="h-32 w-full resize-none rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-sm leading-6 text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
+                />
+                <p className="text-xs text-amber-400">Do not put private keys, seed phrases, or master passwords in the intent statement.</p>
+
+                {error && (
+                  <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-400">
+                    Error: {error}
+                  </div>
+                )}
+                {txHash && (
+                  <div className="rounded-xl border border-Heres-accent/50 bg-Heres-accent/10 p-4 text-sm text-Heres-accent">
+                    Capsule created. Transaction: {txHash}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-3 border-t border-Heres-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-Heres-muted">
+                    {canCompleteIntent ? 'Intent package is ready for final review.' : 'Add the intent statement, representative email, and access code before continuing.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletedSections((prev) => ({ ...prev, intent: true }))
+                      setOpenSection('review')
+                    }}
+                    disabled={!canCompleteIntent}
+                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Complete Step 3
+                  </button>
+                </div>
+              </div>
+          </ServiceAccordionSection>
+
+          <ServiceAccordionSection
+            step="Step 4"
+            title="Review & Create"
+            description="Check readiness, privacy tier, fees, and then create the capsule."
+            open={openSection === 'review'}
+            onToggle={() => setOpenSection((prev) => (prev === 'review' ? 'intent' : 'review'))}
+          >
+              <div className="space-y-4">
+                {capsuleType === null && (
+                  <div className="rounded-2xl border border-dashed border-Heres-border bg-Heres-surface/20 p-5 text-sm text-Heres-muted">
+                    Review becomes actionable once the earlier steps are complete. Use it as the final launch point before creating the capsule.
+                  </div>
+                )}
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+                  <div className="space-y-3.5">
+                    <div className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 p-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-Heres-accent" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-Heres-accent">Privacy Tier: PER (TEE)</span>
+                      </div>
+                      <p className="text-xs text-Heres-muted">
+                        This capsule uses MagicBlock&apos;s Private Ephemeral Rollup so intent and trigger execution can remain confidential until conditions are met.
+                      </p>
                     </div>
-                    <p className="text-xs text-Heres-muted">
-                      This capsule will be protected by MagicBlock's Private Ephemeral Rollup.
-                      Hardware-secured (TEE) monitoring ensures your intent remains confidential until conditions are met.
+                    <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Readiness Checklist</p>
+                      <div className="mt-4 space-y-3 text-sm">
+                        {[
+                          { label: 'Asset selected', ok: hasAssetSelection },
+                          { label: 'Beneficiaries and timing configured', ok: hasBeneficiaryDetails },
+                          { label: 'Intent statement written', ok: hasIntentDetails },
+                          { label: 'Representative email valid', ok: isValidEmail(creEmail) },
+                        ].map((item) => (
+                          <div key={item.label} className="flex items-center justify-between gap-4 rounded-xl border border-Heres-border bg-Heres-card/50 px-4 py-3">
+                            <span className="text-Heres-white">{item.label}</span>
+                            <span className={`text-xs font-semibold uppercase tracking-[0.2em] ${item.ok ? 'text-emerald-400' : 'text-Heres-muted'}`}>
+                              {item.ok ? 'Ready' : 'Pending'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {existingCapsule && (
+                      <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+                        An active capsule already exists for this wallet. Creating a new one may require deactivation or execution of the current capsule first.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Creation Summary</p>
+                    <div className="mt-4 space-y-4">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-Heres-muted">Creation Fee</span>
+                        <span className="font-semibold text-Heres-accent">{PLATFORM_FEE.CREATION_FEE_SOL} SOL</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-Heres-muted">Execution Fee</span>
+                        <span className="font-semibold text-Heres-white">{PLATFORM_FEE.EXECUTION_FEE_BPS / 100}%</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-Heres-muted">Representative</span>
+                        <span className="max-w-[180px] truncate font-medium text-Heres-white">{creEmail || 'Pending'}</span>
+                      </div>
+                      <div className="border-t border-Heres-border pt-4">
+                        <button onClick={simulateExecution} className="btn-secondary mb-3 flex w-full items-center justify-center gap-2 py-3.5">
+                          <Eye className="h-5 w-5" />
+                          Simulate Execution
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCreate}
+                          disabled={!isCreateReady}
+                          className="btn-primary w-full py-3.5 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isPending ? (currentStep || 'Creating capsule...') : 'Create Capsule'}
+                        </button>
+                        <p className="mt-3 text-xs text-Heres-muted">
+                          Final creation is enabled after all steps above are complete and your wallet can sign the encrypted payload.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+          </ServiceAccordionSection>
+
+          <section className="card-Heres p-5 sm:p-5">
+            <h2 className="text-xl font-semibold text-Heres-white">FAQs</h2>
+            <div className="mt-4 space-y-2.5">
+              {CREATE_FAQS.map((faq) => (
+                <div key={faq.key} className="overflow-hidden rounded-xl border border-Heres-border">
+                  <button
+                    type="button"
+                    onClick={() => setOpenFaq((prev) => (prev === faq.key ? null : faq.key))}
+                    className="flex w-full items-center justify-between gap-4 bg-Heres-card/50 px-4 py-4 text-left"
+                  >
+                    <span className="text-base font-medium text-Heres-white">{faq.question}</span>
+                    {isFaqOpen(faq.key) ? <ChevronUp className="h-5 w-5 text-Heres-muted" /> : <ChevronDown className="h-5 w-5 text-Heres-muted" />}
+                  </button>
+                  {isFaqOpen(faq.key) && (
+                    <div className="border-t border-Heres-border bg-Heres-surface/20 px-4 py-4 text-sm text-Heres-muted">
+                      {faq.answer}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-5">
+              <p className="text-lg font-semibold text-Heres-white">Haven&apos;t Found Your Question?</p>
+              <p className="mt-3 text-sm text-Heres-muted">Reach out through the official Heres community channels and support inbox if you need help finalizing your capsule flow.</p>
+            </div>
+          </section>
+
+          {showSimulation && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
+              <div className="card-Heres max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl p-8">
+                <div className="mb-6 flex items-center justify-between">
+                  <h3 className="text-xl font-bold text-Heres-white">Execution Simulation</h3>
+                  <button onClick={() => setShowSimulation(false)} className="text-Heres-muted hover:text-Heres-white">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                    <p className="mb-1 text-xs text-Heres-accent">Intent</p>
+                    <p className="text-Heres-white">{intent || 'No intent specified'}</p>
+                  </div>
+                  {capsuleType === 'token' && (
+                    <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                      <p className="mb-2 text-xs text-Heres-accent">Beneficiaries</p>
+                      <div className="space-y-2">
+                        {beneficiaries.map((b, i) => (
+                          <div key={i} className="flex justify-between rounded-lg bg-Heres-card/80 p-2">
+                            <p className="max-w-[200px] truncate font-mono text-sm text-Heres-white">
+                              [{(b.chain ?? 'solana').toUpperCase()}] {b.address || 'Not set'}
+                            </p>
+                            <p className="text-sm font-semibold text-Heres-accent">{b.amount} {b.amountType === 'percentage' ? '%' : tokenAssetUnit}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {capsuleType === 'nft' && (
+                    <>
+                      <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                        <p className="mb-2 text-xs text-Heres-accent">Selected NFTs</p>
+                        <div className="space-y-1">
+                          {selectedNftMints.map((mint) => (
+                            <p key={mint} className="truncate font-mono text-sm text-Heres-white">{mint.slice(0, 12)}...{mint.slice(-8)}</p>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                        <p className="mb-2 text-xs text-Heres-accent">Recipients & assignment</p>
+                        <div className="space-y-2">
+                          {selectedNftMints.map((mint) => {
+                            const idx = nftAssignments[mint] ?? 0
+                            const addr = nftRecipients[idx]?.address ?? ''
+                            return (
+                              <div key={mint} className="flex items-center justify-between rounded-lg bg-Heres-card/80 p-2 text-sm">
+                                <span className="max-w-[140px] truncate font-mono text-Heres-muted">{mint.slice(0, 6)}...{mint.slice(-6)}</span>
+                                <span className="text-Heres-muted">→ send to</span>
+                                <span className="max-w-[160px] truncate font-mono text-Heres-white">{addr ? `${addr.slice(0, 8)}...${addr.slice(-6)}` : 'Not set'}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                    <p className="mb-1 text-xs text-Heres-accent">Trigger</p>
+                    <p className="text-Heres-white">
+                      After {formatInactivityLabel(inactivityDays, inactivityUnit) || '0 days'} of inactivity, {delayDays}-day delay.
                     </p>
                   </div>
-                  <p className="text-xs text-Heres-muted">
-                    Platform fee: {PLATFORM_FEE.CREATION_FEE_SOL} SOL (creation) + {PLATFORM_FEE.EXECUTION_FEE_BPS / 100}% (on execution)
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-4">
-                    <button
-                      onClick={simulateExecution}
-                      className="btn-secondary flex-1 flex items-center justify-center gap-2 py-3.5"
-                    >
-                      <Eye className="w-5 h-5" />
-                      Simulate Execution
-                    </button>
-                    <div className="flex-1 flex flex-col gap-3">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-sm text-Heres-muted">Creation Fee</span>
-                        <span className="text-sm font-semibold text-Heres-accent">{PLATFORM_FEE.CREATION_FEE_SOL} SOL</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleCreate}
-                        disabled={
-                          isPending ||
-                          modifyCount >= MAX_CAPSULE_MODIFICATIONS ||
-                          !connected ||
-                          !publicKey ||
-                          !intent.trim() ||
-                          !inactivityDays ||
-                          parseInt(inactivityDays) <= 0 ||
-                          !wallet.signMessage ||
-                          !isValidEmail(creEmail) ||
-                          creUnlockCode.trim().length < 6 ||
-                          (capsuleType === 'token' && (beneficiaries.length === 0 || beneficiaries.some((b) => !b.address || !b.amount))) ||
-                          (capsuleType === 'nft' && (selectedNftMints.length === 0 || !nftRecipients.some((r) => r.address.trim()) || nftRecipients.every((r) => !r.address.trim())))
-                        }
-                        className="btn-primary w-full py-3.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isPending ? (currentStep || 'Creating capsule...') : 'Create Capsule'}
-                      </button>
-                    </div>
+                  <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                    <p className="mb-1 text-xs text-Heres-accent">Intent Statement Delivery</p>
+                    <p className="text-Heres-white">An encrypted intent statement package will be sent to {creEmail || 'representative email'} when execution is confirmed.</p>
                   </div>
-                </>
-              )}
-
-              {error && (
-                <div className="rounded-xl p-4 border border-red-500/50 bg-red-500/10 text-red-400 text-sm">
-                  Error: {error}
-                </div>
-              )}
-              {txHash && (
-                <div className="rounded-xl p-4 border border-Heres-accent/50 bg-Heres-accent/10 text-Heres-accent text-sm">
-                  Capsule created. Transaction: {txHash}
-                </div>
-              )}
-
-              {showSimulation && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-                  <div className="card-Heres rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-bold text-Heres-white">Execution Simulation</h3>
-                      <button onClick={() => setShowSimulation(false)} className="text-Heres-muted hover:text-Heres-white">
-                        <X className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                        <p className="text-xs text-Heres-accent mb-1">Intent</p>
-                        <p className="text-Heres-white">{intent || 'No intent specified'}</p>
-                      </div>
-                      {capsuleType === 'token' && (
-                        <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                          <p className="text-xs text-Heres-accent mb-2">Beneficiaries</p>
-                          <div className="space-y-2">
-                            {beneficiaries.map((b, i) => (
-                              <div key={i} className="flex justify-between p-2 rounded-lg bg-Heres-card/80">
-                                <p className="font-mono text-sm text-Heres-white truncate max-w-[200px]">
-                                  [{(b.chain ?? 'solana').toUpperCase()}] {b.address || 'Not set'}
-                                </p>
-                                <p className="text-Heres-accent font-semibold text-sm">{b.amount} {b.amountType === 'percentage' ? '%' : 'SOL'}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {capsuleType === 'nft' && (
-                        <>
-                          <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                            <p className="text-xs text-Heres-accent mb-2">Selected NFTs</p>
-                            <div className="space-y-1">
-                              {selectedNftMints.map((mint) => (
-                                <p key={mint} className="font-mono text-sm text-Heres-white truncate">{mint.slice(0, 12)}...{mint.slice(-8)}</p>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                            <p className="text-xs text-Heres-accent mb-2">Recipients & assignment</p>
-                            <div className="space-y-2">
-                              {selectedNftMints.map((mint) => {
-                                const idx = nftAssignments[mint] ?? 0
-                                const addr = nftRecipients[idx]?.address ?? ''
-                                return (
-                                  <div key={mint} className="flex justify-between items-center p-2 rounded-lg bg-Heres-card/80 text-sm">
-                                    <span className="font-mono text-Heres-muted truncate max-w-[140px]">{mint.slice(0, 6)}...{mint.slice(-6)}</span>
-                                    <span className="text-Heres-muted">→ send to</span>
-                                    <span className="font-mono text-Heres-white truncate max-w-[160px]">{addr ? `${addr.slice(0, 8)}...${addr.slice(-6)}` : 'Not set'}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </>
-                      )}
-                      <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                        <p className="text-xs text-Heres-accent mb-1">Trigger</p>
-                        <p className="text-Heres-white">
-                          After {formatInactivityLabel(inactivityDays, inactivityUnit) || '0 days'} of inactivity, {delayDays}-day delay.
-                        </p>
-                      </div>
-                      <div className="rounded-xl p-4 border border-Heres-border bg-Heres-surface/50">
-                        <p className="text-xs text-Heres-accent mb-1">Intent Statement Delivery</p>
-                        <p className="text-Heres-white">An encrypted Intent Statement package will be sent to {creEmail || 'representative email'} when execution is confirmed.</p>
-                      </div>
-                      <div className="rounded-xl p-4 border border-Heres-accent/30 bg-Heres-accent/10">
-                        <p className="text-Heres-accent font-semibold flex items-center gap-2">
-                          <CheckCircle className="w-5 h-5" />
-                          Execution would succeed
-                        </p>
-                        <p className="text-sm text-Heres-muted mt-1">All conditions met. Capsule would execute automatically.</p>
-                      </div>
-                    </div>
-                    <button onClick={() => setShowSimulation(false)} className="btn-primary mt-6 w-full py-3">
-                      Close
-                    </button>
+                  <div className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 p-4">
+                    <p className="flex items-center gap-2 font-semibold text-Heres-accent">
+                      <CheckCircle className="h-5 w-5" />
+                      Execution would succeed
+                    </p>
+                    <p className="mt-1 text-sm text-Heres-muted">All conditions met. Capsule would execute automatically.</p>
                   </div>
                 </div>
-              )}
+                <button onClick={() => setShowSimulation(false)} className="btn-primary mt-6 w-full py-3">
+                  Close
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1461,4 +1719,3 @@ export default function CreatePage() {
     </div>
   )
 }
-

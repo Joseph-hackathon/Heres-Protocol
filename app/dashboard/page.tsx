@@ -1,18 +1,26 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
+  Copy,
   Database,
   RefreshCw,
   Settings,
-  Sparkles,
+  Signal,
   User,
 } from 'lucide-react'
-import { PublicKey } from '@solana/web3.js'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { SOLANA_CONFIG, PLATFORM_FEE } from '@/constants'
+import { getProgramId, getSolanaConnection } from '@/config/solana'
+import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG, getExplorerUrl } from '@/constants'
+import { getEnhancedTransactions } from '@/lib/helius'
 import { initFeeConfig } from '@/lib/solana'
+import { getFeeConfigPDA } from '@/lib/program'
+import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
 
 type CapsuleEvent = {
   signature: string
@@ -39,52 +47,13 @@ type CapsuleRow = {
   payloadSize: number | null
   signature: string | null
   isActive: boolean | null
-  isDelegated: boolean
   events: CapsuleEvent[]
   tokenDelta: string | null
   solDelta: number | null
   proofBytes: number | null
 }
 
-type CapsuleListItem = Omit<CapsuleRow, 'events'> & {
-  eventCount: number
-}
-
-type CapsuleSummaryPayload = {
-  summary: {
-    total: number
-    allTimeCreated: number | null
-    active: number
-    executed: number
-    expired: number
-    proofs: number
-    successRate: number
-    totalValueSecuredLamports: number
-    totalValueExecutedLamports: number
-    activeValueLockedLamports: number
-  }
-  timestamp: number
-  complete: boolean
-}
-
-type CapsuleListPayload = {
-  items: CapsuleListItem[]
-  page: number
-  limit: number
-  total: number
-  totalPages: number
-  timestamp: number
-  complete: boolean
-}
-
 const formatNumber = (value: number) => value.toLocaleString('en-US')
-const formatSol = (lamports: number) => {
-  const sol = lamports / 1_000_000_000
-  return `${sol.toLocaleString('en-US', {
-    minimumFractionDigits: sol >= 100 ? 0 : 2,
-    maximumFractionDigits: sol >= 100 ? 2 : 4,
-  })} SOL`
-}
 
 const formatDuration = (seconds: number | null) => {
   if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '...'
@@ -111,8 +80,61 @@ const timeAgo = (timestampMs: number | null) => {
   return `${days}d ago`
 }
 
+const formatDelta = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+
 const maskAddress = (address: string) =>
   address.length > 10 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address
+
+const copyToClipboard = (text: string) => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text)
+  }
+}
+
+function CopyButton({ value, className }: { value: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => copyToClipboard(value)}
+      className={`inline-flex shrink-0 items-center justify-center rounded p-1 text-Heres-muted transition-colors hover:bg-Heres-surface/80 hover:text-Heres-accent ${className || ''}`}
+      title="Copy"
+      aria-label="Copy to clipboard"
+    >
+      <Copy className="h-4 w-4" />
+    </button>
+  )
+}
+
+const detectInstruction = (logs?: string[] | null) => {
+  if (!logs || logs.length === 0) return 'system'
+  const text = logs.join(' ')
+  if (/create_capsule|CreateCapsule/i.test(text)) return 'create_capsule'
+  if (/execute_intent|ExecuteIntent/i.test(text)) return 'execute_intent'
+  if (/update_intent|UpdateIntent/i.test(text)) return 'update_intent'
+  if (/update_activity|UpdateActivity/i.test(text)) return 'update_activity'
+  if (/deactivate_capsule|DeactivateCapsule/i.test(text)) return 'deactivate_capsule'
+  if (/recreate_capsule|RecreateCapsule/i.test(text)) return 'recreate_capsule'
+  return 'system'
+}
+
+const instructionLabel = (instruction: string) => {
+  switch (instruction) {
+    case 'create_capsule':
+      return 'Capsule Created'
+    case 'execute_intent':
+      return 'Capsule Executed'
+    case 'update_intent':
+      return 'Intent Updated'
+    case 'update_activity':
+      return 'Activity Updated'
+    case 'deactivate_capsule':
+      return 'Capsule Deactivated'
+    case 'recreate_capsule':
+      return 'Capsule Recreated'
+    default:
+      return 'System Update'
+  }
+}
 
 const statusTone = (status: string, kind: CapsuleRow['kind']) => {
   const normalized = status.toLowerCase()
@@ -129,11 +151,241 @@ const statusTone = (status: string, kind: CapsuleRow['kind']) => {
   return 'bg-Heres-surface text-Heres-muted'
 }
 
+const statusFromInstruction = (instruction: string) => {
+  switch (instruction) {
+    case 'create_capsule':
+    case 'recreate_capsule':
+      return 'Created'
+    case 'execute_intent':
+      return 'Executed'
+    case 'update_intent':
+      return 'Updated'
+    case 'update_activity':
+      return 'Activity'
+    case 'deactivate_capsule':
+      return 'Deactivated'
+    default:
+      return 'System'
+  }
+}
+
+const decodeCapsuleAccount = (data: Uint8Array) => {
+  if (!data || data.length < 60) return null
+
+  const readI64 = (bytes: Uint8Array, start: number): bigint => {
+    let result = 0n
+    for (let i = 0; i < 8; i += 1) {
+      result |= BigInt(bytes[start + i]) << BigInt(i * 8)
+    }
+    if (result & (1n << 63n)) {
+      result = result - (1n << 64n)
+    }
+    return result
+  }
+
+  const readU32 = (bytes: Uint8Array, start: number): number => {
+    return bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
+  }
+
+  let offset = 8
+  const ownerBytes = data.slice(offset, offset + 32)
+  const owner = new PublicKey(ownerBytes)
+  offset += 32
+  const inactivityPeriod = Number(readI64(data, offset))
+  offset += 8
+  const lastActivity = Number(readI64(data, offset))
+  offset += 8
+  const intentDataLength = readU32(data, offset)
+  offset += 4
+  const intentDataBytes = data.slice(offset, offset + intentDataLength)
+  offset += intentDataLength
+  const isActive = data[offset] === 1
+  offset += 1
+  const hasExecutedAt = data[offset] === 1
+  offset += 1
+  let executedAt: number | null = null
+  if (hasExecutedAt) {
+    executedAt = Number(readI64(data, offset))
+    offset += 8
+  }
+
+  // Skip bump (1) and vault_bump (1)
+  offset += 2
+  let mint: PublicKey | undefined
+  if (offset + 32 <= data.length) {
+    mint = new PublicKey(data.slice(offset, offset + 32))
+  }
+
+  return {
+    owner,
+    inactivityPeriod,
+    lastActivity,
+    intentData: new Uint8Array(intentDataBytes),
+    isActive,
+    executedAt,
+    mint,
+  }
+}
+
+const fetchAllSignatures = async (
+  connection: ReturnType<typeof getSolanaConnection>,
+  address: PublicKey,
+  pageSize = 100,
+  maxPages = 10
+) => {
+  let all: Awaited<ReturnType<typeof connection.getSignaturesForAddress>> = []
+  let before: string | undefined
+  let page = 0
+
+  while (page < maxPages) {
+    const batch = await connection.getSignaturesForAddress(address, {
+      limit: pageSize,
+      ...(before ? { before } : {}),
+    })
+
+    all = all.concat(batch)
+    if (batch.length < pageSize) break
+    before = batch[batch.length - 1]?.signature
+    if (!before) break
+    page += 1
+  }
+
+  return all
+}
+
+/** Fetch transactions in small batches with delay to avoid 429 (Too Many Requests) on public RPC. */
+const fetchTransactionsBatched = async (
+  connection: ReturnType<typeof getSolanaConnection>,
+  signatureInfos: Array<{ signature: string; err: any; blockTime?: number | null; memo?: string | null; slot?: number }>,
+  batchSize = 3,
+  delayMs = 500
+): Promise<Array<{ info: (typeof signatureInfos)[0]; tx: any }>> => {
+  const results: Array<{ info: (typeof signatureInfos)[0]; tx: any }> = []
+  for (let i = 0; i < signatureInfos.length; i += batchSize) {
+    const batch = signatureInfos.slice(i, i + batchSize)
+    const batchResults = await Promise.all(
+      batch.map(async (signatureInfo) => {
+        try {
+          const tx = await connection.getTransaction(signatureInfo.signature, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          })
+          return { info: signatureInfo, tx }
+        } catch {
+          return { info: signatureInfo, tx: null }
+        }
+      })
+    )
+    results.push(...batchResults)
+    if (i + batchSize < signatureInfos.length && delayMs > 0) {
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+  }
+  return results
+}
+
+const getSignatureFromTx = (tx: any) =>
+  tx?.signature ||
+  tx?.transactionSignature ||
+  tx?.transaction?.signatures?.[0] ||
+  tx?.signatures?.[0] ||
+  tx?.tx?.signature ||
+  ''
+
+const getBlockTimeFromTx = (tx: any) => {
+  const timestamp = tx?.timestamp || tx?.blockTime || tx?.tx?.blockTime || tx?.transaction?.blockTime
+  if (!timestamp) return null
+  return typeof timestamp === 'number' ? timestamp : parseInt(String(timestamp), 10)
+}
+
+/** Fetch all enhanced transactions from Helius (paginated). */
+const fetchAllEnhancedTransactions = async (address: string, pageSize = 100, maxPages = 10) => {
+  let all: any[] = []
+  let before: string | undefined
+  for (let page = 0; page < maxPages; page += 1) {
+    const batch = await getEnhancedTransactions(address, pageSize, before)
+    all = all.concat(batch)
+    if (batch.length < pageSize) break
+    const lastSig = getSignatureFromTx(batch[batch.length - 1])
+    if (!lastSig) break
+    before = lastSig
+  }
+  return all
+}
+
+const toTxRecordFromRpc = (info: any, tx: any) => ({
+  signature: info.signature,
+  blockTime: info.blockTime || null,
+  err: info.err || tx?.meta?.err || null,
+  logs: tx?.meta?.logMessages || [],
+  message: tx?.transaction?.message || null,
+  meta: tx?.meta || null,
+})
+
+const toTxRecordFromEnhanced = (tx: any) => ({
+  signature: getSignatureFromTx(tx),
+  blockTime: getBlockTimeFromTx(tx),
+  err: tx?.err || tx?.meta?.err || tx?.transactionError || null,
+  logs: tx?.meta?.logMessages || tx?.logs || [],
+  message: tx?.transaction?.message || tx?.tx?.message || tx?.message || null,
+  meta: tx?.meta || null,
+})
+
+const getAccountKeysFromMessage = (message: any) => {
+  if (!message) return []
+  if (Array.isArray(message.accountKeys)) {
+    return message.accountKeys.map((key: any) =>
+      typeof key === 'string' ? key : key?.toBase58?.() || String(key)
+    )
+  }
+  if (message.getAccountKeys) {
+    const keys = message.getAccountKeys()
+    const allKeys = [
+      ...(keys.staticAccountKeys || []),
+      ...(keys.accountKeysFromLookups?.writable || []),
+      ...(keys.accountKeysFromLookups?.readonly || []),
+    ]
+    return allKeys.map((key: any) => (typeof key === 'string' ? key : key?.toBase58?.()))
+  }
+  return []
+}
+
+const getInstructionList = (message: any) => {
+  if (!message) return []
+  return message.instructions || message.compiledInstructions || []
+}
+
+const noticeSign = (value: number) => (value > 0 ? '+' : '')
+
+const getTokenDeltaFromMeta = (meta: any) => {
+  const pre = meta?.preTokenBalances || []
+  const post = meta?.postTokenBalances || []
+  const byMint = new Map<string, { pre: number; post: number }>()
+  pre.forEach((balance: any) => {
+    if (!balance?.mint) return
+    const amount = Number(balance?.uiTokenAmount?.uiAmount || 0)
+    byMint.set(balance.mint, { pre: amount, post: 0 })
+  })
+  post.forEach((balance: any) => {
+    if (!balance?.mint) return
+    const amount = Number(balance?.uiTokenAmount?.uiAmount || 0)
+    const current = byMint.get(balance.mint) || { pre: 0, post: 0 }
+    current.post = amount
+    byMint.set(balance.mint, current)
+  })
+  const first = Array.from(byMint.entries()).find(([, value]) => value.pre !== value.post)
+  if (!first) return null
+  const [mint, value] = first
+  const delta = value.post - value.pre
+  return `${noticeSign(delta)}${delta.toFixed(4)} ${maskAddress(mint)}`
+}
+
 export default function DashboardPage() {
   const wallet = useWallet()
-  const [capsules, setCapsules] = useState<CapsuleListItem[]>([])
+  const [capsules, setCapsules] = useState<CapsuleRow[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<'all' | 'live' | 'created' | 'executed' | 'active' | 'expired'>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'created' | 'executed' | 'active' | 'expired'>('all')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<number | null>(null)
@@ -142,26 +394,17 @@ export default function DashboardPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [refreshKey, setRefreshKey] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [isListLoading, setIsListLoading] = useState(false)
   const [feeConfigExists, setFeeConfigExists] = useState<boolean | null>(null)
   const [initFeePending, setInitFeePending] = useState(false)
   const [initFeeTx, setInitFeeTx] = useState<string | null>(null)
   const [initFeeError, setInitFeeError] = useState<string | null>(null)
-  const [listTotal, setListTotal] = useState(0)
-  const [totalPages, setTotalPages] = useState(1)
-  const [debouncedQuery, setDebouncedQuery] = useState('')
-  const loadTokenRef = useRef(0)
   const [summary, setSummary] = useState({
     total: 0,
-    allTimeCreated: null as number | null,
     active: 0,
     executed: 0,
     expired: 0,
     proofs: 0,
     successRate: 0,
-    totalValueSecuredLamports: 0,
-    totalValueExecutedLamports: 0,
-    activeValueLockedLamports: 0,
   })
 
   useEffect(() => {
@@ -176,26 +419,19 @@ export default function DashboardPage() {
 
   // Check if fee_config PDA exists (諛고룷 ...1...珥덇린...?щ?)
   useEffect(() => {
-    const controller = new AbortController()
+    let cancelled = false
     const check = async () => {
       try {
-        const params = new URLSearchParams()
-        if (refreshKey > 0) params.set('refresh', '1')
-        const res = await fetch(`/api/capsules/fee-config${params.toString() ? `?${params.toString()}` : ''}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        })
-        const payload = await res.json().catch(() => null)
-        if (!res.ok || !payload) {
-          throw new Error(payload?.error || `Fee config request failed (${res.status})`)
-        }
-        setFeeConfigExists(Boolean(payload.exists))
+        const connection = getSolanaConnection()
+        const [feeConfigPDA] = getFeeConfigPDA()
+        const account = await connection.getAccountInfo(feeConfigPDA)
+        if (!cancelled) setFeeConfigExists(account != null)
       } catch {
-        if (!controller.signal.aborted) setFeeConfigExists(null)
+        if (!cancelled) setFeeConfigExists(null)
       }
     }
     check()
-    return () => { controller.abort() }
+    return () => { cancelled = true }
   }, [refreshKey])
 
   const handleInitFeeConfig = useCallback(async () => {
@@ -222,102 +458,447 @@ export default function DashboardPage() {
   }, [wallet])
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setDebouncedQuery(query.trim())
-    }, 250)
+    let isMounted = true
 
-    return () => window.clearTimeout(timeout)
-  }, [query])
+    const DASHBOARD_CACHE_KEY = 'dashboard_cache'
+    const DASHBOARD_CACHE_TTL = 5 * 60 * 1000 // 5 min
 
-  useEffect(() => {
-    const controller = new AbortController()
-    const requestToken = ++loadTokenRef.current
+    const loadDashboard = async () => {
+      // Try sessionStorage cache first (skip on manual refresh)
+      if (refreshKey === 0) {
+        try {
+          const cached = sessionStorage.getItem(DASHBOARD_CACHE_KEY)
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached)
+            if (Date.now() - timestamp < DASHBOARD_CACHE_TTL && data) {
+              if (isMounted) {
+                setCapsules(data.capsules)
+                setSummary(data.summary)
+                setLastUpdated(timestamp)
+                setError(null)
+                setIsRefreshing(false)
+              }
+              return
+            }
+          }
+        } catch { /* ignore cache read errors */ }
+      }
 
-    const loadSummary = async () => {
       setIsRefreshing(true)
       try {
-        const params = new URLSearchParams()
-        if (refreshKey > 0) params.set('refresh', '1')
-        const res = await fetch(`/api/capsules/summary${params.toString() ? `?${params.toString()}` : ''}`, {
+        const snapshotResponse = await fetch(`/api/dashboard?history=1${refreshKey > 0 ? '&refresh=1' : ''}`, {
           cache: 'no-store',
-          signal: controller.signal,
         })
-        const payload = (await res.json().catch(() => null)) as CapsuleSummaryPayload | null
-        if (!res.ok || !payload) {
-          throw new Error((payload as any)?.error || `Summary request failed (${res.status})`)
+        if (!snapshotResponse.ok) {
+          throw new Error(`Dashboard API failed with ${snapshotResponse.status}`)
         }
-        if (requestToken !== loadTokenRef.current || controller.signal.aborted) return
-        setSummary(payload.summary)
-        setLastUpdated(payload.timestamp || Date.now())
-        setError(null)
-      } catch {
-        if (!controller.signal.aborted) {
+
+        const snapshot = await snapshotResponse.json()
+        if (snapshot?.capsules && snapshot?.summary) {
+          if (isMounted) {
+            setCapsules(snapshot.capsules)
+            setSummary({
+              total: Number(snapshot.summary.total || 0),
+              active: Number(snapshot.summary.active || 0),
+              executed: Number(snapshot.summary.executed || 0),
+              expired: Number(snapshot.summary.expired || 0),
+              proofs: Number(snapshot.summary.proofs || 0),
+              successRate: Number(snapshot.summary.successRate || 0),
+            })
+            setLastUpdated(typeof snapshot.timestamp === 'number' ? snapshot.timestamp : Date.now())
+            setError(null)
+
+            try {
+              sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
+                data: {
+                  capsules: snapshot.capsules,
+                  summary: {
+                    total: Number(snapshot.summary.total || 0),
+                    active: Number(snapshot.summary.active || 0),
+                    executed: Number(snapshot.summary.executed || 0),
+                    expired: Number(snapshot.summary.expired || 0),
+                    proofs: Number(snapshot.summary.proofs || 0),
+                    successRate: Number(snapshot.summary.successRate || 0),
+                  },
+                },
+                timestamp: typeof snapshot.timestamp === 'number' ? snapshot.timestamp : Date.now(),
+              }))
+            } catch { /* ignore quota errors */ }
+          }
+          return
+        }
+
+        const connection = getSolanaConnection()
+        const programId = getProgramId()
+
+        let accounts: any = []
+        try {
+          console.log('Fetching program accounts from primary RPC...')
+          accounts = await connection.getProgramAccounts(programId, {
+            commitment: 'confirmed',
+          })
+        } catch (e: any) {
+          console.warn('Primary RPC failed:', e)
+          // Handle 403 or other RPC failures by falling back
+          if (e?.message?.includes('403') || e?.message?.includes('Forbidden') || e?.message?.includes('Bad request')) {
+            console.log('Detection of 403/Forbidden. Retrying with fallback RPC...')
+            try {
+              const fallbackConnection = new Connection(HELIUS_CONFIG.PUBLIC_RPC_URL, 'confirmed')
+              accounts = await fallbackConnection.getProgramAccounts(programId, {
+                commitment: 'confirmed',
+              })
+              console.log('Successfully fetched from fallback RPC')
+            } catch (fallbackError: any) {
+              console.error('Fallback RPC also failed:', fallbackError)
+              throw fallbackError
+            }
+          } else {
+            throw e
+          }
+        }
+
+        const decodedCapsules = accounts
+          .map((account: any) => {
+            try {
+              const decoded = decodeCapsuleAccount(account.account.data)
+              if (!decoded) return null
+              return {
+                capsuleAddress: account.pubkey.toBase58(),
+                owner: decoded.owner.toBase58(),
+                inactivityPeriod: decoded.inactivityPeriod,
+                lastActivity: decoded.lastActivity,
+                intentData: decoded.intentData,
+                isActive: decoded.isActive,
+                executedAt: decoded.executedAt,
+              }
+            } catch {
+              return null
+            }
+          })
+          .filter(Boolean) as Array<{
+            capsuleAddress: string
+            owner: string
+            inactivityPeriod: number
+            lastActivity: number
+            intentData: Uint8Array
+            isActive: boolean
+            executedAt: number | null
+          }>
+
+        const nowSeconds = Math.floor(Date.now() / 1000)
+
+        // Collect signatures: RPC first, then add any extra from Helius
+        let signatureInfos: any[] = []
+        try {
+          signatureInfos = await fetchAllSignatures(connection, programId)
+          if (SOLANA_CONFIG.HELIUS_API_KEY) {
+            const enhancedTransactions = await fetchAllEnhancedTransactions(programId.toBase58())
+            const heliusSigs = new Set(signatureInfos.map((s) => s.signature))
+            for (const tx of enhancedTransactions) {
+              const sig = getSignatureFromTx(tx)
+              if (sig && !heliusSigs.has(sig)) {
+                heliusSigs.add(sig)
+                signatureInfos.push({
+                  signature: sig,
+                  err: null,
+                  blockTime: getBlockTimeFromTx(tx) || undefined,
+                  memo: null,
+                  slot: (tx?.slot || tx?.transaction?.slot || 0) as number,
+                })
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to fetch signatures (history may be incomplete):', e)
+        }
+
+        let rpcTransactions: any[] = []
+        if (signatureInfos.length > 0) {
+          try {
+            rpcTransactions = await fetchTransactionsBatched(connection, signatureInfos)
+          } catch (e) {
+            console.warn('Failed to fetch batch transactions:', e)
+          }
+        }
+
+        const combinedTxMap = new Map<string, ReturnType<typeof toTxRecordFromRpc>>()
+        rpcTransactions
+          .map(({ info, tx }) => toTxRecordFromRpc(info, tx))
+          .forEach((record) => {
+            combinedTxMap.set(record.signature, record)
+          })
+
+        const transactions = Array.from(combinedTxMap.values())
+        const capsuleEvents = new Map<string, CapsuleEvent[]>()
+        const eventRows: CapsuleRow[] = []
+
+        let totalProofsSubmitted = 0
+        let verifiedProofs = 0
+
+        transactions.forEach((record) => {
+          const logs = record.logs || []
+          const instruction = detectInstruction(logs)
+          if (instruction === 'execute_intent') {
+            totalProofsSubmitted += 1
+            if (!record.err) verifiedProofs += 1
+          }
+
+          const message = record.message
+          if (!message) return
+          const accountKeys = getAccountKeysFromMessage(message)
+          const instructions = getInstructionList(message)
+          const programIdStr = programId.toBase58()
+
+          instructions.forEach((ix: any) => {
+            const ixProgramId = ix.programId
+              ? typeof ix.programId === 'string'
+                ? ix.programId
+                : ix.programId.toBase58()
+              : accountKeys[ix.programIdIndex]
+            if (ixProgramId !== programIdStr) return
+
+            let accountIndexes: number[] = []
+            if (Array.isArray(ix.accounts) && typeof ix.accounts[0] === 'number') {
+              accountIndexes = ix.accounts
+            } else if (Array.isArray(ix.accounts)) {
+              accountIndexes = ix.accounts.map((key: any) => {
+                const keyStr = typeof key === 'string' ? key : key?.toBase58?.()
+                return accountKeys.findIndex((k: string) => k === keyStr)
+              })
+            }
+
+            if (accountIndexes.length < 2) return
+            const capsuleKey = accountKeys[accountIndexes[0]]
+            const ownerKey = accountKeys[accountIndexes[1]] || null
+            if (!capsuleKey) return
+
+            let proofBytes: number | null = null
+            if (instruction === 'execute_intent' && ix.data) {
+              const dataLength = typeof ix.data === 'string' ? ix.data.length : ix.data?.length || 0
+              proofBytes = dataLength || null
+            }
+
+            let solDelta: number | null = null
+            if (record.meta?.preBalances && record.meta?.postBalances && ownerKey) {
+              const ownerIndex = accountKeys.findIndex((key: string) => key === ownerKey)
+              if (ownerIndex >= 0) {
+                const pre = record.meta.preBalances[ownerIndex] || 0
+                const post = record.meta.postBalances[ownerIndex] || 0
+                solDelta = (post - pre) / 1_000_000_000
+              }
+            }
+
+            const tokenDelta = getTokenDeltaFromMeta(record.meta)
+
+            const event: CapsuleEvent = {
+              signature: record.signature,
+              blockTime: record.blockTime || null,
+              status: record.err ? 'failed' : 'success',
+              label: instructionLabel(instruction),
+              logs,
+              capsuleAddress: capsuleKey,
+              owner: ownerKey,
+              tokenDelta,
+              solDelta,
+              proofBytes,
+            }
+
+            const existing = capsuleEvents.get(capsuleKey) || []
+            existing.push(event)
+            capsuleEvents.set(capsuleKey, existing)
+
+            if (['create_capsule', 'recreate_capsule', 'execute_intent'].includes(instruction)) {
+              eventRows.push({
+                id: `event:${record.signature}`,
+                kind: 'event' as const,
+                capsuleAddress: capsuleKey,
+                owner: ownerKey,
+                status: statusFromInstruction(instruction),
+                inactivitySeconds: null,
+                lastActivityMs: record.blockTime ? record.blockTime * 1000 : null,
+                executedAtMs: instruction === 'execute_intent' && record.blockTime ? record.blockTime * 1000 : null,
+                payloadSize: null,
+                signature: record.signature,
+                isActive: null,
+                events: [event],
+                tokenDelta,
+                solDelta,
+                proofBytes,
+              } as CapsuleRow)
+            }
+          })
+        })
+
+        const capsuleRows: CapsuleRow[] = decodedCapsules
+          .map((capsule) => {
+            const executedAtMs = capsule.executedAt ? capsule.executedAt * 1000 : null
+            const lastActivityMs = capsule.lastActivity * 1000
+            const isExpired = capsule.executedAt === null && capsule.lastActivity + capsule.inactivityPeriod < nowSeconds
+            const status = capsule.executedAt
+              ? 'Executed'
+              : isExpired
+                ? 'Expired'
+                : 'Active'
+            const events = (capsuleEvents.get(capsule.capsuleAddress) || []).sort(
+              (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
+            )
+            const latestSignature = events[0]?.signature || null
+
+            return {
+              id: capsule.capsuleAddress,
+              kind: 'capsule' as const,
+              capsuleAddress: capsule.capsuleAddress,
+              owner: capsule.owner,
+              status,
+              inactivitySeconds: capsule.inactivityPeriod,
+              lastActivityMs,
+              executedAtMs,
+              payloadSize: capsule.intentData.length,
+              signature: latestSignature,
+              isActive: capsule.isActive,
+              events,
+              tokenDelta: null,
+              solDelta: null,
+              proofBytes: null,
+            } as CapsuleRow
+          })
+          .filter((row) => {
+            // Exclude waiting state: inactive, not executed, not expired (do not display)
+            if (row.kind !== 'capsule') return true
+            if (row.status === 'Active' && row.isActive === false) return false
+            return true
+          })
+
+        const totalEventSignatures = eventRows.length
+        const executedEventSignatures = eventRows.filter((row) => row.status === 'Executed').length
+
+        const activeCapsules = capsuleRows.filter((capsule) => capsule.status === 'Active').length
+        const executedCapsules = capsuleRows.filter((capsule) => capsule.status === 'Executed').length
+        const expiredCapsules = capsuleRows.filter((capsule) => capsule.status === 'Expired').length
+        const successRate =
+          totalProofsSubmitted > 0 ? (verifiedProofs / totalProofsSubmitted) * 100 : 0
+
+        const combinedRows: CapsuleRow[] = [...capsuleRows, ...eventRows].sort((a, b) => {
+          const aTime = a.lastActivityMs || a.executedAtMs || 0
+          const bTime = b.lastActivityMs || b.executedAtMs || 0
+          return bTime - aTime
+        })
+
+        if (isMounted) {
+          const summaryData = {
+            total: totalEventSignatures,
+            active: activeCapsules,
+            executed: executedEventSignatures,
+            expired: expiredCapsules,
+            proofs: verifiedProofs,
+            successRate,
+          }
+          setCapsules(combinedRows)
+          setSummary(summaryData)
+          setLastUpdated(Date.now())
+          setError(null)
+
+          // Cache to sessionStorage
+          try {
+            sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify({
+              data: { capsules: combinedRows, summary: summaryData },
+              timestamp: Date.now(),
+            }))
+          } catch { /* ignore quota errors */ }
+        }
+      } catch (err) {
+        if (isMounted) {
           setError('Unable to load on-chain capsule data. Please check RPC connectivity.')
         }
       } finally {
-        if (!controller.signal.aborted) setIsRefreshing(false)
+        if (isMounted) setIsRefreshing(false)
       }
     }
 
-    loadSummary()
-    return () => controller.abort()
+    loadDashboard()
+
+    return () => {
+      isMounted = false
+    }
   }, [refreshKey])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    const loadList = async () => {
-      setIsListLoading(true)
-      try {
-        const params = new URLSearchParams({
-          page: String(currentPage),
-          limit: '10',
-          filter: filterMode,
-          sort: sortOrder,
-        })
-        if (debouncedQuery) params.set('query', debouncedQuery)
-        if (refreshKey > 0) params.set('refresh', '1')
-        const res = await fetch(`/api/capsules/list?${params.toString()}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        })
-        const payload = (await res.json().catch(() => null)) as CapsuleListPayload | null
-        if (!res.ok || !payload) {
-          throw new Error((payload as any)?.error || `List request failed (${res.status})`)
-        }
-        if (controller.signal.aborted) return
-        setCapsules(Array.isArray(payload.items) ? payload.items : [])
-        setListTotal(payload.total || 0)
-        setTotalPages(payload.totalPages || 1)
-        setCurrentPage(payload.page || 1)
-        setLastUpdated(payload.timestamp || Date.now())
-        setError(null)
-      } catch {
-        if (!controller.signal.aborted) {
-          setError('Unable to load on-chain capsule data. Please check RPC connectivity.')
-        }
-      } finally {
-        if (!controller.signal.aborted) setIsListLoading(false)
-      }
-    }
+  const filteredCapsules = useMemo(() => {
+    const value = query.trim().toLowerCase()
+    const scoped = capsules.filter((capsule) => {
+      if (filterMode === 'created' && capsule.status !== 'Created') return false
+      if (filterMode === 'executed' && capsule.status !== 'Executed') return false
+      if (filterMode === 'active' && capsule.status !== 'Active') return false
+      if (filterMode === 'expired' && capsule.status !== 'Expired') return false
+      if (!value) return true
+      return (
+        capsule.capsuleAddress.toLowerCase().includes(value) ||
+        capsule.owner?.toLowerCase().includes(value) ||
+        capsule.signature?.toLowerCase().includes(value)
+      )
+    })
+    const sorted = scoped.sort((a, b) => {
+      const aTime = a.lastActivityMs || a.executedAtMs || 0
+      const bTime = b.lastActivityMs || b.executedAtMs || 0
+      return sortOrder === 'newest' ? bTime - aTime : aTime - bTime
+    })
+    return sorted
+  }, [capsules, filterMode, query, sortOrder])
 
-    loadList()
-    return () => controller.abort()
-  }, [currentPage, debouncedQuery, filterMode, refreshKey, sortOrder])
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filterMode, query, sortOrder])
 
   const pageSize = 10
-  const pagedCapsules = capsules
+  const totalPages = Math.max(1, Math.ceil(filteredCapsules.length / pageSize))
+  const pageStart = (currentPage - 1) * pageSize
+  const pagedCapsules = filteredCapsules.slice(pageStart, pageStart + pageSize)
+
+  const totalBase = Math.max(summary.total, 1)
+  const activeDelta = (summary.active / totalBase) * 100
+  const executedDelta = (summary.executed / totalBase) * 100
+  const proofDelta = summary.successRate
+  const totalDelta = ((summary.active + summary.proofs) / totalBase) * 100
 
   const statCards = [
-    { label: 'Active Capsules', value: formatNumber(summary.active), tone: 'text-Heres-accent' },
-    { label: 'Executed Capsules', value: formatNumber(summary.executed), tone: 'text-Heres-purple' },
-    { label: 'PER (TEE) Verified', value: formatNumber(summary.proofs), tone: 'text-Heres-accent' },
-    { label: 'Total Value Secured', value: formatSol(summary.totalValueSecuredLamports), tone: 'text-Heres-accent' },
-    { label: 'Total Value Executed', value: formatSol(summary.totalValueExecutedLamports), tone: 'text-Heres-purple' },
-    { label: 'Active Value Locked', value: formatSol(summary.activeValueLockedLamports), tone: 'text-Heres-accent' },
+    {
+      label: 'Total Capsule Events',
+      value: formatNumber(summary.total),
+      metaLabel: 'Active + Verified',
+      metaValue: formatNumber(summary.active + summary.proofs),
+      delta: formatDelta(totalDelta),
+      accent: 'cyan' as const,
+      linePath: 'M8 80 C28 18, 54 70, 74 40 S112 28, 132 20',
+    },
+    {
+      label: 'Active Capsules',
+      value: formatNumber(summary.active),
+      metaLabel: 'Live on dashboard',
+      metaValue: `${activeDelta.toFixed(1)}%`,
+      delta: formatDelta(activeDelta),
+      accent: 'cyan' as const,
+      linePath: 'M8 78 C24 62, 40 44, 58 38 S92 34, 112 20 S126 12, 132 14',
+    },
+    {
+      label: 'Executed Capsules',
+      value: formatNumber(summary.executed),
+      metaLabel: 'Execution share',
+      metaValue: `${executedDelta.toFixed(1)}%`,
+      delta: formatDelta(executedDelta),
+      accent: 'purple' as const,
+      linePath: 'M8 84 C28 66, 42 76, 58 56 S86 32, 100 30 S120 18, 132 12',
+    },
+    {
+      label: 'PER (TEE) Verified',
+      value: formatNumber(summary.proofs),
+      metaLabel: 'Proof success rate',
+      metaValue: `${proofDelta.toFixed(1)}%`,
+      delta: formatDelta(proofDelta),
+      accent: 'cyan' as const,
+      linePath: 'M8 82 C24 70, 40 48, 58 52 S86 42, 100 26 S122 18, 132 8',
+    },
   ]
 
   const programIdStr = SOLANA_CONFIG.PROGRAM_ID
-  const rpcLabel = SOLANA_CONFIG.HELIUS_API_KEY ? 'Helius Devnet' : 'Solana Devnet'
 
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
@@ -330,23 +911,36 @@ export default function DashboardPage() {
           )}
 
           {/* Explorer-style: single header card (name + version + stats + Updated) */}
-          <section className="card-Heres p-6 sm:p-8 mb-6">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap items-baseline gap-4">
-                <h1 className="text-2xl font-bold text-Heres-white sm:text-3xl">
-                  Heres Capsules
-                </h1>
+          <ServicePageHeader
+            className="mb-6"
+            eyebrow={<SectionEyebrow>Protocol Monitor</SectionEyebrow>}
+            title="Heres Capsules"
+            description="Track capsule status, PER (TEE) execution, and verification on the active Solana cluster."
+            badges={
+              <>
                 <span className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-2.5 py-1 text-xs font-medium text-Heres-muted">
                   v1.0
                 </span>
-                <span className="text-Heres-accent font-semibold">
+                <span className="rounded-lg border border-Heres-border bg-Heres-card/70 px-2.5 py-1 text-xs font-medium text-Heres-accent">
                   {formatNumber(summary.total)} Capsules
                 </span>
-              </div>
-              <div className="flex items-center gap-3">
+                <a
+                  href={getExplorerUrl('address', programIdStr)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-xs font-medium text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent"
+                  title={programIdStr}
+                >
+                  <span className="uppercase tracking-wider text-[10px]">Program ID</span>
+                  <span className="font-mono text-Heres-white">{maskAddress(programIdStr)}</span>
+                </a>
+              </>
+            }
+            actions={
+              <>
                 <Link
                   href="/capsules"
-                  className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-4 py-2 text-sm font-medium text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent"
+                  className="inline-flex items-center gap-2 rounded-xl border border-Heres-border bg-Heres-card/80 px-4 py-2 text-sm font-medium text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent"
                 >
                   <User className="h-4 w-4" />
                   My Capsule
@@ -355,24 +949,18 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setRefreshKey((k) => k + 1)}
                   disabled={isRefreshing}
-                  className="flex items-center gap-3 rounded-lg border border-Heres-border bg-Heres-card/80 px-4 py-2 text-sm text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent disabled:opacity-70"
+                  className="flex items-center gap-3 rounded-xl border border-Heres-border bg-Heres-card/80 px-4 py-2 text-sm text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent disabled:opacity-70"
                 >
-                  <RefreshCw
-                    className={`h-4 w-4 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`}
-                    style={isRefreshing ? { animation: 'spin 1s linear infinite' } : undefined}
-                  />
+                  <RefreshCw className={`h-4 w-4 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
                   {isRefreshing ? 'Syncing...' : lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : 'Syncing'}
                 </button>
-              </div>
-            </div>
-            <p className="mt-3 text-sm text-Heres-muted max-w-xl">
-              Track capsule status, PER (TEE) execution, and verification on Solana Devnet.
-            </p>
-          </section>
+              </>
+            }
+          />
 
           {/* ?섏닔猷...ㅼ젙 珥덇린... Fee config媛 ?놁쓣 ?뚮쭔 ?쒖떆 (諛고룷 ...1?뚮쭔 ?꾩슂) */}
           {wallet.connected && feeConfigExists === false && (
-            <section className="card-Heres p-6 mb-6 border-Heres-accent/30">
+            <section className="dashboard-panel p-6 mb-6 border-Heres-accent/20">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-Heres-accent/10 border border-Heres-accent/40 flex items-center justify-center">
@@ -398,7 +986,7 @@ export default function DashboardPage() {
                 <p className="mt-3 text-sm text-Heres-accent">
                   ?깃났:{' '}
                   <a
-                    href={`https://explorer.solana.com/tx/${initFeeTx}?cluster=devnet`}
+                    href={getExplorerUrl('tx', initFeeTx)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline"
@@ -413,56 +1001,81 @@ export default function DashboardPage() {
             </section>
           )}
 
-          {/* Explorer-style: metadata grid (Network, Program ID, Query URL) */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Network</p>
-              <p className="text-sm font-medium text-Heres-white truncate">
-                {SOLANA_CONFIG.NETWORK ? `Solana ${SOLANA_CONFIG.NETWORK}` : 'Solana Devnet'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Program ID</p>
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={programIdStr}>
-                  {maskAddress(programIdStr)}
-                </p>
-              </div>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">RPC</p>
-              <p className="text-sm font-medium text-Heres-white truncate">{rpcLabel}</p>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4 sm:col-span-2 lg:col-span-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Index Status</p>
-              <p className="text-sm font-medium text-Heres-accent">Live</p>
-            </div>
-          </section>
-
           {/* Stats row (Explorer "Signal" style) */}
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mb-6">
-            {statCards.map((card) => (
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-6">
+            {statCards.map((card, index) => (
               <div
                 key={card.label}
-                className="card-Heres p-5 transition-all hover:border-Heres-accent/30"
+                className={`dashboard-stat-card dashboard-stat-card--${card.accent}`}
               >
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium uppercase tracking-wider text-Heres-muted">{card.label}</p>
-                  <Sparkles className="w-4 h-4 text-Heres-accent" />
+                <div className="dashboard-stat-card__glow" />
+                <div className="relative z-10 flex h-full items-start justify-between gap-6">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-Heres-muted/90">
+                      {card.label}
+                    </p>
+                    <div className="mt-3 text-[2.1rem] font-semibold leading-none text-Heres-accent sm:text-[2.35rem]">
+                      {card.value}
+                    </div>
+                    <div className="mt-5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-Heres-muted/80">
+                        {card.metaLabel}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <span className="text-2xl font-semibold text-white/80">
+                          {card.metaValue}
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-lg font-semibold text-emerald-400">
+                          <ArrowUpRight className="h-4 w-4" />
+                          {card.delta}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-Heres-muted/80">
+                        {lastUpdated ? `Updated ${timeAgo(lastUpdated)}` : 'Updated just now'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="dashboard-stat-card__chart">
+                    <svg viewBox="0 0 140 92" className="h-full w-full" aria-hidden="true">
+                      <defs>
+                        <filter id={`glow-${index}`}>
+                          <feGaussianBlur stdDeviation="2.5" result="blur" />
+                          <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                          </feMerge>
+                        </filter>
+                      </defs>
+                      <path
+                        d={card.linePath}
+                        fill="none"
+                        stroke="rgba(34, 211, 238, 0.2)"
+                        strokeWidth="5"
+                        strokeLinecap="round"
+                        filter={`url(#glow-${index})`}
+                      />
+                      <path
+                        d={card.linePath}
+                        fill="none"
+                        stroke={card.accent === 'purple' ? '#a78bfa' : '#22d3ee'}
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </div>
                 </div>
-                <div className={`mt-3 text-2xl font-semibold ${card.tone}`}>{card.value}</div>
               </div>
             ))}
           </section>
 
           {/* Explorer-style: tab bar + content */}
-          <section className="card-Heres overflow-hidden">
+          <section className="dashboard-panel dashboard-panel--table overflow-hidden">
             {/* Tab bar - Explorer "Query | Curators" style */}
-            <div className="border-b border-Heres-border">
+            <div className="border-b border-Heres-border/70 bg-Heres-surface/25">
               <div className="flex flex-wrap gap-0 overflow-x-auto">
                 {[
                   { key: 'all', label: 'All' },
-                  { key: 'live', label: 'Live' },
                   { key: 'created', label: 'Created' },
                   { key: 'executed', label: 'Executed' },
                   { key: 'active', label: 'Active' },
@@ -471,13 +1084,10 @@ export default function DashboardPage() {
                   <button
                     key={option.key}
                     type="button"
-                    onClick={() => {
-                      setCurrentPage(1)
-                      setFilterMode(option.key as typeof filterMode)
-                    }}
+                    onClick={() => setFilterMode(option.key as typeof filterMode)}
                     className={`min-w-[80px] px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${filterMode === option.key
-                      ? 'border-Heres-accent text-Heres-accent'
-                      : 'border-transparent text-Heres-muted hover:text-Heres-white'
+                      ? 'border-Heres-accent text-Heres-accent bg-Heres-accent/[0.04]'
+                      : 'border-transparent text-Heres-muted hover:text-Heres-white hover:bg-Heres-card/40'
                       }`}
                   >
                     {option.label}
@@ -490,24 +1100,18 @@ export default function DashboardPage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                 <div className="flex items-center gap-2 text-sm text-Heres-muted">
                   <Database className="w-4 h-4 text-Heres-accent" />
-                  {formatNumber(listTotal)} records
+                  {formatNumber(filteredCapsules.length)} records
                 </div>
                 <div className="flex items-center gap-2">
                   <input
                     value={query}
-                    onChange={(event) => {
-                      setCurrentPage(1)
-                      setQuery(event.target.value)
-                    }}
+                    onChange={(event) => setQuery(event.target.value)}
                     placeholder="Search by address, owner, or signature"
                     className="w-full sm:w-72 rounded-lg border border-Heres-border bg-Heres-surface/80 px-3 py-2 text-sm text-Heres-white placeholder-Heres-muted focus:outline-none focus:border-Heres-accent/50 transition"
                   />
                   <button
                     type="button"
-                    onClick={() => {
-                      setCurrentPage(1)
-                      setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')
-                    }}
+                    onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
                     className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-3 py-2 text-xs text-Heres-muted whitespace-nowrap transition hover:border-Heres-accent/40 hover:text-Heres-white"
                   >
                     {sortOrder === 'newest' ? 'Newest' : 'Oldest'}
@@ -516,20 +1120,13 @@ export default function DashboardPage() {
               </div>
 
               <div className="mt-6 space-y-3">
-                {isListLoading && listTotal === 0 && (
-                  <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 px-4 py-8 text-center text-sm text-Heres-muted">
-                    Loading on-chain capsule data...
-                  </div>
-                )}
-
-                {!isListLoading && listTotal === 0 && (
+                {filteredCapsules.length === 0 && (
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 px-4 py-8 text-center text-sm text-Heres-muted">
                     No capsules found. Try syncing again or adjust the search query.
                   </div>
                 )}
 
-                {pagedCapsules.map((capsule) => {
-                  return (
+                {pagedCapsules.map((capsule) => (
                   <div
                     key={capsule.id}
                     className={`rounded-xl border px-4 py-4 transition-colors ${capsule.kind === 'event'
@@ -551,14 +1148,10 @@ export default function DashboardPage() {
                           >
                             {capsule.status}
                           </span>
-                          {capsule.isDelegated && (
-                            <span className="rounded-lg px-2 py-1 text-[11px] font-medium uppercase tracking-wider bg-blue-500/20 text-blue-400">
-                              Delegated
-                            </span>
-                          )}
                           <span className="font-mono text-Heres-muted break-all max-w-full min-w-0">
                             {capsule.signature ? maskAddress(capsule.signature) : '...'}
                           </span>
+                          {capsule.signature && <CopyButton value={capsule.signature} />}
                         </div>
                         <div className="grid gap-2 text-xs text-Heres-muted md:grid-cols-3">
                           <div>
@@ -567,6 +1160,7 @@ export default function DashboardPage() {
                               <p className="font-mono text-Heres-white break-all truncate">
                                 {maskAddress(capsule.capsuleAddress)}
                               </p>
+                              <CopyButton value={capsule.capsuleAddress} />
                             </div>
                           </div>
                           <div>
@@ -575,6 +1169,7 @@ export default function DashboardPage() {
                               <p className="font-mono text-Heres-white break-all truncate">
                                 {capsule.owner ? maskAddress(capsule.owner) : '...'}
                               </p>
+                              {capsule.owner && <CopyButton value={capsule.owner} />}
                             </div>
                           </div>
                           <div>
@@ -602,12 +1197,149 @@ export default function DashboardPage() {
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(expandedId === capsule.id ? null : capsule.id)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-surface/80 px-4 py-2 text-xs text-Heres-muted transition hover:border-Heres-accent/50 hover:text-Heres-accent"
+                      >
+                        Details
+                        {expandedId === capsule.id ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
                     </div>
+
+                    {expandedId === capsule.id && (
+                      <div className="mt-4 w-full min-w-0 rounded-xl border border-Heres-border bg-Heres-surface/80 px-4 py-4 text-xs text-Heres-muted space-y-4 overflow-hidden">
+                        <div className="grid gap-3 md:grid-cols-2 max-w-full">
+                          <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Capsule</p>
+                            <div className="flex items-center gap-1 min-w-0">
+                              <p className="font-mono text-Heres-white break-all truncate">{capsule.capsuleAddress}</p>
+                              <CopyButton value={capsule.capsuleAddress} />
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Owner</p>
+                            <div className="flex items-center gap-1 min-w-0">
+                              <p className="font-mono text-Heres-white break-all truncate">{capsule.owner || '...'}</p>
+                              {capsule.owner && <CopyButton value={capsule.owner} />}
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Last Activity</p>
+                            <p className="text-Heres-white">{formatDateTime(capsule.lastActivityMs)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Executed At</p>
+                            <p className="text-Heres-white">{formatDateTime(capsule.executedAtMs)}</p>
+                          </div>
+                          {capsule.kind === 'capsule' ? (
+                            <>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Inactivity Seconds</p>
+                                <p className="text-Heres-white">{capsule.inactivitySeconds || '...'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Payload Size</p>
+                                <p className="text-Heres-white">{capsule.payloadSize ? `${capsule.payloadSize} bytes` : '...'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Is Active</p>
+                                <p className="text-Heres-white">{capsule.isActive == null ? '...' : capsule.isActive ? 'Yes' : 'No'}</p>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Token Delta</p>
+                                <p className="text-Heres-white">{capsule.tokenDelta || '...'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">SOL Delta</p>
+                                <p className="text-Heres-white">{capsule.solDelta == null ? '...' : `${capsule.solDelta.toFixed(4)} SOL`}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">PER (TEE) Tx Bytes</p>
+                                <p className="text-Heres-white">{capsule.proofBytes ? `${capsule.proofBytes} bytes` : '...'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">PER (TEE) Context</p>
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <p className="font-mono text-Heres-white break-all truncate">{zkProofHash || '...'}</p>
+                                  {zkProofHash && <CopyButton value={zkProofHash} />}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">PER (TEE) Commit Hash</p>
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <p className="font-mono text-Heres-white break-all truncate">{zkPublicInputsHash || '...'}</p>
+                                  {zkPublicInputsHash && <CopyButton value={zkPublicInputsHash} />}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                          <div>
+                            <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Latest Signature</p>
+                            <div className="flex items-center gap-1 min-w-0">
+                              <p className="font-mono text-Heres-white break-all truncate">{capsule.signature || '...'}</p>
+                              {capsule.signature && <CopyButton value={capsule.signature} />}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted mb-2">
+                            Capsule Events
+                          </p>
+                          {capsule.events.length === 0 ? (
+                            <p className="text-Heres-muted">No transaction events found for this capsule.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {capsule.events.map((event) => (
+                                <div
+                                  key={`${capsule.id}-${event.signature}`}
+                                  className="rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-3"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-Heres-white">{event.label}</span>
+                                    <span className="text-[10px] text-Heres-muted">
+                                      {event.blockTime ? timeAgo(event.blockTime * 1000) : '...'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-2 flex items-start justify-between gap-2 text-[11px] text-Heres-muted">
+                                    <div className="flex min-w-0 items-center gap-1">
+                                      <span className="font-mono break-all truncate">{event.signature}</span>
+                                      <CopyButton value={event.signature} className="shrink-0" />
+                                    </div>
+                                    <span className={`shrink-0 ${event.status === 'success' ? 'text-Heres-accent' : 'text-red-400'}`}>
+                                      {event.status}
+                                    </span>
+                                  </div>
+                                  {event.logs.length > 0 && (
+                                    <div className="mt-2 max-h-48 overflow-y-auto space-y-1 text-[11px] text-Heres-muted font-mono break-all whitespace-pre-wrap overflow-x-hidden">
+                                      {event.logs.map((log, index) => (
+                                        <div key={`${event.signature}-${index}`}>{log}</div>
+                                      ))}
+                                      <p className="text-[10px] text-Heres-muted pt-1">
+                                        {event.logs.length} log{event.logs.length !== 1 ? 's' : ''} total
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )})}
+                ))}
               </div>
 
-              {listTotal > pageSize && (
+              {filteredCapsules.length > pageSize && (
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-Heres-muted">
                   <button
                     type="button"

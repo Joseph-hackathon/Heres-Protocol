@@ -56,16 +56,9 @@ async function handleCron(request: NextRequest) {
   }
 
   try {
-    // Overall 50s timeout to avoid serverless function hanging
-    const timeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
-      Promise.race([
-        p,
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
-      ])
-
     const [crankResult, creResult] = await Promise.allSettled([
-      timeout(runCrank(keypair), 45000, 'runCrank'),
-      timeout(reconcileCreDeliveries(), 45000, 'reconcileCre'),
+      runCrank(keypair),
+      reconcileCreDeliveries(),
     ])
 
     if (crankResult.status === 'rejected') {
@@ -77,19 +70,13 @@ async function handleCron(request: NextRequest) {
       return NextResponse.json({ error: message, cre }, { status: 500 })
     }
 
-    const response = {
+    return NextResponse.json({
       ...crankResult.value,
       cre:
         creResult.status === 'fulfilled'
           ? creResult.value
           : { error: creResult.reason instanceof Error ? creResult.reason.message : String(creResult.reason) },
-    }
-
-    if (!crankResult.value.ok) {
-      return NextResponse.json(response, { status: 500 })
-    }
-
-    return NextResponse.json(response)
+    })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: message }, { status: 500 })

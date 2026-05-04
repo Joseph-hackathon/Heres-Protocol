@@ -36,6 +36,26 @@ function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey
   )[0]
 }
 
+function buildCreateAssociatedTokenAccountInstruction(
+  payer: PublicKey,
+  ata: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.alloc(0),
+  })
+}
+
 /** Default crank cadence mirrors the configured MagicBlock ER schedule interval. */
 export const CRANK_DEFAULT_INTERVAL_MS = MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS
 export const CRANK_DEFAULT_ITERATIONS = 100_000
@@ -671,6 +691,24 @@ export async function distributeAssets(
     feeRecipient = platformFeeRecipient || new PublicKey('Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb')
   }
 
+  const preInstructions: TransactionInstruction[] = []
+  const feeRecipientAccount = isSpl && mint
+    ? getAssociatedTokenAddress(mint, feeRecipient)
+    : feeRecipient
+  if (isSpl && mint) {
+    const feeRecipientAtaInfo = await baseConn.getAccountInfo(feeRecipientAccount)
+    if (!feeRecipientAtaInfo) {
+      preInstructions.push(
+        buildCreateAssociatedTokenAccountInstruction(
+          wallet.publicKey,
+          feeRecipientAccount,
+          feeRecipient,
+          mint
+        )
+      )
+    }
+  }
+
   // distribute_assets discriminator: sha256("global:distribute_assets")[0..8]
   const discriminator = Buffer.from([239, 241, 19, 219, 144, 191, 154, 18])
   const keys = [
@@ -679,7 +717,7 @@ export async function distributeAssets(
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: feeConfigPDA, isSigner: false, isWritable: false },
-    { pubkey: feeRecipient, isSigner: false, isWritable: true },
+    { pubkey: feeRecipientAccount, isSigner: false, isWritable: true },
     // optional: mint (sentinel for None)
     { pubkey: isSpl ? mint : programId, isSigner: false, isWritable: false },
     // optional: vault_token_account (sentinel for None)
@@ -690,6 +728,7 @@ export async function distributeAssets(
   const ix = new TransactionInstruction({ keys, programId, data: discriminator })
   const { blockhash, lastValidBlockHeight } = await baseConn.getLatestBlockhash('confirmed')
   const tx = new Transaction({ feePayer: wallet.publicKey, blockhash, lastValidBlockHeight })
+  preInstructions.forEach((instruction) => tx.add(instruction))
   tx.add(ix)
   const signedTx = await wallet.signTransaction!(tx)
   const txSignature = await baseConn.sendRawTransaction(signedTx.serialize(), { skipPreflight: true })
@@ -932,7 +971,10 @@ export async function getCapsule(owner: PublicKey): Promise<IntentCapsule | null
     }
 
     if (!accountInfo || !accountInfo.data) {
-      debugLog('No account info or data found for PDA:', capsulePDA.toString())
+      debugLog('No account info or data found for capsule:', {
+        owner: owner.toString(),
+        capsulePda: capsulePDA.toString(),
+      })
       return null
     }
 
@@ -1020,6 +1062,7 @@ export async function getCapsule(owner: PublicKey): Promise<IntentCapsule | null
     }
 
     debugLog('Successfully fetched capsule:', {
+      requestedOwner: owner.toString(),
       owner: capsule.owner.toString(),
       isActive: capsule.isActive,
       executedAt: capsule.executedAt,
@@ -1292,4 +1335,3 @@ export async function deactivateCapsule(
 
 // Re-export types
 export type { IntentCapsule } from '@/types'
-

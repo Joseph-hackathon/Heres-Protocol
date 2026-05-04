@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { ArrowLeft, Copy, RefreshCw, Shield } from 'lucide-react'
+import { Copy, RefreshCw, Shield } from 'lucide-react'
 import {
   getCapsuleByAddress,
   executeIntent,
@@ -15,10 +15,11 @@ import {
 } from '@/lib/solana'
 import { getCapsuleVaultPDA } from '@/lib/program'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
-import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE } from '@/constants'
+import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE, getExplorerUrl, getNetworkDisplayLabel } from '@/constants'
 import { parseIntentPayload, formatDuration } from '@/utils/intent'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64 } from '@/utils/creCrypto'
+import { inferAssetConfig } from '@/lib/assets'
 import {
   XAxis,
   YAxis,
@@ -28,9 +29,7 @@ import {
   Area,
   AreaChart,
 } from 'recharts'
-
-const COINGECKO_SOL_BASE = 'https://api.coingecko.com/api/v3/coins/solana/market_chart?vs_currency=usd&days='
-const COINGECKO_SOL_PRICE = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+import { SectionEyebrow, ServiceMetaCard, ServiceMetaGrid, ServicePageHeader, ServiceSection } from '@/components/ui/service-page'
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -56,6 +55,8 @@ type IntentParsed =
     type: 'token'
     intent?: string
     totalAmount?: string
+    assetSymbol?: string
+    assetMint?: string | null
     beneficiaries?: any[]
     inactivityDays?: number
     delayDays?: number
@@ -82,6 +83,8 @@ type IntentParsed =
     intent?: string
     nftMints?: string[]
     nftRecipients?: string[]
+    assetSymbol?: string
+    assetMint?: string | null
     inactivityDays?: number
     delayDays?: number
     cre?: {
@@ -125,6 +128,17 @@ function CopyButton({ value }: { value: string }) {
       <Copy className="h-4 w-4" />
     </button>
   )
+}
+
+function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [
+      owner.toBuffer(),
+      new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA').toBuffer(),
+      mint.toBuffer(),
+    ],
+    new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+  )[0]
 }
 
 function timeAgo(ms: number | null) {
@@ -291,6 +305,9 @@ export default function CapsuleDetailPage() {
 
   const isNft = intentParsed?.type === 'nft'
   const isToken = intentParsed?.type === 'token'
+  const assetConfig = inferAssetConfig(intentParsed ?? undefined, capsule?.mint)
+  const priceChartBaseUrl = `https://api.coingecko.com/api/v3/coins/${assetConfig.coingeckoId}/market_chart?vs_currency=usd&days=`
+  const priceLookupUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${assetConfig.coingeckoId}&vs_currencies=usd`
   const creConfig = intentParsed?.cre ?? intentParsed?.premium
   const isCreEnabled = Boolean(
     creConfig?.enabled &&
@@ -335,9 +352,7 @@ export default function CapsuleDetailPage() {
     }
 
     const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
-    const isNativeSol = !capsule.mint || capsule.mint.equals(PublicKey.default)
-
-    if (isDelegated || !isNativeSol) {
+    if (isDelegated) {
       setDistributionComplete(false)
       return
     }
@@ -348,13 +363,23 @@ export default function CapsuleDetailPage() {
       try {
         const connection = getSolanaConnection()
         const [vaultPDA] = getCapsuleVaultPDA(capsule.owner)
-        const [vaultInfo, rentExemptLamports] = await Promise.all([
-          connection.getAccountInfo(vaultPDA),
-          connection.getMinimumBalanceForRentExemption(9),
-        ])
-        const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
+        const isNativeSol = !capsule.mint || capsule.mint.equals(PublicKey.default)
+        let distributed = false
+        if (isNativeSol) {
+          const [vaultInfo, rentExemptLamports] = await Promise.all([
+            connection.getAccountInfo(vaultPDA),
+            connection.getMinimumBalanceForRentExemption(9),
+          ])
+          const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
+          distributed = spendableLamports === 0
+        } else {
+          const mint = capsule.mint as PublicKey
+          const vaultAta = getAssociatedTokenAddress(mint, vaultPDA)
+          const ataInfo = await connection.getTokenAccountBalance(vaultAta).catch(() => null)
+          distributed = !ataInfo || Number(ataInfo.value.amount || '0') === 0
+        }
         if (!cancelled) {
-          setDistributionComplete(spendableLamports === 0)
+          setDistributionComplete(distributed)
         }
       } catch {
         if (!cancelled) {
@@ -457,7 +482,7 @@ export default function CapsuleDetailPage() {
     return () => { cancelled = true }
   }, [capsule?.capsuleAddress, isCreEnabled, wallet.connected, wallet.publicKey, wallet.signMessage, isOwner])
 
-  // Token: SOL price chart from CoinGecko (with range filter)
+  // Token price chart from CoinGecko (with range filter)
   const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
   useEffect(() => {
     if (!isToken && !isNft) {
@@ -465,7 +490,7 @@ export default function CapsuleDetailPage() {
       return
     }
     setChartLoading(true)
-    const url = `${COINGECKO_SOL_BASE}${rangeConfig.days}`
+    const url = `${priceChartBaseUrl}${rangeConfig.days}`
     fetch(url)
       .then((res) => res.json())
       .then((data: { prices?: [number, number][] }) => {
@@ -483,16 +508,16 @@ export default function CapsuleDetailPage() {
       })
       .catch(() => setChartData([]))
       .finally(() => setChartLoading(false))
-  }, [isToken, isNft, chartRange, rangeConfig.days, rangeConfig.hoursFilter, rangeConfig.key])
+  }, [isToken, isNft, priceChartBaseUrl, chartRange, rangeConfig.days, rangeConfig.hoursFilter, rangeConfig.key])
 
-  // Current SOL price (live) and polling
+  // Current asset price (live) and polling
   useEffect(() => {
     if (!isToken && !isNft) return
     const fetchPrice = () => {
-      fetch(COINGECKO_SOL_PRICE)
+      fetch(priceLookupUrl)
         .then((res) => res.json())
-        .then((data: { solana?: { usd?: number } }) => {
-          const usd = data?.solana?.usd
+        .then((data: Record<string, { usd?: number }>) => {
+          const usd = data?.[assetConfig.coingeckoId]?.usd
           if (typeof usd === 'number' && usd > 0) setCurrentSolPrice(usd)
         })
         .catch(() => { })
@@ -500,7 +525,7 @@ export default function CapsuleDetailPage() {
     fetchPrice()
     const interval = setInterval(fetchPrice, 120_000)
     return () => clearInterval(interval)
-  }, [isToken, isNft])
+  }, [assetConfig.coingeckoId, isToken, isNft, priceLookupUrl])
 
   // Keep ref in sync for animation start value
   displayedPriceRef.current = displayedSolPrice
@@ -550,8 +575,7 @@ export default function CapsuleDetailPage() {
             href="/capsules"
             className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-4 py-2 text-Heres-white hover:border-Heres-accent/40"
           >
-            <ArrowLeft className="h-4 w-4" />
-            My Capsules
+            My Capsule
           </Link>
         </div>
       </div>
@@ -572,21 +596,14 @@ export default function CapsuleDetailPage() {
     <div className="min-h-screen bg-hero text-Heres-white">
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-5xl mx-auto">
-          <Link
-            href="/capsules"
-            className="inline-flex items-center gap-2 text-sm text-Heres-muted hover:text-Heres-accent mb-6"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            My Capsules
-          </Link>
-
-          {/* Graph Explorer style: header card */}
-          <section className="card-Heres p-6 sm:p-8 mb-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap items-baseline gap-3">
-                <h1 className="text-2xl font-bold text-Heres-white sm:text-3xl">
-                  Capsule
-                </h1>
+          <ServicePageHeader
+            className="mb-6"
+            eyebrow={<SectionEyebrow>Capsule Detail</SectionEyebrow>}
+            title="Capsule"
+            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}`}
+            statusLine={`Updated ${timeAgo(lastUpdatedMs)}`}
+            badges={
+              <>
                 <span className="font-mono text-sm text-Heres-muted" title={capsule.capsuleAddress}>
                   {maskAddress(capsule.capsuleAddress)}
                 </span>
@@ -610,30 +627,20 @@ export default function CapsuleDetailPage() {
                     Delegated (PER)
                   </span>
                 )}
-              </div>
-              <p className="text-sm text-Heres-muted">
-                Updated {timeAgo(lastUpdatedMs)}
-              </p>
-            </div>
-            <p className="mt-3 text-sm text-Heres-muted max-w-xl">
-              {isNft ? 'NFT capsule' : 'Token (SOL) capsule'} · Inactivity period:{' '}
-              {formatDuration(capsule.inactivityPeriod)}
-            </p>
-          </section>
+              </>
+            }
+          />
 
-          {/* Metadata grid (Graph Explorer style) */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Network</p>
+          <ServiceMetaGrid className="mb-6">
+            <ServiceMetaCard label="Network">
               <p className="text-sm font-medium text-Heres-white">
-                Solana {SOLANA_CONFIG.NETWORK || 'devnet'}
+                {getNetworkDisplayLabel()}
               </p>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Capsule ID</p>
+            </ServiceMetaCard>
+            <ServiceMetaCard label="Capsule ID">
               <div className="flex items-center gap-1">
                 <a
-                  href={`https://explorer.solana.com/address/${capsule.capsuleAddress}?cluster=${SOLANA_CONFIG.NETWORK || 'devnet'}`}
+                  href={getExplorerUrl('address', capsule.capsuleAddress)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm font-mono text-Heres-accent truncate min-w-0 hover:underline"
@@ -643,53 +650,52 @@ export default function CapsuleDetailPage() {
                 </a>
                 <CopyButton value={capsule.capsuleAddress} />
               </div>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Owner</p>
+            </ServiceMetaCard>
+            <ServiceMetaCard label="Owner">
               <div className="flex items-center gap-1">
                 <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.owner.toBase58()}>
                   {maskAddress(capsule.owner.toBase58())}
                 </p>
                 <CopyButton value={capsule.owner.toBase58()} />
               </div>
-            </div>
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Program ID</p>
+            </ServiceMetaCard>
+            <ServiceMetaCard label="Program ID">
               <div className="flex items-center gap-1">
                 <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={getProgramId().toBase58()}>
                   {maskAddress(getProgramId().toBase58())}
                 </p>
                 <CopyButton value={getProgramId().toBase58()} />
               </div>
-            </div>
+            </ServiceMetaCard>
             {capsule.mint && (
-              <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Token Mint</p>
+              <ServiceMetaCard label="Token Mint">
                 <div className="flex items-center gap-1">
                   <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.mint.toBase58()}>
                     {maskAddress(capsule.mint.toBase58())}
                   </p>
                   <CopyButton value={capsule.mint.toBase58()} />
                 </div>
-              </div>
+              </ServiceMetaCard>
             )}
-            <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Retries</p>
+            <ServiceMetaCard label="Retries">
               <p className="text-sm font-mono text-Heres-white">{(capsule as any).retryCount?.toString() || '0'}</p>
-            </div>
-          </section>
+            </ServiceMetaCard>
+          </ServiceMetaGrid>
 
           {/* Privacy & Delegation (PER / TEE) */}
-          <section className="card-Heres p-6 mb-6 border-Heres-accent/20">
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <h2 className="text-lg font-semibold text-Heres-white">Privacy &amp; Delegation (PER / TEE)</h2>
-              <span className="rounded-lg border border-Heres-accent/50 bg-Heres-accent/10 px-2.5 py-1 text-xs font-medium text-Heres-accent">
-                PER (TEE) enabled
+          <ServiceSection
+            title={
+              <span className="flex flex-wrap items-center gap-3">
+                <span>Privacy &amp; Delegation (PER / TEE)</span>
+                <span className="rounded-lg border border-Heres-accent/50 bg-Heres-accent/10 px-2.5 py-1 text-xs font-medium text-Heres-accent">
+                  PER (TEE) enabled
+                </span>
               </span>
-            </div>
-            <p className="text-sm text-Heres-muted mb-4 w-full max-w-none">
-              This capsule uses the Private Ephemeral Rollup (PER) with TEE. Delegation and crank scheduling happen automatically at creation. Conditions are monitored confidentially inside the TEE.
-            </p>
+            }
+            description="This capsule uses the Private Ephemeral Rollup (PER) with TEE. Delegation and crank scheduling happen automatically at creation. Conditions are monitored confidentially inside the TEE."
+            className="mb-6"
+            tone="accent"
+          >
             <div className="rounded-xl border border-Heres-border/50 bg-Heres-surface/30 p-4 mb-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-Heres-accent mb-1">Where is private monitoring?</p>
               <p className="text-sm text-Heres-muted">
@@ -731,17 +737,15 @@ export default function CapsuleDetailPage() {
                 <p className="text-[10px] text-Heres-muted mt-1">RPC is API-only; link opens TEE docs</p>
               </div>
             </div>
-          </section>
+          </ServiceSection>
 
-          {/* Intent / Type summary */}
-          <section className="card-Heres p-6 mb-6">
-            <h2 className="text-lg font-semibold text-Heres-white mb-3">Intent</h2>
+          <ServiceSection title="Intent" className="mb-6">
             <p className="text-sm text-Heres-muted mb-4">
               {intentParsed?.intent || 'No intent decoded'}
             </p>
             {isToken && intentParsed && 'totalAmount' in intentParsed && intentParsed.totalAmount && (
               <p className="text-sm text-Heres-accent">
-                Total amount: {intentParsed.totalAmount} SOL
+                Total amount: {intentParsed.totalAmount} {assetConfig.symbol}
               </p>
             )}
             {isNft && intentParsed && 'nftMints' in intentParsed && intentParsed.nftMints && (
@@ -749,14 +753,15 @@ export default function CapsuleDetailPage() {
                 NFTs: {intentParsed.nftMints.length} item(s)
               </p>
             )}
-          </section>
+          </ServiceSection>
 
           {isCreEnabled && (
-            <section className="card-Heres p-6 mb-6 border-Heres-accent/30">
-              <h2 className="text-lg font-semibold text-Heres-white mb-2">Intent Statement Delivery</h2>
-              <p className="text-sm text-Heres-muted mb-4">
-                Off-chain encrypted Intent Statement package delivery powered by CRE orchestration.
-              </p>
+            <ServiceSection
+              title="Intent Statement Delivery"
+              description="Off-chain encrypted Intent Statement package delivery powered by CRE orchestration."
+              className="mb-6"
+              tone="accent"
+            >
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Channel</p>
@@ -793,7 +798,7 @@ export default function CapsuleDetailPage() {
               {creDeliveryError && (
                 <p className="text-xs text-red-400 mt-3">{creDeliveryError}</p>
               )}
-            </section>
+            </ServiceSection>
           )}
 
           {/* Actions — status-based flow */}
@@ -811,7 +816,7 @@ export default function CapsuleDetailPage() {
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
-              { num: 2, label: 'Distribute Assets', desc: 'Transfer SOL/tokens to beneficiaries' },
+              { num: 2, label: 'Distribute Assets', desc: `Transfer ${assetConfig.symbol}/tokens to beneficiaries` },
               ...(isCreEnabled ? [{ num: 3, label: 'Deliver Intent Statement', desc: 'Dispatch encrypted intent via CRE' }] : []),
             ]
             const allDone = Boolean(isExecuted && isDistributed && (!isCreEnabled || isCreDelivered))
@@ -820,9 +825,7 @@ export default function CapsuleDetailPage() {
             const currentStep = allDone ? steps.length + 1 : canDispatchCre ? 3 : isExecuted ? 2 : canExecute ? 1 : 0
 
             return (
-              <section className="card-Heres p-6 mb-6 border-amber-500/30">
-                <h2 className="text-lg font-semibold text-Heres-white mb-2">Actions</h2>
-
+              <ServiceSection title="Actions" className="mb-6" tone="warning">
                 {/* Status guidance */}
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
@@ -917,7 +920,7 @@ export default function CapsuleDetailPage() {
                         ? isDelegated
                           ? 'Undelegate from ER first'
                           : 'Execute intent first'
-                        : 'Distribute SOL/tokens to beneficiaries'
+                        : `Distribute ${assetConfig.symbol}/tokens to beneficiaries`
                     }
                     className="rounded-lg border border-Heres-purple px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-purple/10 text-Heres-purple hover:bg-Heres-purple/20"
                   >
@@ -973,27 +976,26 @@ export default function CapsuleDetailPage() {
                     {creDispatchResult.message}
                   </div>
                 )}
-              </section>
+              </ServiceSection>
             )
           })()}
 
-          {/* Price / Value chart (Graph Explorer style) */}
-          <section className="card-Heres p-6 mb-6">
+          <ServiceSection
+            title={isToken ? `${assetConfig.symbol} Price (USD)` : `NFT Value (${assetConfig.symbol} / USD proxy)`}
+            className="mb-6"
+          >
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <div>
-                <h2 className="text-lg font-semibold text-Heres-white">
-                  {isToken ? 'SOL Price (USD)' : 'NFT Value (SOL / USD proxy)'}
-                </h2>
                 <p className="text-sm text-Heres-muted mt-1">
                   {isToken
-                    ? 'Real-time SOL price (CoinGecko).'
-                    : 'Representative value trend (SOL/USD) for reference.'}
+                    ? `Real-time ${assetConfig.symbol} price (CoinGecko).`
+                    : `Representative value trend (${assetConfig.symbol}/USD) for reference.`}
                 </p>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
                 {isToken && (
                   <div className="rounded-lg border border-Heres-border/80 bg-Heres-card/80 px-2.5 py-1.5 flex items-center gap-2">
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">1 SOL</span>
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">1 {assetConfig.symbol}</span>
                     <span className="text-sm font-semibold tabular-nums text-Heres-accent">${displayedSolPrice.toFixed(2)}</span>
                     <span className="text-[10px] text-Heres-muted">USD</span>
                   </div>
@@ -1031,7 +1033,7 @@ export default function CapsuleDetailPage() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                     <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="rgba(255,255,255,0.3)" />
-                    <YAxis domain={[90, 'auto']} tick={{ fontSize: 10 }} stroke="rgba(255,255,255,0.3)" tickFormatter={(v) => `$${v}`} />
+                    <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10 }} stroke="rgba(255,255,255,0.3)" tickFormatter={(v) => `$${v}`} />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'var(--Heres-card)', border: '1px solid var(--Heres-border)' }}
                       labelStyle={{ color: 'var(--Heres-white)' }}
@@ -1052,7 +1054,7 @@ export default function CapsuleDetailPage() {
                 Chart data unavailable
               </div>
             )}
-          </section>
+          </ServiceSection>
 
         </div>
       </main>

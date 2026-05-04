@@ -10,11 +10,11 @@ use ephemeral_rollups_sdk::cpi::DelegateConfig;
 use ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID;
 use magicblock_magic_program_api::{args::ScheduleTaskArgs, instruction::MagicBlockInstruction};
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
-use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::associated_token::{get_associated_token_address, AssociatedToken};
 #[cfg(feature = "oracle")]
 use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
-declare_id!("26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6");
+declare_id!("AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW");
 
 /// TEE validator for Private Ephemeral Rollup (PER). Used as default when no validator account is passed.
 pub const TEE_VALIDATOR: Pubkey = pubkey!("FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA");
@@ -74,7 +74,7 @@ pub mod heres_program {
         intent_data: Vec<u8>,
     ) -> Result<()> {
         // Parse totalAmount from intent_data
-        let total_amount_lamports = {
+        let total_amount_units = {
             let intent_data_str = String::from_utf8(intent_data.clone())
                 .map_err(|_| ErrorCode::InvalidIntentData)?;
             let intent_json: serde_json::Value = serde_json::from_str(&intent_data_str)
@@ -82,7 +82,8 @@ pub mod heres_program {
             let total_str = intent_json.get("totalAmount")
                 .and_then(|t| t.as_str())
                 .ok_or(ErrorCode::InvalidIntentData)?;
-            parse_sol_to_lamports(total_str).map_err(|_| ErrorCode::InvalidIntentData)?
+            let asset_decimals = infer_asset_decimals(&intent_json, ctx.accounts.mint.as_ref().map(|mint| mint.decimals));
+            parse_amount_to_units(total_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
         };
 
         let fee_config = &ctx.accounts.fee_config;
@@ -124,8 +125,8 @@ pub mod heres_program {
             };
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            token::transfer(cpi_ctx, total_amount_lamports)?;
-            msg!("Locked {} tokens in vault for capsule {:?}", total_amount_lamports, capsule.key());
+            token::transfer(cpi_ctx, total_amount_units)?;
+            msg!("Locked {} tokens in vault for capsule {:?}", total_amount_units, capsule.key());
         } else {
             capsule.mint = Pubkey::default(); // default to 0000... (SystemProgram-like behavior)
 
@@ -136,8 +137,8 @@ pub mod heres_program {
             };
             let cpi_program = ctx.accounts.system_program.to_account_info();
             let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            system_program::transfer(cpi_ctx, total_amount_lamports)?;
-            msg!("Locked {} lamports in vault for capsule {:?}", total_amount_lamports, capsule.key());
+            system_program::transfer(cpi_ctx, total_amount_units)?;
+            msg!("Locked {} lamports in vault for capsule {:?}", total_amount_units, capsule.key());
         }
 
 
@@ -239,7 +240,8 @@ pub mod heres_program {
             .and_then(|t| t.as_str())
             .ok_or(ErrorCode::InvalidIntentData)?;
         
-        let total_amount_lamports = parse_sol_to_lamports(total_amount_str)
+        let asset_decimals = infer_asset_decimals(&intent_json, None);
+        let total_amount_units = parse_amount_to_units(total_amount_str, asset_decimals)
             .map_err(|_| ErrorCode::InvalidIntentData)?;
         
         let vault_bump = capsule.vault_bump;
@@ -253,40 +255,47 @@ pub mod heres_program {
         
         // Platform execution fee
         let fee_config = &ctx.accounts.fee_config;
-        let mut remaining_for_beneficiaries = total_amount_lamports;
+        let mut remaining_for_beneficiaries = total_amount_units;
         let is_spl = capsule.mint != Pubkey::default();
 
         if fee_config.execution_fee_bps > 0 {
-            let execution_fee = (total_amount_lamports as u64)
+            let execution_fee = total_amount_units
                 .checked_mul(fee_config.execution_fee_bps as u64)
                 .and_then(|v| v.checked_div(10_000))
                 .ok_or(ErrorCode::InvalidIntentData)?;
             
             if execution_fee > 0 {
                 let platform_recipient = ctx.accounts.platform_fee_recipient.as_mut().ok_or(ErrorCode::InvalidFeeConfig)?;
-                require!(platform_recipient.key() == fee_config.fee_recipient, ErrorCode::InvalidFeeConfig);
-                
                 if is_spl {
-                     let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-                     let cpi_accounts = Transfer {
+                    let mint = ctx.accounts.mint.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+                    let expected_fee_recipient_ata =
+                        get_associated_token_address(&fee_config.fee_recipient, &mint.key());
+                    require!(
+                        platform_recipient.key() == expected_fee_recipient_ata,
+                        ErrorCode::InvalidFeeConfig
+                    );
+
+                    let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+                    let cpi_accounts = Transfer {
                         from: vault_ata.to_account_info(),
                         to: platform_recipient.to_account_info(),
                         authority: ctx.accounts.vault.to_account_info(),
-                     };
-                     let cpi_program = ctx.accounts.token_program.to_account_info();
-                     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-                     token::transfer(cpi_ctx, execution_fee)?;
+                    };
+                    let cpi_program = ctx.accounts.token_program.to_account_info();
+                    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+                    token::transfer(cpi_ctx, execution_fee)?;
                 } else {
+                    require!(platform_recipient.key() == fee_config.fee_recipient, ErrorCode::InvalidFeeConfig);
                     **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= execution_fee;
                     **platform_recipient.to_account_info().try_borrow_mut_lamports()? += execution_fee;
                 }
-                remaining_for_beneficiaries = total_amount_lamports.saturating_sub(execution_fee);
+                remaining_for_beneficiaries = total_amount_units.saturating_sub(execution_fee);
                 msg!("Execution fee {} sent to platform", execution_fee);
             }
         }
         
         // Distribute to beneficiaries
-        let total_for_ratio = total_amount_lamports;
+        let total_for_ratio = total_amount_units;
         let mut distributed: u64 = 0;
         let beneficiary_count = beneficiaries.len();
         
@@ -307,12 +316,12 @@ pub mod heres_program {
                 .and_then(|t| t.as_str())
                 .unwrap_or("fixed");
             
-            let amount_lamports = if amount_type == "percentage" {
+            let amount_units = if amount_type == "percentage" {
                 let percentage = amount_str.parse::<f64>()
                     .map_err(|_| ErrorCode::InvalidIntentData)?;
-                (total_amount_lamports as f64 * percentage / 100.0) as u64
+                (total_amount_units as f64 * percentage / 100.0) as u64
             } else {
-                parse_sol_to_lamports(amount_str)
+                parse_amount_to_units(amount_str, asset_decimals)
                     .map_err(|_| ErrorCode::InvalidIntentData)?
             };
             
@@ -321,7 +330,7 @@ pub mod heres_program {
             } else if idx == beneficiary_count.saturating_sub(1) {
                 remaining_for_beneficiaries.saturating_sub(distributed)
             } else {
-                (amount_lamports as u64)
+                amount_units
                     .checked_mul(remaining_for_beneficiaries)
                     .and_then(|v| v.checked_div(total_for_ratio))
                     .unwrap_or(0)
@@ -355,22 +364,29 @@ pub mod heres_program {
             if to_send > 0 {
                 let beneficiary_pubkey = address_str.parse::<Pubkey>()
                     .map_err(|_| ErrorCode::InvalidBeneficiaryAddress)?;
-                let beneficiary_account = ctx.remaining_accounts
-                    .iter()
-                    .find(|acc| acc.key() == beneficiary_pubkey)
-                    .ok_or(ErrorCode::InvalidBeneficiaryAddress)?;
                 
                 if is_spl {
-                     let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-                     let cpi_accounts = Transfer {
+                    let mint = ctx.accounts.mint.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+                    let expected_beneficiary_ata =
+                        get_associated_token_address(&beneficiary_pubkey, &mint.key());
+                    let beneficiary_account = ctx.remaining_accounts
+                        .iter()
+                        .find(|acc| acc.key() == expected_beneficiary_ata)
+                        .ok_or(ErrorCode::InvalidBeneficiaryAddress)?;
+                    let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+                    let cpi_accounts = Transfer {
                         from: vault_ata.to_account_info(),
                         to: beneficiary_account.to_account_info(), 
                         authority: ctx.accounts.vault.to_account_info(),
-                     };
-                     let cpi_program = ctx.accounts.token_program.to_account_info();
-                     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-                     token::transfer(cpi_ctx, to_send)?;
+                    };
+                    let cpi_program = ctx.accounts.token_program.to_account_info();
+                    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+                    token::transfer(cpi_ctx, to_send)?;
                 } else {
+                    let beneficiary_account = ctx.remaining_accounts
+                        .iter()
+                        .find(|acc| acc.key() == beneficiary_pubkey)
+                        .ok_or(ErrorCode::InvalidBeneficiaryAddress)?;
                     **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= to_send;
                     **beneficiary_account.to_account_info().try_borrow_mut_lamports()? += to_send;
                 }
@@ -428,19 +444,20 @@ pub mod heres_program {
         let total_amount_str = intent_json.get("totalAmount")
             .and_then(|t| t.as_str())
             .ok_or(ErrorCode::InvalidIntentData)?;
-        let total_amount_lamports = parse_sol_to_lamports(total_amount_str)
+        let asset_decimals = infer_asset_decimals(&intent_json, None);
+        let total_amount_units = parse_amount_to_units(total_amount_str, asset_decimals)
             .map_err(|_| ErrorCode::InvalidIntentData)?;
 
-        let mut remaining_for_beneficiaries = total_amount_lamports;
+        let mut remaining_for_beneficiaries = total_amount_units;
         if ctx.accounts.fee_config.execution_fee_bps > 0 {
-            let execution_fee = (total_amount_lamports as u64)
+            let execution_fee = total_amount_units
                 .checked_mul(ctx.accounts.fee_config.execution_fee_bps as u64)
                 .and_then(|v| v.checked_div(10_000))
                 .ok_or(ErrorCode::InvalidIntentData)?;
-            remaining_for_beneficiaries = total_amount_lamports.saturating_sub(execution_fee);
+            remaining_for_beneficiaries = total_amount_units.saturating_sub(execution_fee);
         }
 
-        let total_for_ratio = total_amount_lamports;
+        let total_for_ratio = total_amount_units;
         let mut distributed: u64 = 0;
         let beneficiary_count = beneficiaries.len();
         let mut amount_for_target: u64 = 0;
@@ -452,12 +469,12 @@ pub mod heres_program {
             let amount_type = beneficiary.get("amountType")
                 .and_then(|t| t.as_str())
                 .unwrap_or("fixed");
-            let amount_lamports = if amount_type == "percentage" {
+            let amount_units = if amount_type == "percentage" {
                 let percentage = amount_str.parse::<f64>()
                     .map_err(|_| ErrorCode::InvalidIntentData)?;
-                (total_amount_lamports as f64 * percentage / 100.0) as u64
+                (total_amount_units as f64 * percentage / 100.0) as u64
             } else {
-                parse_sol_to_lamports(amount_str).map_err(|_| ErrorCode::InvalidIntentData)?
+                parse_amount_to_units(amount_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
             };
 
             let to_send = if total_for_ratio == 0 {
@@ -465,7 +482,7 @@ pub mod heres_program {
             } else if idx == beneficiary_count.saturating_sub(1) {
                 remaining_for_beneficiaries.saturating_sub(distributed)
             } else {
-                (amount_lamports as u64)
+                amount_units
                     .checked_mul(remaining_for_beneficiaries)
                     .and_then(|v| v.checked_div(total_for_ratio))
                     .unwrap_or(0)
@@ -743,7 +760,7 @@ pub mod heres_program {
         require!(!capsule.is_active, ErrorCode::CapsuleActive);
         require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
         
-        let total_amount_lamports = {
+        let total_amount_units = {
             let intent_data_str = String::from_utf8(intent_data.clone())
                 .map_err(|_| ErrorCode::InvalidIntentData)?;
             let intent_json: serde_json::Value = serde_json::from_str(&intent_data_str)
@@ -751,7 +768,8 @@ pub mod heres_program {
             let total_str = intent_json.get("totalAmount")
                 .and_then(|t| t.as_str())
                 .ok_or(ErrorCode::InvalidIntentData)?;
-            parse_sol_to_lamports(total_str).map_err(|_| ErrorCode::InvalidIntentData)?
+            let asset_decimals = infer_asset_decimals(&intent_json, None);
+            parse_amount_to_units(total_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
         };
         
         capsule.inactivity_period = inactivity_period;
@@ -767,8 +785,8 @@ pub mod heres_program {
         };
         let cpi_program = ctx.accounts.system_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        system_program::transfer(cpi_ctx, total_amount_lamports)?;
-        msg!("Locked {} lamports in vault for recreated capsule {:?}", total_amount_lamports, capsule.key());
+        system_program::transfer(cpi_ctx, total_amount_units)?;
+        msg!("Locked {} lamports in vault for recreated capsule {:?}", total_amount_units, capsule.key());
         
         Ok(())
     }
@@ -1194,14 +1212,28 @@ pub enum ErrorCode {
     CcipAlreadySent,
 }
 
-/// Parse SOL amount string to lamports
-fn parse_sol_to_lamports(sol_str: &str) -> Result<u64> {
-    let sol_amount: f64 = sol_str.parse()
+fn infer_asset_decimals(intent_json: &serde_json::Value, mint_decimals: Option<u8>) -> u8 {
+    if let Some(decimals) = mint_decimals {
+        return decimals;
+    }
+
+    match intent_json
+        .get("assetSymbol")
+        .and_then(|symbol| symbol.as_str())
+        .unwrap_or("SOL")
+    {
+        "BTC" | "ETH" => 8,
+        _ => 9,
+    }
+}
+
+/// Parse an asset amount string into atomic units using the asset decimals.
+fn parse_amount_to_units(amount_str: &str, decimals: u8) -> Result<u64> {
+    let amount: f64 = amount_str.parse()
         .map_err(|_| ErrorCode::InvalidIntentData)?;
-    
-    // Convert SOL to lamports (1 SOL = 1_000_000_000 lamports)
-    let lamports = (sol_amount * 1_000_000_000.0) as u64;
-    Ok(lamports)
+
+    let scale = 10u64.pow(decimals as u32) as f64;
+    Ok((amount * scale) as u64)
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]

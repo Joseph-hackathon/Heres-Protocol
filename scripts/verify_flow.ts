@@ -5,7 +5,7 @@ import fs from 'fs'
 import path from 'path'
 
 // Configuration
-const PROGRAM_ID_STR = 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW' // NEW PROGRAM ID
+const PROGRAM_ID_STR = 'CXVKwAjzQA95MPVyEbsMqSoFgHvbXAmSensTk6JJPKsM' // NEW PROGRAM ID
 const MAGIC_BLOCK_DELEGATION_PID = 'DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh'
 const TEE_VALIDATOR = 'FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA'
 const LOG_FILE = 'verification_log.txt'

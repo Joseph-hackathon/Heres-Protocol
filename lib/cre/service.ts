@@ -44,44 +44,6 @@ function getRequiredEnv(name: string): string | null {
   return value.trim()
 }
 
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, '')
-}
-
-function normalizeLocalMockUrl(urlValue: string): string {
-  if (process.env.NODE_ENV === 'production') return urlValue
-
-  const port = getRequiredEnv('PORT')
-  if (!port) return urlValue
-
-  try {
-    const parsed = new URL(urlValue)
-    const isLocalHost = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
-    if (!isLocalHost || parsed.pathname !== '/api/mock/cre' || parsed.port === port) {
-      return urlValue
-    }
-    parsed.port = port
-    return parsed.toString()
-  } catch {
-    return urlValue
-  }
-}
-
-function getCreWebhookUrl(): string | null {
-  const configured = getRequiredEnv('CHAINLINK_CRE_WEBHOOK_URL')
-  if (configured) return normalizeLocalMockUrl(configured)
-
-  if (process.env.NODE_ENV === 'production') return null
-
-  const baseUrl = getRequiredEnv('APP_BASE_URL') || getRequiredEnv('INDEXER_BASE_URL')
-  if (baseUrl) return `${trimTrailingSlash(baseUrl)}/api/mock/cre`
-
-  const port = getRequiredEnv('PORT')
-  if (port) return `http://127.0.0.1:${port}/api/mock/cre`
-
-  return 'http://127.0.0.1:3000/api/mock/cre'
-}
-
 function computeSecretHash(payload: string): string {
   return sha256Hex(payload)
 }
@@ -92,26 +54,6 @@ function computeRecipientHash(email: string): string {
 
 function createIdempotencyKey(capsuleAddress: string, executedAt: number): string {
   return `${capsuleAddress}:${executedAt}`
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let index = 0
-
-  const runners = Array.from({ length: Math.max(1, Math.min(concurrency, items.length || 1)) }, async () => {
-    while (index < items.length) {
-      const currentIndex = index
-      index += 1
-      results[currentIndex] = await worker(items[currentIndex])
-    }
-  })
-
-  await Promise.all(runners)
-  return results
 }
 
 async function notifyOps(message: string): Promise<void> {
@@ -138,10 +80,8 @@ async function callChainlinkWorkflow(payload: {
   secretHash: string
   encryptedPayload: string
 }): Promise<void> {
-  const webhook = getCreWebhookUrl()
-  if (!webhook) {
-    throw new Error('CHAINLINK_CRE_WEBHOOK_URL is not configured and no local mock CRE fallback could be resolved')
-  }
+  const webhook = getRequiredEnv('CHAINLINK_CRE_WEBHOOK_URL')
+  if (!webhook) throw new Error('CHAINLINK_CRE_WEBHOOK_URL is not configured')
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const apiKey = getRequiredEnv('CHAINLINK_CRE_API_KEY')
@@ -153,36 +93,30 @@ async function callChainlinkWorkflow(payload: {
     headers['x-cre-signature'] = signature
   }
 
-  let response: Response
-  try {
-    response = await fetch(webhook, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`CRE webhook request to ${webhook} failed: ${message}`)
-  }
+  const response = await fetch(webhook, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
 
   if (!response.ok) {
     const body = await response.text()
-    throw new Error(`CRE webhook ${webhook} returned ${response.status}: ${body}`)
+    throw new Error(`CRE webhook error ${response.status}: ${body}`)
   }
 }
 
-export async function registerCreSecret(input: RegisterSecretInput): Promise<{
+export function registerCreSecret(input: RegisterSecretInput): {
   secretRef: string
   secretHash: string
   recipientEmailHash: string
-}> {
+} {
   const normalizedEmail = normalizeEmail(input.recipientEmail)
   const recipientEmailHash = computeRecipientHash(normalizedEmail)
   const secretRef = `sec_${crypto.randomUUID().replace(/-/g, '')}`
   const secretHash = computeSecretHash(input.encryptedPayload)
   const now = Date.now()
 
-  await upsertCreSecret({
+  upsertCreSecret({
     secretRef,
     secretHash,
     encryptedPayload: input.encryptedPayload,
@@ -235,7 +169,7 @@ export async function dispatchCreDeliveryForCapsule(
   }
 
   const idempotencyKey = createIdempotencyKey(capsule.capsuleAddress, capsule.executedAt)
-  const existing = await getDeliveryLedger(idempotencyKey)
+  const existing = getDeliveryLedger(idempotencyKey)
   if (existing && (existing.status === 'dispatched' || existing.status === 'delivered' || existing.status === 'pending')) {
     return {
       ok: true,
@@ -247,26 +181,24 @@ export async function dispatchCreDeliveryForCapsule(
     }
   }
 
-  const secret = await getCreSecret(creConfig.secretRef)
+  const secret = getCreSecret(creConfig.secretRef)
   const nextAttempts = (existing?.attempts ?? 0) + 1
-  const missingSecretMessage =
-    'Secret ref not found in registry. Restore the local CRE store or recreate the capsule so the encrypted payload can be registered again.'
 
   if (!secret) {
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
       secretRef: creConfig.secretRef,
       status: 'failed',
       attempts: nextAttempts,
-      lastError: missingSecretMessage,
+      lastError: 'Secret ref not found in registry',
     })
-    return { ok: false, error: missingSecretMessage, idempotencyKey, status: 'failed' }
+    return { ok: false, error: 'Secret ref not found in registry', idempotencyKey, status: 'failed' }
   }
 
   if (secret.owner !== capsule.owner.toBase58()) {
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
@@ -280,7 +212,7 @@ export async function dispatchCreDeliveryForCapsule(
   }
 
   if (!safeEqualHex(secret.secretHash, creConfig.secretHash)) {
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
@@ -294,7 +226,7 @@ export async function dispatchCreDeliveryForCapsule(
   }
 
   if (!safeEqualHex(secret.recipientEmailHash, creRecipientHash)) {
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
@@ -307,7 +239,7 @@ export async function dispatchCreDeliveryForCapsule(
     return { ok: false, error: 'Recipient email hash mismatch', idempotencyKey, status: 'failed' }
   }
 
-  await upsertDeliveryLedger(idempotencyKey, {
+  upsertDeliveryLedger(idempotencyKey, {
     capsuleAddress: capsule.capsuleAddress,
     owner: capsule.owner.toBase58(),
     executedAt: capsule.executedAt,
@@ -328,7 +260,7 @@ export async function dispatchCreDeliveryForCapsule(
       secretHash: creConfig.secretHash,
       encryptedPayload: secret.encryptedPayload,
     })
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
@@ -340,7 +272,7 @@ export async function dispatchCreDeliveryForCapsule(
     return { ok: true, idempotencyKey, status: 'dispatched' }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    await upsertDeliveryLedger(idempotencyKey, {
+    upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
       executedAt: capsule.executedAt,
@@ -355,12 +287,12 @@ export async function dispatchCreDeliveryForCapsule(
   }
 }
 
-export async function applyCreDeliveryCallback(input: CallbackInput): Promise<CreDeliveryLedgerRecord> {
+export function applyCreDeliveryCallback(input: CallbackInput): CreDeliveryLedgerRecord {
   const idempotencyKey =
     input.idempotencyKey || createIdempotencyKey(input.capsuleAddress, Number(input.executedAt))
-  const existing = await getDeliveryLedger(idempotencyKey)
+  const existing = getDeliveryLedger(idempotencyKey)
 
-  return await upsertDeliveryLedger(idempotencyKey, {
+  return upsertDeliveryLedger(idempotencyKey, {
     capsuleAddress: input.capsuleAddress,
     owner: existing?.owner,
     executedAt: Number(input.executedAt),
@@ -375,21 +307,15 @@ export async function applyCreDeliveryCallback(input: CallbackInput): Promise<Cr
 
 export function verifyCreCallbackSignature(rawBody: string, signature: string | null): boolean {
   const secret = getRequiredEnv('CHAINLINK_CRE_CALLBACK_SECRET')
-  if (!secret) {
-    // In production, reject if callback secret is not configured
-    if (process.env.NODE_ENV === 'production') return false
-    // In development, allow unsigned callbacks with a warning
-    console.warn('[CRE] CHAINLINK_CRE_CALLBACK_SECRET not set — skipping signature verification (dev only)')
-    return true
-  }
+  if (!secret) return true
   if (!signature) return false
 
   const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
   return safeEqualHex(expected, signature)
 }
 
-export async function getDeliveryStatus(capsuleAddress: string): Promise<CreDeliveryLedgerRecord[]> {
-  return await listDeliveryByCapsule(capsuleAddress)
+export function getDeliveryStatus(capsuleAddress: string): CreDeliveryLedgerRecord[] {
+  return listDeliveryByCapsule(capsuleAddress)
 }
 
 export async function reconcileCreDeliveries(): Promise<{
@@ -398,19 +324,21 @@ export async function reconcileCreDeliveries(): Promise<{
   dispatched: number
   failed: number
 }> {
-  const secrets = await listCreSecrets()
-  const results = await mapWithConcurrency(secrets, 5, async (secret) => {
+  const secrets = listCreSecrets()
+  let executedCreCapsules = 0
+  let dispatched = 0
+  let failed = 0
+
+  for (const secret of secrets) {
     let owner: PublicKey
     try {
       owner = new PublicKey(secret.owner)
     } catch {
-      return { executed: false, dispatched: false, failed: false }
+      continue
     }
 
     const capsule = await fetchCapsuleStateByOwner(owner)
-    if (!capsule?.executedAt) {
-      return { executed: false, dispatched: false, failed: false }
-    }
+    if (!capsule?.executedAt) continue
 
     const parsed = parseIntentPayload(capsule.intentData)
     const cre =
@@ -419,21 +347,13 @@ export async function reconcileCreDeliveries(): Promise<{
         : undefined
     const creSecretRef = typeof cre === 'object' && cre ? (cre as { secretRef?: unknown }).secretRef : undefined
     const creEnabled = typeof cre === 'object' && cre ? Boolean((cre as { enabled?: boolean }).enabled) : false
-    if (!creEnabled || typeof creSecretRef !== 'string' || creSecretRef !== secret.secretRef) {
-      return { executed: false, dispatched: false, failed: false }
-    }
+    if (!creEnabled || typeof creSecretRef !== 'string' || creSecretRef !== secret.secretRef) continue
 
-    const dispatchResult = await dispatchCreDeliveryForCapsule(capsule.capsuleAddress)
-    return {
-      executed: true,
-      dispatched: Boolean(dispatchResult.ok && !dispatchResult.skipped),
-      failed: !dispatchResult.ok,
-    }
-  })
-
-  const executedCreCapsules = results.filter((result) => result.executed).length
-  const dispatched = results.filter((result) => result.dispatched).length
-  const failed = results.filter((result) => result.failed).length
+    executedCreCapsules += 1
+    const result = await dispatchCreDeliveryForCapsule(capsule.capsuleAddress)
+    if (result.ok && !result.skipped) dispatched += 1
+    if (!result.ok) failed += 1
+  }
 
   return {
     scanned: secrets.length,

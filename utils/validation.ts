@@ -6,21 +6,17 @@ import { Beneficiary } from '@/types'
 import { isValidSolanaAddress } from '@/config/solana'
 import { CreIntentData } from '@/utils/intent'
 
-export function isValidEvmAddress(value: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(value)
-}
-
-export function isValidBeneficiaryAddress(beneficiary: Beneficiary): boolean {
-  if (!beneficiary.address) return false
-  if (beneficiary.chain === 'evm') return isValidEvmAddress(beneficiary.address)
-  return isValidSolanaAddress(beneficiary.address)
-}
-
 /**
  * Validate beneficiary addresses
  */
 export function validateBeneficiaryAddresses(beneficiaries: Beneficiary[]): boolean {
-  return beneficiaries.every((b) => isValidBeneficiaryAddress(b))
+  return beneficiaries.every(b => 
+    b.address && isValidSolanaAddress(b.address)
+  )
+}
+
+export function isValidBeneficiaryAddress(beneficiary: Beneficiary): boolean {
+  return Boolean(beneficiary.address && isValidSolanaAddress(beneficiary.address))
 }
 
 /**

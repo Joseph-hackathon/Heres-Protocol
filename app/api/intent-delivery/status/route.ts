@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
   }
 
-  const entries = await getDeliveryStatus(capsuleAddress)
+  const entries = getDeliveryStatus(capsuleAddress)
   return NextResponse.json({
     ok: true,
     entries: entries.map((entry) => ({

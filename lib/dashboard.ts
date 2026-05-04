@@ -5,7 +5,6 @@ import { HELIUS_CONFIG, MAGICBLOCK_ER } from '@/constants'
 import { getRegisteredOwners, registerCapsuleOwner } from '@/lib/capsule-registry'
 import { debugLog, debugWarn } from '@/lib/log'
 import { loadDurableSnapshot, saveDurableSnapshot, persistDashboardIndex, loadSyncCheckpoint, saveSyncCheckpoint } from '@/lib/dashboard-store'
-import { getCapsule } from '@/lib/solana'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
 
 export type DashboardCapsuleEvent = {
@@ -679,26 +678,78 @@ async function fetchCapsulesFromRegistry() {
     }>
   }
 
-  const settled = await mapWithConcurrency(owners, OWNER_FETCH_CONCURRENCY, async (owner) => {
+  const connection = getSolanaConnection()
+  const fallbackConnection = getSolanaFallbackConnection()
+  const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
+  const ownerEntries = owners.flatMap((owner) => {
     try {
       const ownerKey = new PublicKey(owner)
-      const capsule = await getCapsule(ownerKey)
-      if (!capsule) return null
-      const accountOwner = (capsule as any).accountOwner as PublicKey | undefined
-
       const [capsulePda] = getCapsulePDA(ownerKey)
+      return [{ owner, capsulePda }]
+    } catch {
+      debugWarn(`[dashboard] skipping invalid registered owner ${owner}`)
+      return []
+    }
+  })
+
+  let accountInfos: Array<any | null> = []
+  try {
+    accountInfos = await getMultipleAccountsInfoBatched(
+      connection,
+      ownerEntries.map((entry) => entry.capsulePda)
+    )
+  } catch (error) {
+    debugWarn('[dashboard] registry capsule batch fetch failed on primary RPC, retrying on fallback', error)
+    accountInfos = await getMultipleAccountsInfoBatched(
+      fallbackConnection,
+      ownerEntries.map((entry) => entry.capsulePda)
+    )
+  }
+
+  const delegatedIndexes = ownerEntries
+    .map((_, index) => index)
+    .filter((index) => accountInfos[index]?.owner?.equals(delegationProgramId))
+  if (delegatedIndexes.length) {
+    try {
+      const { Connection: SolConnection } = require('@solana/web3.js')
+      const erConn = new SolConnection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
+      const erInfos = await getMultipleAccountsInfoBatched(
+        erConn,
+        delegatedIndexes.map((index) => ownerEntries[index].capsulePda)
+      )
+      delegatedIndexes.forEach((ownerIndex, delegatedIndex) => {
+        const erInfo = erInfos[delegatedIndex]
+        if (ownerIndex >= 0 && erInfo?.data) {
+          accountInfos[ownerIndex] = {
+            ...accountInfos[ownerIndex],
+            data: erInfo.data,
+          }
+        }
+      })
+    } catch (error) {
+      debugWarn('[dashboard] failed to refresh delegated registry capsules from ER RPC', error)
+    }
+  }
+
+  const settled = ownerEntries.map((entry, index) => {
+    try {
+      const accountInfo = accountInfos[index]
+      if (!accountInfo?.data) return null
+      const capsule = decodeCapsuleAccount(accountInfo.data)
+      if (!capsule) return null
+
       return {
-        capsuleAddress: capsulePda.toBase58(),
-        owner,
+        capsuleAddress: entry.capsulePda.toBase58(),
+        owner: entry.owner,
         inactivityPeriod: capsule.inactivityPeriod,
         lastActivity: capsule.lastActivity,
         intentData: capsule.intentData,
         isActive: capsule.isActive,
         executedAt: capsule.executedAt,
-        isDelegated: Boolean(accountOwner?.equals(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID))),
+        isDelegated: accountInfo.owner.equals(delegationProgramId),
       }
     } catch (error) {
-      debugWarn(`[dashboard] failed to fetch capsule for owner ${owner}`)
+      debugWarn(`[dashboard] failed to decode registry capsule for owner ${entry.owner}`, error)
       return null
     }
   })
@@ -1146,18 +1197,25 @@ async function buildDashboardSnapshot(
   const connection = getSolanaConnection()
   const programId = getProgramId()
 
-  let decodedCapsules = await fetchCapsulesFromRegistry()
-  if (decodedCapsules.length > 0) {
-    debugLog(`[dashboard] loaded ${decodedCapsules.length} capsules from registry cache`)
-  }
-
-  if (fullScan || forceRefresh || decodedCapsules.length === 0) {
-    if (decodedCapsules.length === 0) {
-      debugWarn('[dashboard] capsule registry empty, falling back to full program scan')
-    } else {
-      debugWarn('[dashboard] full refresh requested, falling back to full program scan')
-    }
+  let decodedCapsules: Array<{
+    capsuleAddress: string
+    owner: string
+    inactivityPeriod: number
+    lastActivity: number
+    intentData: Uint8Array
+    isActive: boolean
+    executedAt: number | null
+    isDelegated: boolean
+  }> = []
+  try {
     decodedCapsules = await fetchCapsulesByProgramScan(connection, programId)
+    debugLog(`[dashboard] loaded ${decodedCapsules.length} capsules from program scan`)
+  } catch (error) {
+    debugWarn('[dashboard] program scan failed, falling back to registry batch fetch', error)
+    decodedCapsules = await fetchCapsulesFromRegistry()
+    if (decodedCapsules.length > 0) {
+      debugLog(`[dashboard] loaded ${decodedCapsules.length} capsules from registry fallback`)
+    }
   }
 
   let historyIndex: DashboardHistoryIndex | null = null
@@ -1419,10 +1477,6 @@ export function ensureDashboardPrewarmScheduler(): void {
 export async function triggerDashboardPrewarm(forceRefresh = true): Promise<void> {
   await prewarmDashboardResponses(forceRefresh)
 }
-
-
-
-
 
 
 

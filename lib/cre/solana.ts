@@ -75,12 +75,15 @@ export async function fetchCapsuleStateByAddress(capsuleAddress: PublicKey): Pro
   const accountOwner = accountInfo.owner
   const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 
-  if (accountOwner.equals(delegationProgramId)) {
-    try {
-      const teeAccount = await getTeeConnection().getAccountInfo(capsuleAddress)
-      if (teeAccount?.data) data = teeAccount.data
-    } catch {
-      // Keep base-layer data if TEE/ER fetch fails.
+  if (accountOwner.equals(delegationProgramId) && accountInfo.data.length >= 32) {
+    const validator = new PublicKey(accountInfo.data.slice(0, 32))
+    if (validator.toBase58() === MAGICBLOCK_ER.VALIDATOR_TEE) {
+      try {
+        const teeAccount = await getTeeConnection().getAccountInfo(capsuleAddress)
+        if (teeAccount?.data) data = teeAccount.data
+      } catch {
+        // Keep base-layer data if TEE fetch fails.
+      }
     }
   }
 

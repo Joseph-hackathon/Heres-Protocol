@@ -1,5 +1,5 @@
 {
-  "address": "26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6",
+  "address": "AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW",
   "metadata": {
     "name": "heres_program",
     "version": "0.1.0",
@@ -653,7 +653,7 @@
         },
         {
           "name": "owner_program",
-          "address": "26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6"
+          "address": "AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW"
         }
       ],
       "args": []

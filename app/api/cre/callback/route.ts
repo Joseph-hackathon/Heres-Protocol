@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid capsule address' }, { status: 400 })
   }
 
-  const ledger = await applyCreDeliveryCallback({
+  const ledger = applyCreDeliveryCallback({
     idempotencyKey: body.idempotencyKey,
     capsuleAddress,
     executedAt,

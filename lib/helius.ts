@@ -8,51 +8,7 @@
  */
 
 import { HELIUS_CONFIG, SOLANA_CONFIG } from '@/constants'
-import { debugLog, debugWarn } from '@/lib/log'
 import type { WalletActivity } from '@/types'
-
-const HELIUS_FETCH_TIMEOUT_MS = 12_000
-const HELIUS_MAX_RETRIES = 2
-
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  timeoutMs = HELIUS_FETCH_TIMEOUT_MS
-): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal,
-    })
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-async function fetchHelius(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  retries = HELIUS_MAX_RETRIES
-): Promise<Response> {
-  let lastError: unknown
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      const response = await fetchWithTimeout(input, init)
-      if (response.status >= 500 && attempt < retries) {
-        debugWarn(`[helius] retrying after ${response.status} response (${attempt + 1}/${retries + 1})`)
-        continue
-      }
-      return response
-    } catch (error) {
-      lastError = error
-      if (attempt >= retries) break
-      debugWarn(`[helius] retrying after network error (${attempt + 1}/${retries + 1})`)
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('Helius request failed')
-}
 
 /**
  * Interface for getTransactionsForAddress request parameters
@@ -145,7 +101,7 @@ export async function getTransactionsForAddress(
       ],
     }
 
-    const response = await fetchHelius(rpcUrl, {
+    const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -167,7 +123,7 @@ export async function getTransactionsForAddress(
       
       // Check if it's a paid plan requirement error (403 or -32403)
       if (response.status === 403 || errorCode === -32403 || errorMessage.includes('paid plans') || errorMessage.includes('upgrade')) {
-        debugWarn('getTransactionsForAddress requires a paid Helius plan. Falling back to Enhanced Transactions API.')
+        console.warn('getTransactionsForAddress requires a paid Helius plan. Falling back to Enhanced Transactions API.')
         return null // Return null to trigger fallback
       }
       
@@ -179,7 +135,7 @@ export async function getTransactionsForAddress(
   } catch (error: any) {
     // Check if it's a 403 error in the error message
     if (error?.message?.includes('403') || error?.message?.includes('paid plans')) {
-      debugWarn('getTransactionsForAddress requires a paid Helius plan. Falling back to alternative methods.')
+      console.warn('getTransactionsForAddress requires a paid Helius plan. Falling back to alternative methods.')
       return null
     }
     console.error('Error fetching transactions from Helius RPC:', error)
@@ -195,43 +151,13 @@ export async function getTransactionsForAddress(
 export async function getWalletActivity(walletAddress: string): Promise<WalletActivity | null> {
   try {
     // Use Enhanced Transactions API (free tier)
-    const fastPath = await getTransactionsForAddress(walletAddress, {
-      transactionDetails: 'signatures',
-      sortOrder: 'desc',
-      limit: 1,
-      commitment: 'confirmed',
-      filters: {
-        status: 'succeeded',
-      },
-    })
-
-    const latestFastTx = fastPath?.data?.[0]
-    if (latestFastTx) {
-      const fastSignature =
-        latestFastTx.signature ||
-        latestFastTx.transactionSignature ||
-        latestFastTx.transaction?.signatures?.[0] ||
-        ''
-      const fastTimestamp = latestFastTx.timestamp || latestFastTx.blockTime || latestFastTx.tx?.blockTime || 0
-      const fastTimestampMs =
-        typeof fastTimestamp === 'number' && fastTimestamp > 1_000_000_000_000
-          ? fastTimestamp
-          : Number(fastTimestamp || 0) * 1000
-
-      return {
-        wallet: walletAddress,
-        lastSignature: fastSignature,
-        lastActivityTimestamp: fastTimestampMs,
-        transactionCount: fastPath?.data?.length ?? 1,
-      }
-    }
-
-    const response = await fetchHelius(
-      `${HELIUS_CONFIG.BASE_URL}/addresses/${walletAddress}/transactions?api-key=${SOLANA_CONFIG.HELIUS_API_KEY}&limit=20`
+    console.log('Fetching wallet activity from Enhanced Transactions API for wallet:', walletAddress)
+    const response = await fetch(
+      `${HELIUS_CONFIG.BASE_URL}/addresses/${walletAddress}/transactions?api-key=${SOLANA_CONFIG.HELIUS_API_KEY}&limit=100`
     )
     
     if (!response.ok) {
-      debugWarn(`Enhanced Transactions API error: ${response.status} ${response.statusText}`)
+      console.warn(`Enhanced Transactions API error: ${response.status} ${response.statusText}`)
       return {
         wallet: walletAddress,
         lastSignature: '',
@@ -255,7 +181,7 @@ export async function getWalletActivity(walletAddress: string): Promise<WalletAc
     }
     
     if (!transactions || transactions.length === 0) {
-      debugLog('No transactions found for wallet:', walletAddress)
+      console.log('No transactions found for wallet:', walletAddress)
       return {
         wallet: walletAddress,
         lastSignature: '',
@@ -264,11 +190,14 @@ export async function getWalletActivity(walletAddress: string): Promise<WalletAc
       }
     }
     
-    const latestTx = transactions.reduce((latest, current) => {
-      const latestTime = latest?.timestamp || latest?.blockTime || latest?.tx?.blockTime || 0
-      const currentTime = current?.timestamp || current?.blockTime || current?.tx?.blockTime || 0
-      return currentTime > latestTime ? current : latest
-    }, transactions[0])
+    // Sort transactions by timestamp (newest first)
+    transactions.sort((a, b) => {
+      const timeA = a.timestamp || a.blockTime || a.tx?.blockTime || 0
+      const timeB = b.timestamp || b.blockTime || b.tx?.blockTime || 0
+      return timeB - timeA
+    })
+    
+    const latestTx = transactions[0]
     
     const signature = latestTx.signature || 
                      latestTx.transactionSignature ||
@@ -294,7 +223,7 @@ export async function getWalletActivity(walletAddress: string): Promise<WalletAc
     
     const timestampMs = timestamp > 1000000000000 ? timestamp : timestamp * 1000
     
-    debugLog('Helius Enhanced Transactions API response for wallet:', walletAddress, {
+    console.log('Helius Enhanced Transactions API response for wallet:', walletAddress, {
       transactionCount: transactions.length,
       latestSignature: signature,
       latestTimestamp: timestampMs,
@@ -321,7 +250,7 @@ export async function createWebhook(
 ): Promise<string | null> {
   try {
     // Note: Webhooks might use different endpoint, but keeping BASE_URL for consistency
-    const response = await fetchHelius(`${HELIUS_CONFIG.BASE_URL}/webhooks?api-key=${SOLANA_CONFIG.HELIUS_API_KEY}`, {
+    const response = await fetch(`${HELIUS_CONFIG.BASE_URL}/webhooks?api-key=${SOLANA_CONFIG.HELIUS_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -377,7 +306,7 @@ export async function getAssetsByOwner(ownerAddress: string): Promise<HeliusNftI
   if (!rpcUrl) return []
 
   try {
-    const response = await fetchHelius(rpcUrl, {
+    const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -437,7 +366,7 @@ export async function getEnhancedTransactions(
     url.searchParams.set('api-key', SOLANA_CONFIG.HELIUS_API_KEY)
     url.searchParams.set('limit', String(limit))
     if (before) url.searchParams.set('before', before)
-    const response = await fetchHelius(url.toString())
+    const response = await fetch(url.toString())
     if (!response.ok) return []
     const data = await response.json()
     const list = Array.isArray(data) ? data : data?.transactions ?? data?.data ?? data?.result ?? []

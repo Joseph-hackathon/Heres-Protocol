@@ -1,9 +1,67 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PublicKey } from '@solana/web3.js'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
+import { MAGICBLOCK_ER } from '@/constants'
 import { getRegisteredOwners } from '@/lib/capsule-registry'
-import { getCapsule } from '@/lib/solana'
 import { getCapsulePDA } from '@/lib/program'
 import { computeCapsuleStatus, validateWalletQuery } from '@/lib/mobile'
+
+const ACCOUNT_INFO_BATCH_SIZE = 100
+
+function readI64(bytes: Uint8Array, start: number): bigint {
+  let result = 0n
+  for (let i = 0; i < 8; i += 1) {
+    result |= BigInt(bytes[start + i]) << BigInt(i * 8)
+  }
+  if (result & (1n << 63n)) {
+    result -= 1n << 64n
+  }
+  return result
+}
+
+function readU32(bytes: Uint8Array, start: number): number {
+  return bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
+}
+
+function decodeCapsuleAccount(data: Uint8Array) {
+  if (!data || data.length < 60) return null
+
+  let offset = 8
+  offset += 32
+  const inactivityPeriod = Number(readI64(data, offset))
+  offset += 8
+  const lastActivity = Number(readI64(data, offset))
+  offset += 8
+  const intentDataLength = readU32(data, offset)
+  offset += 4
+  offset += intentDataLength
+  const isActive = data[offset] === 1
+  offset += 1
+  const hasExecutedAt = data[offset] === 1
+  offset += 1
+
+  return {
+    inactivityPeriod,
+    lastActivity,
+    isActive,
+    executedAt: hasExecutedAt ? Number(readI64(data, offset)) : null,
+  }
+}
+
+async function getMultipleAccountsInfoBatched(connection: Connection, publicKeys: PublicKey[]) {
+  if (!publicKeys.length) return []
+
+  const batches: PublicKey[][] = []
+  for (let index = 0; index < publicKeys.length; index += ACCOUNT_INFO_BATCH_SIZE) {
+    batches.push(publicKeys.slice(index, index + ACCOUNT_INFO_BATCH_SIZE))
+  }
+
+  const results = await Promise.all(
+    batches.map((batch) => connection.getMultipleAccountsInfo(batch, 'confirmed'))
+  )
+
+  return results.flat()
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,13 +89,64 @@ export async function GET(request: NextRequest) {
       owners.forEach((owner) => ownerSet.add(owner))
     }
 
-    const settled = await Promise.allSettled(
-      Array.from(ownerSet).map(async (owner) => {
+    const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
+    const ownerEntries = Array.from(ownerSet).flatMap((owner) => {
+      try {
         const ownerKey = new PublicKey(owner)
-        const capsule = await getCapsule(ownerKey)
+        const [capsulePda] = getCapsulePDA(ownerKey)
+        return [{ owner, capsulePda }]
+      } catch {
+        return []
+      }
+    })
+
+    const connection = getSolanaConnection()
+    const fallbackConnection = getSolanaFallbackConnection()
+    let accountInfos: Array<any | null> = []
+    try {
+      accountInfos = await getMultipleAccountsInfoBatched(
+        connection,
+        ownerEntries.map((entry) => entry.capsulePda)
+      )
+    } catch {
+      accountInfos = await getMultipleAccountsInfoBatched(
+        fallbackConnection,
+        ownerEntries.map((entry) => entry.capsulePda)
+      )
+    }
+
+    const delegatedIndexes = ownerEntries
+      .map((_, index) => index)
+      .filter((index) => accountInfos[index]?.owner?.equals(delegationProgramId))
+
+    if (delegatedIndexes.length) {
+      try {
+        const erConnection = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
+        const erInfos = await getMultipleAccountsInfoBatched(
+          erConnection,
+          delegatedIndexes.map((index) => ownerEntries[index].capsulePda)
+        )
+        delegatedIndexes.forEach((ownerIndex, delegatedIndex) => {
+          const erInfo = erInfos[delegatedIndex]
+          if (erInfo?.data) {
+            accountInfos[ownerIndex] = {
+              ...accountInfos[ownerIndex],
+              data: erInfo.data,
+            }
+          }
+        })
+      } catch {
+        // Keep base-layer data if ER refresh fails.
+      }
+    }
+
+    const items = ownerEntries
+      .map((entry, index) => {
+        const accountInfo = accountInfos[index]
+        if (!accountInfo?.data) return null
+        const capsule = decodeCapsuleAccount(accountInfo.data)
         if (!capsule) return null
 
-        const [capsulePda] = getCapsulePDA(ownerKey)
         const status = computeCapsuleStatus({
           isActive: capsule.isActive,
           lastActivity: capsule.lastActivity,
@@ -46,8 +155,8 @@ export async function GET(request: NextRequest) {
         })
 
         return {
-          capsuleAddress: capsulePda.toBase58(),
-          owner,
+          capsuleAddress: entry.capsulePda.toBase58(),
+          owner: entry.owner,
           status,
           inactivitySeconds: capsule.inactivityPeriod,
           lastActivityAt: capsule.lastActivity * 1000,
@@ -55,19 +164,6 @@ export async function GET(request: NextRequest) {
           nextInactivityDeadline: (capsule.lastActivity + capsule.inactivityPeriod) * 1000,
         }
       })
-    )
-
-    const items = settled
-      .filter((result): result is PromiseFulfilledResult<{
-        capsuleAddress: string
-        owner: string
-        status: 'active' | 'expired' | 'executed' | 'inactive'
-        inactivitySeconds: number
-        lastActivityAt: number
-        executedAt: number | null
-        nextInactivityDeadline: number
-      } | null> => result.status === 'fulfilled')
-      .map((result) => result.value)
       .filter((item): item is NonNullable<typeof item> => item !== null)
       .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
 

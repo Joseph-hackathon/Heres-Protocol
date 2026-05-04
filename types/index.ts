@@ -3,6 +3,7 @@
  */
 
 import { PublicKey } from '@solana/web3.js'
+import { SupportedAssetSymbol } from '@/lib/assets'
 
 // Beneficiary types
 export interface Beneficiary {
@@ -33,6 +34,11 @@ export interface CreIntentConfig {
   recipientPhone?: string
   deliveryChannel?: 'email' | 'sms'
   paymentTx?: string
+}
+
+export interface CapsuleAssetMetadata {
+  assetSymbol?: SupportedAssetSymbol
+  assetMint?: string | null
 }
 
 // Wallet Activity types
