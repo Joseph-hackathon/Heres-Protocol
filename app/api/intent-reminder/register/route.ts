@@ -90,18 +90,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
   }
 
-  const registered = registerCreReminder({
-    capsuleAddress,
-    owner,
-    recipientEmail,
-    assetSymbol,
-    assetLabel,
-    totalAmount,
-    beneficiaryCount,
-    inactivityLabel,
-    delayDays,
-    createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
-  })
+  let registered
+  try {
+    registered = registerCreReminder({
+      capsuleAddress,
+      owner,
+      recipientEmail,
+      assetSymbol,
+      assetLabel,
+      totalAmount,
+      beneficiaryCount,
+      inactivityLabel,
+      delayDays,
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to register CRE reminder'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 
   return NextResponse.json({
     ok: true,

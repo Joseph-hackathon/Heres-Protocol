@@ -2,7 +2,9 @@ import { Connection, PublicKey } from '@solana/web3.js'
 import { Redis } from '@upstash/redis'
 import { getProgramId, getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
 import { HELIUS_CONFIG, MAGICBLOCK_ER } from '@/constants'
+import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 import { getRegisteredOwners, registerCapsuleOwner } from '@/lib/capsule-registry'
+import { parseIntentPayload } from '@/utils/intent'
 import { debugLog, debugWarn } from '@/lib/log'
 import { loadDurableSnapshot, saveDurableSnapshot, persistDashboardIndex, loadSyncCheckpoint, saveSyncCheckpoint } from '@/lib/dashboard-store'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
@@ -37,6 +39,9 @@ export type DashboardCapsuleRow = {
   tokenDelta: string | null
   solDelta: number | null
   proofBytes: number | null
+  assetSymbol: SupportedAssetSymbol | null
+  assetLabel: string | null
+  totalAmount: string | null
 }
 
 export type DashboardSummary = {
@@ -50,6 +55,7 @@ export type DashboardSummary = {
   totalValueSecuredLamports: number
   totalValueExecutedLamports: number
   activeValueLockedLamports: number
+  activeAssetTotals: Partial<Record<SupportedAssetSymbol, number>>
 }
 
 export type DashboardSnapshot = {
@@ -1013,6 +1019,9 @@ function extractDashboardHistoryMetrics(transactions: TxRecord[], programId: Pub
           tokenDelta,
           solDelta,
           proofBytes,
+          assetSymbol: null,
+          assetLabel: null,
+          totalAmount: null,
         })
       }
     })
@@ -1245,6 +1254,12 @@ async function buildDashboardSnapshot(
       const events = (historyIndex?.capsuleEventsByCapsule[capsule.capsuleAddress] || []).sort(
         (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
       )
+      const parsedIntent = parseIntentPayload(capsule.intentData)
+      const asset = inferAssetConfig(parsedIntent, null)
+      const totalAmount =
+        parsedIntent && 'totalAmount' in parsedIntent && typeof parsedIntent.totalAmount === 'string'
+          ? parsedIntent.totalAmount
+          : null
 
       return {
         id: capsule.capsuleAddress,
@@ -1263,6 +1278,9 @@ async function buildDashboardSnapshot(
         tokenDelta: null,
         solDelta: null,
         proofBytes: null,
+        assetSymbol: asset.symbol,
+        assetLabel: asset.label,
+        totalAmount,
       }
     })
     .filter((row) => !(row.status === 'Active' && row.isActive === false))
@@ -1274,6 +1292,13 @@ async function buildDashboardSnapshot(
     Math.max(0, (accountInfo?.lamports || 0) - vaultRentExemptLamports)
   )
   const activeValueLockedLamports = activeVaultBalances.reduce((sum, value) => sum + value, 0)
+  const activeAssetTotals = activeCapsules.reduce<Partial<Record<SupportedAssetSymbol, number>>>((totals, capsule) => {
+    if (!capsule.assetSymbol || !capsule.totalAmount) return totals
+    const amount = Number.parseFloat(capsule.totalAmount)
+    if (!Number.isFinite(amount)) return totals
+    totals[capsule.assetSymbol] = (totals[capsule.assetSymbol] || 0) + amount
+    return totals
+  }, {})
 
   const summary: DashboardSummary = {
     total: includeHistory && (historyIndex?.allTimeCreated || 0) > 0 ? historyIndex!.allTimeCreated : capsuleRows.length,
@@ -1289,6 +1314,7 @@ async function buildDashboardSnapshot(
     totalValueSecuredLamports: historyIndex?.totalValueSecuredLamports ?? 0,
     totalValueExecutedLamports: historyIndex?.totalValueExecutedLamports ?? 0,
     activeValueLockedLamports,
+    activeAssetTotals,
   }
 
   const snapshot = {
@@ -1477,6 +1503,3 @@ export function ensureDashboardPrewarmScheduler(): void {
 export async function triggerDashboardPrewarm(forceRefresh = true): Promise<void> {
   await prewarmDashboardResponses(forceRefresh)
 }
-
-
-

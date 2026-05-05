@@ -61,11 +61,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
   }
 
-  const registered = registerCreSecret({
-    owner,
-    recipientEmail,
-    encryptedPayload,
-  })
+  let registered
+  try {
+    registered = registerCreSecret({
+      owner,
+      recipientEmail,
+      encryptedPayload,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to register CRE secret'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 
   return NextResponse.json({
     ok: true,

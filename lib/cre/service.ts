@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { createHmac } from 'crypto'
+import { createHmac, randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
 import { parseIntentPayload } from '@/utils/intent'
 import { safeEqualHex, sha256Hex } from '@/lib/cre/auth'
@@ -112,7 +112,7 @@ export function registerCreSecret(input: RegisterSecretInput): {
 } {
   const normalizedEmail = normalizeEmail(input.recipientEmail)
   const recipientEmailHash = computeRecipientHash(normalizedEmail)
-  const secretRef = `sec_${crypto.randomUUID().replace(/-/g, '')}`
+  const secretRef = `sec_${randomUUID().replace(/-/g, '')}`
   const secretHash = computeSecretHash(input.encryptedPayload)
   const now = Date.now()
 

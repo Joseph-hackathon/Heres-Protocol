@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { createHmac } from 'crypto'
+import { createHmac, randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
 import { safeEqualHex, sha256Hex } from '@/lib/cre/auth'
 import { fetchCapsuleStateByAddress } from '@/lib/cre/solana'
@@ -128,7 +128,7 @@ export function registerCreReminder(input: RegisterReminderInput): RegisterCreRe
   const reminderIntervalDays = getReminderIntervalDays()
   const nextReminderAt = computeNextReminderAt(now, reminderIntervalDays)
   const existing = getCreReminderByCapsule(input.capsuleAddress)
-  const reminderId = existing?.reminderId ?? `rem_${crypto.randomUUID().replace(/-/g, '')}`
+  const reminderId = existing?.reminderId ?? `rem_${randomUUID().replace(/-/g, '')}`
   const recipientEmailHash = sha256Hex(normalizedEmail)
 
   upsertCreReminder({

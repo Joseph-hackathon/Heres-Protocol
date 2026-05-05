@@ -17,10 +17,12 @@ import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG, getExplorerUrl } from '@/constants'
+import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 import { getEnhancedTransactions } from '@/lib/helius'
 import { initFeeConfig } from '@/lib/solana'
 import { getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
+import { parseIntentPayload } from '@/utils/intent'
 
 type CapsuleEvent = {
   signature: string
@@ -51,6 +53,9 @@ type CapsuleRow = {
   tokenDelta: string | null
   solDelta: number | null
   proofBytes: number | null
+  assetSymbol: SupportedAssetSymbol | null
+  assetLabel: string | null
+  totalAmount: string | null
 }
 
 const formatNumber = (value: number) => value.toLocaleString('en-US')
@@ -59,6 +64,8 @@ const formatSolAmount = (lamports: number, fractionDigits = 2) =>
     minimumFractionDigits: 0,
     maximumFractionDigits: fractionDigits,
   })
+const formatAssetAmount = (value: number) =>
+  value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
 
 const formatDuration = (seconds: number | null) => {
   if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '...'
@@ -413,6 +420,7 @@ export default function DashboardPage() {
     totalValueSecuredLamports: 0,
     totalValueExecutedLamports: 0,
     activeValueLockedLamports: 0,
+    activeAssetTotals: {} as Partial<Record<SupportedAssetSymbol, number>>,
   })
 
   const normalizeSummary = (source: any) => ({
@@ -425,6 +433,7 @@ export default function DashboardPage() {
     totalValueSecuredLamports: Number(source?.totalValueSecuredLamports || 0),
     totalValueExecutedLamports: Number(source?.totalValueExecutedLamports || 0),
     activeValueLockedLamports: Number(source?.activeValueLockedLamports || 0),
+    activeAssetTotals: source?.activeAssetTotals || {},
   })
 
   useEffect(() => {
@@ -563,7 +572,7 @@ export default function DashboardPage() {
           }
         }
 
-        const decodedCapsules = accounts
+      const decodedCapsules = accounts
           .map((account: any) => {
             try {
               const decoded = decodeCapsuleAccount(account.account.data)
@@ -576,6 +585,7 @@ export default function DashboardPage() {
                 intentData: decoded.intentData,
                 isActive: decoded.isActive,
                 executedAt: decoded.executedAt,
+                mint: decoded.mint || null,
               }
             } catch {
               return null
@@ -589,6 +599,7 @@ export default function DashboardPage() {
             intentData: Uint8Array
             isActive: boolean
             executedAt: number | null
+            mint: PublicKey | null
           }>
 
         const nowSeconds = Math.floor(Date.now() / 1000)
@@ -730,6 +741,9 @@ export default function DashboardPage() {
                 tokenDelta,
                 solDelta,
                 proofBytes,
+                assetSymbol: null,
+                assetLabel: null,
+                totalAmount: null,
               } as CapsuleRow)
             }
           })
@@ -749,6 +763,12 @@ export default function DashboardPage() {
               (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
             )
             const latestSignature = events[0]?.signature || null
+            const parsedIntent = parseIntentPayload(capsule.intentData)
+            const asset = inferAssetConfig(parsedIntent, capsule.mint)
+            const totalAmount =
+              parsedIntent && 'totalAmount' in parsedIntent && typeof parsedIntent.totalAmount === 'string'
+                ? parsedIntent.totalAmount
+                : null
 
             return {
               id: capsule.capsuleAddress,
@@ -766,6 +786,9 @@ export default function DashboardPage() {
               tokenDelta: null,
               solDelta: null,
               proofBytes: null,
+              assetSymbol: asset.symbol,
+              assetLabel: asset.label,
+              totalAmount,
             } as CapsuleRow
           })
           .filter((row) => {
@@ -797,7 +820,14 @@ export default function DashboardPage() {
         }, 0)
 
         let activeValueLockedLamports = 0
+        const activeAssetTotals: Partial<Record<SupportedAssetSymbol, number>> = {}
         if (capsuleRows.length > 0) {
+          capsuleRows.forEach((capsule) => {
+            if (capsule.status !== 'Active' || !capsule.assetSymbol || !capsule.totalAmount) return
+            const amount = Number.parseFloat(capsule.totalAmount)
+            if (!Number.isFinite(amount)) return
+            activeAssetTotals[capsule.assetSymbol] = (activeAssetTotals[capsule.assetSymbol] || 0) + amount
+          })
           try {
             const rentExemptLamports = await connection.getMinimumBalanceForRentExemption(9)
             const activeVaultPdas = capsuleRows
@@ -832,6 +862,7 @@ export default function DashboardPage() {
             totalValueSecuredLamports,
             totalValueExecutedLamports,
             activeValueLockedLamports,
+            activeAssetTotals,
           }
           setCapsules(combinedRows)
           setSummary(normalizeSummary(summaryData))
@@ -906,6 +937,18 @@ export default function DashboardPage() {
     summary.totalValueSecuredLamports > 0
       ? (summary.totalValueExecutedLamports / summary.totalValueSecuredLamports) * 100
       : 0
+  const activeAssetSummary = Object.entries(summary.activeAssetTotals || {})
+    .filter((entry): entry is [SupportedAssetSymbol, number] => Number.isFinite(entry[1]) && entry[1] > 0)
+    .sort((a, b) => b[1] - a[1])
+  const primaryActiveAsset = activeAssetSummary[0] || null
+  const activeAssetDisplay = activeAssetSummary.length
+    ? activeAssetSummary.map(([symbol, amount]) => `${formatAssetAmount(amount)} ${symbol}`).join(' · ')
+    : `${formatSolAmount(summary.activeValueLockedLamports)} SOL`
+  const activeAssetMeta = activeAssetSummary.length > 1
+    ? `${activeAssetSummary.length} asset types`
+    : primaryActiveAsset
+      ? primaryActiveAsset[0]
+      : 'SOL'
 
   const statCards = [
     {
@@ -936,11 +979,11 @@ export default function DashboardPage() {
       linePath: 'M8 84 C28 66, 42 76, 58 56 S86 32, 100 30 S120 18, 132 12',
     },
     {
-      label: 'Total SOL Secured',
-      value: `${formatSolAmount(summary.totalValueSecuredLamports)} SOL`,
-      metaLabel: 'Still locked',
-      metaValue: `${formatSolAmount(summary.activeValueLockedLamports)} SOL`,
-      delta: formatDelta(executedSolDelta || lockedSolDelta),
+      label: 'Active Asset Value',
+      value: activeAssetDisplay,
+      metaLabel: 'Primary asset',
+      metaValue: activeAssetMeta,
+      delta: formatDelta(activeAssetSummary.length ? activeDelta : (executedSolDelta || lockedSolDelta)),
       accent: 'purple' as const,
       linePath: 'M8 84 C26 72, 44 62, 58 44 S84 24, 102 24 S122 16, 132 10',
     },
