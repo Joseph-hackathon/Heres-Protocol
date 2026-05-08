@@ -10,6 +10,17 @@
 import { HELIUS_CONFIG, SOLANA_CONFIG } from '@/constants'
 import type { WalletActivity } from '@/types'
 
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,128}$/
+
+function isValidSolanaAddress(value: string): boolean {
+  return SOLANA_ADDRESS_RE.test(value)
+}
+
+function isValidSolanaSignature(value: string): boolean {
+  return SOLANA_SIGNATURE_RE.test(value)
+}
+
 /**
  * Interface for getTransactionsForAddress request parameters
  */
@@ -361,11 +372,15 @@ export async function getEnhancedTransactions(
   before?: string
 ): Promise<any[]> {
   if (!SOLANA_CONFIG.HELIUS_API_KEY) return []
+  if (!isValidSolanaAddress(address)) return []
   try {
-    const url = new URL(`${HELIUS_CONFIG.BASE_URL}/addresses/${address}/transactions`)
+    const safeAddress = encodeURIComponent(address)
+    const url = new URL(`${HELIUS_CONFIG.BASE_URL}/addresses/${safeAddress}/transactions`)
     url.searchParams.set('api-key', SOLANA_CONFIG.HELIUS_API_KEY)
     url.searchParams.set('limit', String(limit))
-    if (before) url.searchParams.set('before', before)
+    if (before && isValidSolanaSignature(before)) {
+      url.searchParams.set('before', before)
+    }
     const response = await fetch(url.toString())
     if (!response.ok) return []
     const data = await response.json()
