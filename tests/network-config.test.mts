@@ -42,3 +42,22 @@ test('legacy asset mint envs still work when generic envs are absent', () => {
 
   delete process.env.NEXT_PUBLIC_ETH_DEVNET_MINT
 })
+
+test('mSOL asset mint envs support both generic and legacy keys', () => {
+  process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT = 'msol-legacy-mint'
+
+  assert.equal(getAssetMintEnvKey('MSOL'), 'NEXT_PUBLIC_MSOL_MINT')
+  assert.equal(getAssetMintFromEnv('MSOL'), 'msol-legacy-mint')
+
+  delete process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT
+})
+
+test('mSOL falls back to the known devnet mint when env is absent', () => {
+  process.env.NEXT_PUBLIC_SOLANA_NETWORK = 'devnet'
+  delete process.env.NEXT_PUBLIC_MSOL_MINT
+  delete process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT
+
+  assert.equal(getAssetMintFromEnv('MSOL'), 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So')
+
+  delete process.env.NEXT_PUBLIC_SOLANA_NETWORK
+})

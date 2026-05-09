@@ -60,40 +60,37 @@ export function Navbar() {
 
   return (
     <header className="nav-glass">
-      <div className="mx-auto flex h-full max-w-7xl items-center justify-between gap-3 px-3 pr-4 sm:px-6 sm:pr-6 lg:px-8">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Link href="/" className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <Image src="/logo-white.png?v=3" alt="Heres" width={52} height={52} className="h-9 w-auto sm:h-[52px]" priority unoptimized />
+      <div className="mx-auto flex h-full max-w-7xl items-center justify-between gap-4 px-3 pr-4 sm:px-6 sm:pr-6 lg:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-4 lg:gap-8">
+          <Link href="/" className="flex shrink-0 items-center gap-2 sm:gap-2.5">
+            <Image src="/logo-white.png?v=3" alt="Heres" width={52} height={52} className="h-9 w-auto sm:h-11" priority unoptimized />
             <div className="min-w-0">
-              <span className="block truncate text-lg font-bold tracking-tight text-Heres-white sm:text-xl">Heres</span>
-              <span className="hidden text-[11px] font-medium uppercase tracking-[0.22em] text-Heres-muted/80 lg:block">
-                Capsule Protocol
-              </span>
+              <span className="block truncate text-lg font-black uppercase tracking-[0.08em] text-Heres-white sm:text-xl">Heres</span>
             </div>
           </Link>
 
-          <nav className="hidden items-center gap-1 rounded-2xl border border-Heres-border/70 bg-Heres-surface/50 p-1 md:flex">
-          {navLinks.map((link) => (
-            <Link
+          <nav className="hidden items-center gap-5 lg:flex">
+            {navLinks.map((link) => (
+              <Link
                 key={link.href}
                 href={link.href}
-                className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors ${isActivePath(link.href)
-                ? 'bg-Heres-accent/12 text-Heres-accent'
-                : 'text-Heres-muted hover:bg-Heres-card/60 hover:text-Heres-white'
+                className={`text-[13px] font-medium transition-colors ${isActivePath(link.href)
+                ? 'text-Heres-accent'
+                : 'text-Heres-muted hover:text-Heres-white'
                 }`}
-            >
-              {link.label}
-            </Link>
-          ))}
+              >
+                {link.label}
+              </Link>
+            ))}
           </nav>
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
           <Link
             href={personalLink.href}
-            className={`hidden items-center gap-2 rounded-2xl border px-3.5 py-2 text-sm font-medium transition-colors lg:inline-flex ${isActivePath(personalLink.href)
+            className={`hidden items-center gap-2 rounded-2xl border px-3.5 py-2 text-sm font-medium transition-colors xl:inline-flex ${isActivePath(personalLink.href)
               ? 'border-Heres-accent/35 bg-Heres-accent/10 text-Heres-accent'
-              : 'border-Heres-border/70 bg-Heres-surface/50 text-Heres-muted hover:border-Heres-accent/20 hover:bg-Heres-card/60 hover:text-Heres-white'
+              : 'border-Heres-border/60 bg-black/20 text-Heres-muted hover:border-Heres-accent/20 hover:bg-Heres-card/60 hover:text-Heres-white'
               }`}
           >
             <User className="h-4 w-4" />
@@ -103,7 +100,7 @@ export function Navbar() {
           <button
             type="button"
             onClick={() => setMobileOpen((v) => !v)}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-Heres-border bg-Heres-surface text-white md:hidden ml-1"
+            className="ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-Heres-border/70 bg-black/25 text-white lg:hidden"
             aria-expanded={mobileOpen}
             aria-label="Toggle menu"
           >
@@ -113,7 +110,7 @@ export function Navbar() {
             <button
               type="button"
               onClick={() => setNetworkOpen((v) => !v)}
-              className="flex items-center gap-1.5 rounded-2xl border border-Heres-border/70 bg-Heres-surface/50 px-3 py-2 text-sm font-medium text-Heres-white transition-colors hover:border-Heres-accent/20 hover:bg-Heres-card/60"
+              className="flex items-center gap-1.5 rounded-2xl border border-Heres-border/60 bg-black/20 px-3 py-2 text-sm font-medium text-Heres-white transition-colors hover:border-Heres-accent/20 hover:bg-Heres-card/60"
               aria-expanded={networkOpen}
               aria-haspopup="listbox"
               aria-label="Select network"
@@ -148,9 +145,8 @@ export function Navbar() {
               </ul>
             )}
           </div>
-          {/* Desktop: Connect visible in nav; mobile: Connect only inside hamburger */}
-          <div className="relative z-50 hidden items-center wallet-nav-trigger md:flex">
-            <WalletMultiButton className="!h-10 !rounded-2xl !border !border-Heres-accent/25 !bg-Heres-accent/10 !px-4 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!border-Heres-accent/40 hover:!bg-Heres-accent/15 active:scale-95" />
+          <div className="relative z-50 hidden items-center wallet-nav-trigger sm:flex">
+            <WalletMultiButton className="!h-10 !rounded-2xl !border !border-Heres-accent/20 !bg-Heres-accent !px-4 !py-0 !text-sm !font-semibold !text-slate-950 transition-opacity hover:!border-Heres-accent/40 hover:!opacity-95 active:scale-95" />
           </div>
         </div>
       </div>
@@ -158,7 +154,7 @@ export function Navbar() {
       {/* Mobile menu: extend toward bottom, height slightly cut so panel doesn't go full viewport */}
       {mobileOpen && (
         <div
-          className="border-t border-Heres-border/70 bg-[#0f172a] md:hidden overflow-x-hidden"
+          className="overflow-x-hidden border-t border-Heres-border/70 bg-[#0a1022] lg:hidden"
           style={{
             backgroundColor: '#0f172a',
             minHeight: 'calc(100dvh - 4rem - env(safe-area-inset-top, 0px) - 25rem)',
@@ -174,7 +170,7 @@ export function Navbar() {
                   <Link
                     href={link.href}
                     className={`block rounded-xl px-4 py-3 text-sm font-medium transition-colors ${isActivePath(link.href)
-                      ? 'bg-Heres-accent/20 text-white'
+                      ? 'bg-Heres-accent/15 text-Heres-accent'
                       : 'text-white hover:bg-Heres-card/60'
                       }`}
                   >
@@ -186,7 +182,7 @@ export function Navbar() {
                 <Link
                   href={personalLink.href}
                   className={`block rounded-xl px-4 py-3 text-sm font-medium transition-colors ${isActivePath(personalLink.href)
-                    ? 'bg-Heres-accent/20 text-white'
+                    ? 'bg-Heres-accent/15 text-Heres-accent'
                     : 'text-white hover:bg-Heres-card/60'
                     }`}
                 >

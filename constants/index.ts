@@ -4,6 +4,10 @@
 
 export type SolanaNetwork = 'devnet' | 'testnet' | 'mainnet-beta'
 
+const KNOWN_DEVNET_ASSET_MINTS: Partial<Record<string, string>> = {
+  MSOL: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
+}
+
 function normalizeSolanaNetwork(value: string | undefined): SolanaNetwork {
   const normalized = value?.trim().toLowerCase()
   if (normalized === 'mainnet' || normalized === 'mainnet-beta') return 'mainnet-beta'
@@ -48,12 +52,20 @@ export function getAssetMintFromEnv(symbol: string): string | null {
     case 'ETH':
       value = process.env.NEXT_PUBLIC_ETH_MINT || process.env.NEXT_PUBLIC_ETH_DEVNET_MINT
       break
+    case 'MSOL':
+      value = process.env.NEXT_PUBLIC_MSOL_MINT || process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT
+      break
     default:
       value = process.env[getAssetMintEnvKey(symbol)]
       break
   }
-  if (!value || !value.trim()) return null
-  return value.trim()
+  if (value && value.trim()) return value.trim()
+
+  const network = normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK)
+  if (network === 'devnet') {
+    return KNOWN_DEVNET_ASSET_MINTS[symbol] || null
+  }
+  return null
 }
 
 export function getExplorerUrl(path: 'address' | 'tx', value: string, network = SOLANA_CONFIG.NETWORK): string {

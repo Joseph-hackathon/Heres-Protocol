@@ -25,6 +25,7 @@ const endpoint = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
 const assets = [
   { symbol: 'BTC', mint: process.env.NEXT_PUBLIC_BTC_DEVNET_MINT || '' },
   { symbol: 'ETH', mint: process.env.NEXT_PUBLIC_ETH_DEVNET_MINT || '' },
+  { symbol: 'MSOL', mint: process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT || process.env.NEXT_PUBLIC_MSOL_MINT || '' },
 ].filter((asset) => asset.mint)
 
 if (assets.length === 0) {

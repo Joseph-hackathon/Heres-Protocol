@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js'
 import { getAssetMintFromEnv } from '../constants/index.ts'
 
-export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH'
+export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH' | 'MSOL'
 
 export type AssetConfig = {
   symbol: SupportedAssetSymbol
@@ -50,6 +50,14 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     mint: normalizeMint(getAssetMintFromEnv('ETH')),
     decimals: 8,
     coingeckoId: 'ethereum',
+    isNative: false,
+  },
+  MSOL: {
+    symbol: 'MSOL',
+    label: 'Marinade Staked SOL',
+    mint: normalizeMint(getAssetMintFromEnv('MSOL')),
+    decimals: 9,
+    coingeckoId: 'msol',
     isNative: false,
   },
 }

@@ -2,6 +2,7 @@ import 'server-only'
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import path from 'path'
+import { getDataFilePath } from '@/lib/runtime-paths'
 import {
   CreDeliveryLedgerRecord,
   CreReminderDeliveryRecord,
@@ -31,7 +32,7 @@ declare global {
 function getStorePath(): string {
   const configuredPath = process.env.CRE_STORE_PATH?.trim()
   if (configuredPath) return configuredPath
-  return path.join(process.cwd(), '.data', 'cre-store.json')
+  return getDataFilePath('cre-store.json')
 }
 
 function loadStateFromDisk(): CreStoreState {

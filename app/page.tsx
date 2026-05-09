@@ -1,742 +1,475 @@
-'use client'
-
-import Link from 'next/link'
 import Image from 'next/image'
-import dynamic from 'next/dynamic'
-import { useRef, useEffect, useState } from 'react'
-import { getNetworkDisplayLabel } from '@/constants'
+import Link from 'next/link'
+import { ArrowRight, Download, Shield, Smartphone, Wallet } from 'lucide-react'
+import { getDashboardSnapshot } from '@/lib/dashboard'
 
-const AsciiCapsule = dynamic(() => import('@/components/AsciiCapsule').then((m) => ({ default: m.AsciiCapsule })), {
-  ssr: false,
-  loading: () => <div className="min-h-[120px]" aria-hidden />,
-})
+const partnerLogos = [
+  { name: 'Colosseum', src: '/logos/colosseum-mark.svg', href: 'https://www.colosseum.org/' },
+  { name: 'MagicBlock', src: '/logos/magicblock.svg', href: 'https://www.magicblock.gg/' },
+  { name: 'Solana', src: '/logos/solana.svg', href: 'https://solana.com/' },
+  { name: 'Helius', src: '/logos/helius.svg', href: 'https://www.helius.dev/' },
+  { name: 'Alchemy', src: '/logos/alchemy-mark.svg', href: 'https://www.alchemy.com/' },
+]
 
-const HeroCapsuleVideo = dynamic(() => import('@/components/HeroCapsuleVideo').then((m) => ({ default: m.HeroCapsuleVideo })), {
-  ssr: false,
-  loading: () => <div className="aspect-video w-full animate-pulse rounded-2xl bg-Heres-surface/50" aria-hidden />,
-})
-
-
-function DashedLine({
-  height = 50,
-  segmentIndex,
-  activeWhyIndex,
-}: {
-  height?: number
-  segmentIndex: number
-  activeWhyIndex: number
-}) {
-  const active = activeWhyIndex >= segmentIndex
-  const filled = activeWhyIndex > segmentIndex
-  return (
-    <div className="relative flex justify-center" style={{ height }}>
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox={`0 0 2 ${height}`}
-        width={2}
-        height={height}
-        className="shrink-0 text-white why-flow-dashed-line"
-      >
-        <path
-          stroke="currentColor"
-          strokeDasharray="5 5"
-          strokeLinecap="square"
-          strokeOpacity={0.5}
-          strokeWidth={1.5}
-          d={`M1 1v${height - 2}`}
-        />
-      </svg>
-      {filled && (
-        <div
-          className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 bg-Heres-accent rounded-full"
-          aria-hidden
-          style={{ height }}
-        />
-      )}
-      {active && !filled && (
-        <div
-          className="why-flow-segment absolute left-1/2 top-0 h-3 w-0.5 -translate-x-1/2 bg-Heres-accent rounded-full"
-          aria-hidden
-        />
-      )}
-    </div>
-  )
-}
-
-const features: any[] = []
-
-/* Why Heres benefit-focused cards */
-const whyHeresCards = [
+const featureCards = [
   {
-    title: 'Your intent, executed when it matters',
-    description: 'Leave instructions that run only when the time is right. No one can execute early. Your conditions stay yours until the moment you chose.',
-    image: '/why-Heres-1.png',
+    title: 'Create Capsule',
+    description: 'Define beneficiary wallets, allocation rules, and inactivity conditions under two minutes.',
     href: '/create',
+    cta: 'Create Capsule',
   },
   {
-    title: 'Privacy by design',
-    description: 'Your conditions stay private. Only the outcome is visible on-chain. No third party sees your rules. Just the result when silence becomes truth.',
-    image: '/why-Heres-2.png',
+    title: 'Track Activity',
+    description: 'Monitor wallet-level activity signals and capsule status from a single dashboard.',
     href: '/dashboard',
+    cta: 'Open Dashboard',
   },
   {
-    title: "Set it once. It runs when you're silent.",
-    description: 'Define your intent once. No bridges, no middlemen. When your conditions are met, execution happens automatically, the way you wanted.',
-    image: '/why-Heres-3.png',
-    href: '/create',
+    title: 'Mobile Demo',
+    description: 'Run the seeker-native flow and sign extension actions directly from your mobile device.',
+    href: 'https://seeker.solanamobile.com',
+    cta: 'Download APK',
+    external: true,
   },
 ]
 
-export default function HomePage() {
-  const heroRef = useRef<HTMLDivElement>(null)
-  const whySectionRef = useRef<HTMLElement>(null)
-  const whyTitleRef = useRef<HTMLHeadingElement>(null)
-  const whyLeftRef = useRef<HTMLDivElement>(null)
-  const whyVisualMainRef = useRef<HTMLDivElement>(null)
-  const howTitleRef = useRef<HTMLHeadingElement>(null)
-  const stepsRef = useRef<HTMLDivElement>(null)
-  const partnersSectionRef = useRef<HTMLElement>(null)
-  const unleashRef = useRef<HTMLElement>(null)
-  const [activeWhyIndex, setActiveWhyIndex] = useState(0)
-  const gsapCtxRef = useRef<{ revert?: () => void } | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const gsap = (await import('gsap')).default
-      const ScrollTrigger = (await import('gsap/ScrollTrigger')).default
-      gsap.registerPlugin(ScrollTrigger)
-      if (cancelled) return
-      gsapCtxRef.current = gsap.context(() => {
-        gsap.from(heroRef.current?.querySelector('[data-hero-tag]') ?? {}, {
-          opacity: 0,
-          y: 20,
-          duration: 0.6,
-          ease: 'power3.out',
-        })
-        gsap.from(heroRef.current?.querySelector('h1') ?? {}, {
-          opacity: 0,
-          y: 40,
-          duration: 0.8,
-          delay: 0.15,
-          ease: 'power3.out',
-        })
-        gsap.from(heroRef.current?.querySelector('[data-hero-ascii]') ?? {}, {
-          opacity: 0,
-          y: 24,
-          duration: 0.9,
-          delay: 0.3,
-          ease: 'power3.out',
-        })
-        gsap.from(heroRef.current?.querySelector('[data-hero-below-capsule]') ?? {}, {
-          opacity: 0,
-          y: 20,
-          duration: 0.8,
-          delay: 0.6,
-          ease: 'power3.out',
-        })
-        if (whySectionRef.current) {
-          const tl = gsap.timeline({
-            scrollTrigger: {
-              trigger: whySectionRef.current,
-              start: 'top 82%',
-              end: 'top 20%',
-              once: true,
-            },
-          })
-          if (whyTitleRef.current) {
-            tl.from(whyTitleRef.current, { opacity: 0, y: 28, duration: 0.65, ease: 'power3.out' })
-          }
-          const whyHeading = whySectionRef.current.querySelector('[data-why-heading]')
-          if (whyHeading) {
-            tl.from(whyHeading, { opacity: 0, y: 20, duration: 0.5, ease: 'power3.out' }, '-=0.4')
-          }
-          if (whyLeftRef.current) {
-            const cards = whyLeftRef.current.querySelectorAll('[data-gsap-why-card]')
-            tl.fromTo(cards, { y: 32, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.12, ease: 'power3.out' }, '-=0.35')
-          }
-          if (whyVisualMainRef.current) {
-            tl.from(whyVisualMainRef.current, { x: 48, opacity: 0, duration: 0.7, ease: 'power3.out' }, '-=0.45')
-          }
-        }
-        if (howTitleRef.current) {
-          ScrollTrigger.create({
-            trigger: howTitleRef.current,
-            start: 'top 85%',
-            onEnter: () => {
-              gsap.from(howTitleRef.current, { opacity: 0, y: 30, duration: 0.7, ease: 'power3.out' })
-            },
-            once: true,
-          })
-        }
-        if (stepsRef.current) {
-          const stepEls = stepsRef.current.querySelectorAll('[data-gsap-step]')
-          gsap.fromTo(
-            stepEls,
-            { y: 32 },
-            {
-              y: 0,
-              scrollTrigger: { trigger: stepsRef.current, start: 'top 88%', once: true },
-              stagger: 0.12,
-              duration: 0.5,
-              ease: 'power3.out',
-            }
-          )
-        }
-        if (partnersSectionRef.current) {
-          gsap.from(partnersSectionRef.current.querySelector('h2'), {
-            scrollTrigger: { trigger: partnersSectionRef.current, start: 'top 85%', once: true },
-            opacity: 0,
-            y: 30,
-            duration: 0.7,
-            ease: 'power3.out',
-          })
-        }
-        if (unleashRef.current) {
-          const left = unleashRef.current.querySelector('[data-gsap-unleash-text]')
-          const right = unleashRef.current.querySelector('[data-gsap-unleash-3d]')
-          gsap.from(left, {
-            scrollTrigger: { trigger: unleashRef.current, start: 'top 80%', once: true },
-            opacity: 0,
-            x: -50,
-            duration: 0.9,
-            ease: 'power3.out',
-          })
-          gsap.from(right, {
-            scrollTrigger: { trigger: unleashRef.current, start: 'top 80%', once: true },
-            opacity: 0,
-            x: 50,
-            duration: 0.9,
-            delay: 0.2,
-            ease: 'power3.out',
-          })
-        }
-      })
-    })()
-    return () => {
-      cancelled = true
-      if (gsapCtxRef.current?.revert) gsapCtxRef.current.revert()
-      gsapCtxRef.current = null
+const whyCards = [
+  {
+    index: '01',
+    title: 'Your intent, executed when you want',
+    description:
+      'Leave instructions that run only when the time is right. No one can execute early. Your conditions stay yours until the moment time says execute.',
+  },
+  {
+    index: '02',
+    title: 'Privacy by design',
+    description:
+      'Your conditions stay private. Only the outcome is visible on-chain. No third party sees your rules. Just the result when silence becomes truth.',
+  },
+  {
+    index: '03',
+    title: "Set it once. It runs when you're silent.",
+    description:
+      'Define your intent once. No bridges, no middlemen. When your conditions are met, execution happens automatically, the way you wanted.',
+  },
+]
+
+const howSteps = [
+  {
+    step: 'Step 1',
+    title: 'Create Capsule',
+    description:
+      'Create a capsule to define beneficiaries, amounts, and inactivity period on the active Solana network.',
+    href: '/create',
+    cta: 'Create Capsule',
+  },
+  {
+    step: 'Step 2',
+    title: 'Delegate',
+    description:
+      'Create and delegate your capsule with Anchor. Capsule PDA is derived from owner; delegate to MagicBlock PER (TEE) for private monitoring.',
+    href: '/capsules',
+    cta: 'Delegate Capsule',
+  },
+  {
+    step: 'Step 3',
+    title: 'Serve',
+    description:
+      'Create a capsule to define beneficiaries, amounts, and inactivity period on Solana, then watch execution settle on-chain.',
+    href: '/dashboard',
+    cta: 'View Dashboard',
+  },
+]
+
+function PartnerBadge({ name, src, href }: { name: string; src: string; href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="partner-marquee-badge flex h-14 min-w-[176px] items-center justify-center gap-3 rounded-2xl px-5 py-3 transition-colors hover:border-Heres-accent/30 hover:bg-Heres-card/70"
+    >
+      <Image src={src} alt={name} width={28} height={28} className="h-6 w-6 object-contain" unoptimized />
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-Heres-white">{name}</span>
+    </a>
+  )
+}
+
+function formatMetricCount(value: number) {
+  return new Intl.NumberFormat('en-US').format(value)
+}
+
+function formatAssetAmount(value: number) {
+  if (value >= 100) return value.toFixed(0)
+  if (value >= 1) return value.toFixed(2)
+  return value.toFixed(4)
+}
+
+function formatSolAmount(lamports: number) {
+  return (lamports / 1_000_000_000).toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: lamports >= 100_000_000_000 ? 0 : 2,
+  })
+}
+
+async function getLandingStats() {
+  try {
+    const snapshot = await getDashboardSnapshot(false, true, false)
+    const assetSummary = Object.entries(snapshot.summary.activeAssetTotals || {})
+      .filter((entry): entry is [string, number] => Number.isFinite(entry[1]) && entry[1] > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([symbol, amount]) => `${formatAssetAmount(amount)} ${symbol}`)
+      .join(' · ')
+
+    return {
+      total: snapshot.summary.total,
+      active: snapshot.summary.active,
+      executed: snapshot.summary.executed,
+      totalValueSecuredLamports: snapshot.summary.totalValueSecuredLamports,
+      assetSummary: assetSummary || 'No active locked assets',
     }
-  }, [])
+  } catch {
+    return {
+      total: 0,
+      active: 0,
+      executed: 0,
+      totalValueSecuredLamports: 0,
+      assetSummary: 'Dashboard metrics syncing',
+    }
+  }
+}
+
+export default async function HomePage() {
+  const landingStats = await getLandingStats()
 
   return (
-    <div className="bg-hero grain-overlay">
-      {/* Hero */}
-      <section
-        ref={heroRef}
-        className="relative overflow-hidden px-4 pt-36 pb-32 sm:px-6 sm:pt-44 sm:pb-40 lg:px-8"
-      >
-        {/* Decorative hero glow orbs */}
-        <div className="pointer-events-none absolute top-0 left-1/4 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-Heres-cyan/[0.04] blur-[120px]" aria-hidden />
-        <div className="pointer-events-none absolute top-20 right-1/4 translate-x-1/2 w-[500px] h-[500px] rounded-full bg-Heres-purple/[0.04] blur-[100px]" aria-hidden />
+    <div className="bg-hero text-Heres-white">
+      <section className="relative overflow-hidden px-4 pt-32 pb-24 sm:px-6 lg:px-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(34,211,238,0.22),transparent_32%),radial-gradient(circle_at_18%_78%,rgba(34,211,238,0.18),transparent_22%),radial-gradient(circle_at_86%_24%,rgba(34,211,238,0.12),transparent_24%)]" />
+        <div className="pointer-events-none absolute left-1/2 top-16 h-[520px] w-[520px] -translate-x-1/2 rounded-full border border-Heres-accent/20 bg-[radial-gradient(circle_at_50%_45%,rgba(34,211,238,0.28),rgba(9,17,34,0.08)_48%,transparent_70%)] blur-[2px]" />
+        <div className="pointer-events-none absolute left-1/2 top-8 h-[620px] w-[620px] -translate-x-1/2 rounded-full border border-Heres-accent/10" />
 
-        <div className="mx-auto max-w-5xl text-center">
-          <div data-hero-tag className="mb-6 inline-flex items-center gap-2">
-            <span className="tag-pill">
-              <span className="accent-dot" />
-              Privacy-Preserving Capsule Protocol
-            </span>
+        <div className="relative mx-auto max-w-6xl text-center">
+          <div className="inline-flex items-center gap-3 rounded-full border border-Heres-border/80 bg-black/30 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-Heres-accent">
+            <Shield className="h-4 w-4" />
+            Heres Capsule Protocol
           </div>
-          <h1 className="font-display text-5xl font-bold uppercase tracking-tight text-Heres-white sm:text-6xl lg:text-7xl xl:text-8xl leading-[0.95]">
-            Your intent. Your rules.{' '}
-            <span className="text-shimmer">
-              Executed when you&apos;re silent.
-            </span>
+
+          <h1 className="mx-auto mt-8 max-w-4xl text-4xl font-black uppercase leading-[0.95] tracking-tight sm:text-6xl lg:text-7xl">
+            <span className="text-Heres-accent">Your intent.</span> Executed when you&apos;re silent
           </h1>
-          {/* ASCII capsule animation */}
-          <div className="mt-12 sm:mt-14" data-hero-ascii>
-            <AsciiCapsule />
+
+          <div className="mt-10">
+            <Link
+              href="/create"
+              className="inline-flex items-center justify-center rounded-2xl bg-Heres-accent px-8 py-4 text-base font-bold uppercase tracking-[0.16em] text-slate-950 shadow-[0_0_30px_rgba(34,211,238,0.35)] transition-transform hover:-translate-y-0.5"
+            >
+              Create Capsules
+            </Link>
           </div>
-          {/* Description + CTAs */}
-          <div className="mt-12 sm:mt-14 text-center" data-hero-below-capsule>
-            <p className="mx-auto max-w-2xl text-base sm:text-lg text-Heres-muted leading-relaxed">
-              Define once. Delegate to Magicblock PER (TEE). Execution runs on Solana when conditions are met. No bridges, no third party.
-            </p>
-            <div className="mt-10 flex flex-wrap justify-center gap-4">
-              <Link
-                href="/create"
-                className="btn-primary min-w-[180px] shrink-0 rounded-full py-4 text-center text-sm"
+
+          <p className="mx-auto mt-8 max-w-3xl text-base leading-8 text-Heres-muted sm:text-lg">
+            Create once, then let Heres monitor silently. When inactivity conditions are met, execution finalizes on
+            Solana without manual intervention.
+          </p>
+
+          <div className="mt-12 flex flex-col items-center gap-4">
+            <span className="text-sm font-semibold uppercase tracking-[0.24em] text-Heres-muted">Built With</span>
+            <div className="inline-flex items-center gap-3 bg-black/40 px-5 py-3">
+              <Image src="/logos/solana.svg" alt="Solana" width={28} height={28} className="h-7 w-7" unoptimized />
+              <span className="text-lg font-bold uppercase tracking-[0.16em]">Solana</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-Heres-border/60 bg-black/35">
+        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
+          <div className="overflow-hidden">
+            <div className="partner-marquee-track">
+              <div className="partner-marquee-group">
+                {partnerLogos.map((partner) => (
+                  <PartnerBadge key={partner.name} {...partner} />
+                ))}
+              </div>
+              <div className="partner-marquee-group" aria-hidden="true">
+                {partnerLogos.map((partner) => (
+                  <PartnerBadge key={`${partner.name}-clone`} {...partner} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-6xl gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {featureCards.map((card) => {
+            const content = (
+              <div className="rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-8 shadow-[0_18px_40px_rgba(0,0,0,0.22)] transition-transform hover:-translate-y-1">
+                <h2 className="text-2xl font-black uppercase tracking-tight text-Heres-white">{card.title}</h2>
+                <p className="mt-4 min-h-[88px] text-sm leading-7 text-Heres-muted">{card.description}</p>
+                <span className="mt-8 inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-Heres-accent">
+                  {card.cta}
+                  <ArrowRight className="h-4 w-4" />
+                </span>
+              </div>
+            )
+
+            if (card.external) {
+              return (
+                <a key={card.title} href={card.href} target="_blank" rel="noopener noreferrer">
+                  {content}
+                </a>
+              )
+            }
+
+            return (
+              <Link key={card.title} href={card.href}>
+                {content}
+              </Link>
+            )
+          })}
+        </div>
+      </section>
+
+      <section className="px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-4xl rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.97),rgba(8,13,30,0.92))] px-6 py-8 text-center shadow-[0_20px_48px_rgba(0,0,0,0.24)] sm:px-10">
+          <h2 className="text-3xl font-black uppercase tracking-tight">
+            Why Build With <span className="text-Heres-accent">Heres?</span>
+          </h2>
+          <p className="mt-3 text-sm font-semibold uppercase tracking-[0.18em] text-Heres-accent">
+            Your development environment
+          </p>
+          <p className="mt-3 text-sm leading-7 text-Heres-muted">
+            Everything you need to build privacy-preserving capsules on Solana.
+          </p>
+
+          <div className="mt-8 space-y-4 text-left">
+            {whyCards.map((card) => (
+              <div
+                key={card.index}
+                className="rounded-[24px] border border-Heres-border/70 bg-Heres-card/70 px-6 py-6 shadow-[0_12px_32px_rgba(0,0,0,0.18)]"
               >
-                Get Started
-              </Link>
-              <button
-                type="button"
-                className="btn-secondary min-w-[180px] shrink-0 rounded-full py-4 text-center text-sm"
-                aria-label="Download APK (coming soon)"
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-Heres-muted">{card.index}</p>
+                <h3 className="mt-3 text-xl font-black uppercase tracking-tight text-Heres-accent">{card.title}</h3>
+                <p className="mt-3 text-sm leading-7 text-Heres-muted">{card.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <div className="text-center">
+            <h2 className="text-3xl font-black uppercase tracking-tight sm:text-4xl">How It Works?</h2>
+            <p className="mx-auto mt-4 max-w-3xl text-sm leading-7 text-Heres-muted">
+              With Heres, define your intent once on Solana. MagicBlock PER (TEE) monitors privately; execution runs
+              on devnet when conditions are met.
+            </p>
+          </div>
+
+          <div className="mt-14 grid gap-6 lg:grid-cols-3">
+            {howSteps.map((step) => (
+              <div
+                key={step.step}
+                className="rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-8"
               >
-                Download APK
-              </button>
-            </div>
+                <div className="inline-flex rounded-full border border-Heres-accent/25 bg-Heres-accent/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-Heres-accent">
+                  {step.step}
+                </div>
+                <h3 className="mt-5 text-2xl font-black uppercase tracking-tight">{step.title}</h3>
+                <p className="mt-4 text-sm leading-7 text-Heres-muted">{step.description}</p>
+                <Link
+                  href={step.href}
+                  className="mt-8 inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-Heres-accent"
+                >
+                  {step.cta}
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      <div className="glow-line" />
-
-      {/* Why Build With Heres */}
-      <section ref={whySectionRef} className="why-build-section py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <h2 ref={whyTitleRef} className="font-display text-3xl font-bold uppercase tracking-tight text-white sm:text-4xl lg:text-5xl">
-              Why Build With Heres?
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-center text-Heres-muted hidden">
-              Capsules on Solana, private logic in Magicblock PER (TEE), execution when you&apos;re silent.
-            </p>
-          </div>
-
-          <div data-why-heading className="mx-auto mt-4 max-w-2xl text-center">
-            <p className="why-build-subtitle text-lg font-medium font-display uppercase tracking-wide">Your development environment</p>
-            <p className="why-build-desc mt-2">Everything you need to build privacy-preserving capsules on Solana.</p>
-          </div>
-
-          <div className="mt-20 grid gap-12 lg:grid-cols-2 lg:gap-20 lg:items-center">
-            {/* Left: Why Heres steps */}
-            <div ref={whyLeftRef} className="why-left-cards flex flex-col">
-              {whyHeresCards.map((card, i) => {
-                const isActive = activeWhyIndex === i
-                return (
-                  <div
-                    key={card.title}
-                    role="button"
-                    tabIndex={0}
-                    data-gsap-why-card
-                    data-active={isActive}
-                    onClick={() => setActiveWhyIndex(i)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveWhyIndex(i) } }}
-                    className={`flex cursor-pointer flex-col py-6 transition-all duration-500 ${isActive ? 'opacity-100' : 'opacity-40 hover:opacity-70'}`}
-                  >
-                    <div
-                      className={`relative flex items-start transition-all duration-500 ${isActive ? 'pl-5' : 'pl-0'}`}
-                      style={{
-                        borderLeft: isActive ? '2px solid rgba(34, 211, 238, 0.4)' : '2px solid transparent',
-                      }}
-                    >
-                      {isActive && (
-                        <div
-                          key={`step-bar-${i}`}
-                          className="why-build-step-bar absolute left-0 top-0 w-0.5 bg-Heres-accent"
-                          aria-hidden
-                          onAnimationEnd={() => setActiveWhyIndex((prev) => (prev + 1) % whyHeresCards.length)}
-                        />
-                      )}
-                      <div>
-                        <div className="mb-2 font-display text-xs font-medium uppercase tracking-widest text-Heres-accent/60">
-                          Step {i + 1}
-                        </div>
-                        <h3 className="mb-3 font-display text-xl font-bold uppercase tracking-tight text-white">
-                          {card.title}
-                        </h3>
-                        <p className="text-sm leading-relaxed text-white/50">
-                          {card.description}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-            {/* Right: Heres flow diagram */}
-            <div ref={whyVisualMainRef} className="relative w-full md:min-w-0 md:flex-1 lg:max-w-[900px]">
-              <div className="why-build-flow-wrap relative flex flex-col md:flex-row md:items-stretch md:gap-0 md:pl-2 md:pr-4">
-                <div className="relative mt-4 flex w-full flex-col items-center text-white md:mt-0 md:w-full md:scale-100">
-                  {/* 1. Solana settlement */}
-                  <div
-                    className="z-10 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transform: activeWhyIndex >= 0 ? 'scale(1)' : 'scale(0.98)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm p-3 text-center md:p-4 w-[164px]">
-                      <div className="flex items-center justify-center gap-2 font-display text-sm md:text-base text-white whitespace-nowrap uppercase tracking-wide">
-                        <Image src="/logos/solana.svg" alt="Solana" width={24} height={24} className="shrink-0" unoptimized />
-                        <span>{getNetworkDisplayLabel()}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="relative flex justify-center" style={{ opacity: 1 }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 2 50" width={2} height={50} className="shrink-0 text-white">
-                      <path stroke="currentColor" strokeDasharray="5 5" strokeLinecap="square" strokeOpacity={0.5} strokeWidth={1.5} d="M1 1v48" />
-                    </svg>
-                    {activeWhyIndex > 0 && (
-                      <div className="absolute left-1/2 top-0 h-full w-[1.5px] -translate-x-1/2 bg-Heres-accent rounded-full" aria-hidden style={{ height: 50 }} />
-                    )}
-                    {activeWhyIndex === 0 && (
-                      <div className="why-flow-segment absolute left-1/2 h-6 w-[1.5px] -translate-x-1/2 rounded-full bg-Heres-accent" aria-hidden style={{ top: 0 }} />
-                    )}
-                  </div>
-                  {/* 2. Heres Capsules */}
-                  <div
-                    className="z-10 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transform: activeWhyIndex >= 0 ? 'scale(1)' : 'scale(0.98)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="rounded-xl w-[164px] border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm p-3 text-center md:p-4">
-                      <div className="font-display text-sm md:text-base text-white uppercase tracking-wide">Heres Capsules</div>
-                    </div>
-                  </div>
-                  {/* Parallel dashed lines */}
-                  <div className="relative -z-10 flex w-full justify-center gap-2 md:gap-6" style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transition: 'opacity 0.3s' }}>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div key={i} className="relative flex justify-center" style={{ opacity: 1 }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 2 30" width={2} height={30} className="shrink-0 text-white">
-                          <path stroke="currentColor" strokeDasharray="5 5" strokeLinecap="square" strokeOpacity={0.5} strokeWidth={1.5} d="M1 1v28" />
-                        </svg>
-                        {activeWhyIndex > 1 && <div className="absolute left-1/2 top-0 h-full w-[1.5px] -translate-x-1/2 bg-Heres-accent rounded-full" style={{ height: 30 }} aria-hidden />}
-                      </div>
-                    ))}
-                  </div>
-                  {/* Tokens or NFTs */}
-                  <div
-                    className="z-20 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transform: activeWhyIndex >= 0 ? 'scale(1)' : 'scale(0.95)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="rounded-lg w-[140px] whitespace-nowrap border border-white/[0.08] bg-white/[0.03] px-1.5 py-1 text-center font-display text-[11px] uppercase leading-none tracking-wider text-white/50">
-                      Tokens or NFTs
-                    </div>
-                  </div>
-                  {/* Parallel dashed lines again */}
-                  <div className="relative -z-10 flex w-full justify-center gap-2 md:gap-6" style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transition: 'opacity 0.3s' }}>
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div key={i} className="relative flex justify-center" style={{ opacity: 1 }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 2 30" width={2} height={30} className="shrink-0 text-white">
-                          <path stroke="currentColor" strokeDasharray="5 5" strokeLinecap="square" strokeOpacity={0.5} strokeWidth={1.5} d="M1 1v28" />
-                        </svg>
-                        {activeWhyIndex > 1 && <div className="absolute left-1/2 top-0 h-full w-[1.5px] -translate-x-1/2 bg-Heres-accent rounded-full" style={{ height: 30 }} aria-hidden />}
-                      </div>
-                    ))}
-                  </div>
-                  {/* 3. Magicblock PER (TEE) */}
-                  <div
-                    className="relative z-20 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 1 ? 1 : 0.4, transform: activeWhyIndex >= 1 ? 'scale(1)' : 'scale(0.95)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="flex flex-col items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-2 leading-none md:px-4 md:py-2.5 min-w-[220px] w-[220px]">
-                      <div className="flex items-center gap-2 justify-center whitespace-nowrap">
-                        <Image src="/logos/magicblock.svg" alt="Magicblock" width={20} height={20} className="shrink-0" unoptimized />
-                        <span className="font-display text-[11px] uppercase tracking-wider text-white/60">Magicblock PER (TEE)</span>
-                      </div>
-                      <span className="font-display text-[9px] uppercase tracking-widest text-white/30">Privacy</span>
-                    </div>
-                  </div>
-                  <div className="relative flex justify-center">
-                    <DashedLine height={30} segmentIndex={2} activeWhyIndex={activeWhyIndex} />
-                  </div>
-                  {/* 4. Monitoring */}
-                  <div
-                    className="z-10 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 1 ? 1 : 0.4, transform: activeWhyIndex >= 1 ? 'scale(1)' : 'scale(0.98)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="flex flex-col items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-2 leading-none md:px-4 md:py-2.5 w-[164px]">
-                      <div className="flex items-center gap-2 justify-center leading-none">
-                        <Image src="/logos/helius.svg" alt="Helius" width={18} height={18} className="shrink-0" unoptimized />
-                        <span className="font-display text-[11px] uppercase tracking-wider text-white/60">Monitoring</span>
-                      </div>
-                      <span className="font-display text-[10px] uppercase tracking-wider text-white/40 leading-none">Helius RPC</span>
-                    </div>
-                  </div>
-                  <div className="relative flex justify-center">
-                    <DashedLine height={28} segmentIndex={2} activeWhyIndex={activeWhyIndex} />
-                  </div>
-                  {/* 5. Execution */}
-                  <div
-                    className="z-10 flex w-full justify-center"
-                    style={{ opacity: activeWhyIndex >= 0 ? 1 : 0.4, transform: activeWhyIndex >= 0 ? 'scale(1)' : 'scale(0.98)', transition: 'opacity 0.3s, transform 0.3s' }}
-                  >
-                    <div className="relative overflow-hidden rounded-xl border border-Heres-accent/20 bg-white/[0.03] backdrop-blur-sm p-3.5 text-center w-[220px] min-w-[220px]">
-                      <div
-                        className="absolute inset-0 rounded-xl bg-Heres-accent/20 transition-all duration-700 ease-out"
-                        style={{ width: `${((activeWhyIndex + 1) / 3) * 100}%` }}
-                        aria-hidden
-                      />
-                      <div className="relative z-10">
-                        <div className="font-display text-sm font-bold uppercase tracking-wide text-white">Execution</div>
-                        <div className="mt-1.5 whitespace-nowrap font-display text-[10px] uppercase tracking-widest text-white/50">Auto execute to Devnet</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="glow-line" />
-
-      {/* How it works - Bento Grid */}
-      <section className="relative py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <h2 ref={howTitleRef} className="font-display text-3xl font-bold uppercase tracking-tight text-Heres-white sm:text-4xl lg:text-5xl">
-              How It Works
-            </h2>
-            <p className="mx-auto mt-5 max-w-2xl text-Heres-muted leading-relaxed">
-              With Heres, define your intent once on Solana. Magicblock PER (TEE) monitors privately; execution runs on Devnet when conditions are met.
-            </p>
-          </div>
-
-          {/* Bento grid layout */}
-          <div ref={stepsRef} className="mt-16 grid gap-4 lg:grid-cols-3 lg:grid-rows-[auto] lg:items-stretch">
-            {/* STEP 1 Create - tall card */}
-            <div data-gsap-step className="card-bento group flex flex-col p-6 sm:p-8">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-Heres-accent/10 font-display text-sm font-bold text-Heres-accent">01</span>
-                <h3 className="font-display text-xl font-bold uppercase tracking-tight text-Heres-white">Create</h3>
-              </div>
-              <p className="text-sm text-Heres-muted leading-relaxed">
-                Create a capsule to define beneficiaries, amounts, and inactivity period on the active Solana network.
-              </p>
-              <div className="mt-6 flex-1 overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
-                <div className="relative h-full min-h-[200px] w-full">
-                  <Image
-                    src="/how-it-works-step1.png"
-                    alt="Create Capsule - intent, beneficiaries, asset type"
-                    fill
-                    className="object-cover object-top transition-transform duration-700 group-hover:scale-[1.02]"
-                    sizes="(max-width: 768px) 100vw, 33vw"
-                    unoptimized
-                  />
-                </div>
-              </div>
-              <Link href="/create" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-Heres-accent/80 transition-colors hover:text-Heres-accent">
-                View the create page
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-              </Link>
+      <section className="px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.05fr_1.2fr] lg:items-center">
+          <div className="rounded-[32px] border border-Heres-border/80 bg-[radial-gradient(circle_at_28%_20%,rgba(34,211,238,0.28),transparent_40%),linear-gradient(145deg,rgba(67,91,214,0.9),rgba(34,211,238,0.82))] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]">
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-white/95">Heres Mobile</p>
+              <span className="rounded-full border border-white/15 bg-[#11192d]/90 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/85">
+                Coming Soon
+              </span>
             </div>
 
-            {/* STEP 2 Delegate - code card */}
-            <div data-gsap-step className="card-bento group flex flex-col p-6 sm:p-8">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-Heres-purple/10 font-display text-sm font-bold text-Heres-purple">02</span>
-                <h3 className="font-display text-xl font-bold uppercase tracking-tight text-Heres-white">Delegate</h3>
+            <div className="mt-8 grid gap-6 md:grid-cols-[0.7fr_1fr] md:items-end">
+              <div className="max-w-[180px] space-y-3 text-sm font-medium leading-7 text-white/90">
+                <p>Secure your intent on mobile anytime, anywhere.</p>
+                <p className="text-white/70">Review capsule state, monitor inactivity, and sign from your phone.</p>
               </div>
-              <p className="text-sm text-Heres-muted leading-relaxed">
-                Create and delegate your capsule with Anchor. Capsule PDA is derived from owner; delegate to Magicblock PER (TEE) for private monitoring.
-              </p>
-              <div className="mt-6 flex-1 overflow-hidden rounded-xl border border-white/[0.06] bg-[#0a0d14] p-4 font-mono text-xs leading-relaxed">
-                <pre className="whitespace-pre-wrap break-words text-[11px] sm:text-xs">
-                  <code>
-                    <span className="text-Heres-muted">const tx = await program.methods</span>{'\n'}
-                    <span className="text-Heres-muted">  .createCapsule(</span>{'\n'}
-                    <span className="text-Heres-muted">    new BN(inactivityPeriodSeconds),</span>{'\n'}
-                    <span className="text-Heres-muted">    intentDataBuffer</span>{'\n'}
-                    <span className="text-Heres-muted">  )</span>{'\n'}
-                    <span className="text-Heres-muted">  .accounts(</span>{'\n'}
-                    <span className="text-Heres-cyan">    capsule</span>: capsulePDA,{'\n'}
-                    <span className="text-Heres-cyan">    owner</span>: wallet.publicKey,{'\n'}
-                    <span className="text-Heres-cyan">    systemProgram</span>: SystemProgram.programId{'\n'}
-                    <span className="text-Heres-muted">  )</span>{'\n'}
-                    <span className="text-Heres-muted">  .rpc()</span>
-                  </code>
-                </pre>
-              </div>
-              <Link href="/create" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-Heres-accent/80 transition-colors hover:text-Heres-accent">
-                View the code
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-              </Link>
-            </div>
 
-            {/* STEP 3 Serve */}
-            <div data-gsap-step className="card-bento group flex flex-col p-6 sm:p-8">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-Heres-accent/10 font-display text-sm font-bold text-Heres-accent">03</span>
-                <h3 className="font-display text-xl font-bold uppercase tracking-tight text-Heres-white">Serve</h3>
-              </div>
-              <p className="text-sm text-Heres-muted leading-relaxed">
-                View and manage your capsules. Execution runs on Devnet when inactivity is met. No third party.
-              </p>
-              <div className="mt-6 flex-1 overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
-                <div className="relative h-full min-h-[200px] w-full">
-                  <Image
-                    src="/how-it-works-step3.png"
-                    alt="Heres Capsules dashboard - status, PER (TEE) execution, verification"
-                    fill
-                    className="object-cover object-top transition-transform duration-700 group-hover:scale-[1.02]"
-                    sizes="(max-width: 768px) 100vw, 33vw"
-                    unoptimized
-                  />
-                </div>
-              </div>
-              <Link href="/dashboard" className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-Heres-accent/80 transition-colors hover:text-Heres-accent">
-                View the dashboard
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="glow-line" />
-
-      {/* Heres on Solana Mobile */}
-      <section className="relative py-24 sm:py-32 overflow-hidden">
-        {/* Background accent */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-Heres-purple/[0.02] to-transparent" aria-hidden />
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid items-center gap-16 lg:grid-cols-2">
-            {/* Left: Image */}
-            <div className="flex flex-col items-center justify-center order-2 lg:order-1">
-              <div className="relative w-full max-w-xl lg:max-w-2xl rounded-2xl overflow-hidden border border-white/[0.06] shadow-bento">
+              <div className="overflow-hidden rounded-[24px] border border-white/12 bg-[#08101f]/80 px-6 pt-6">
                 <Image
                   src="/solana-mobile-hero.png"
-                  alt="Heres - web dashboard and mobile Create Capsule"
-                  width={800}
-                  height={600}
-                  className="w-full h-auto"
-                  sizes="(max-width: 768px) 100vw, 60vw"
+                  alt="Heres mobile preview"
+                  width={900}
+                  height={700}
+                  className="mx-auto h-auto w-full max-w-[360px] object-contain"
                   unoptimized
                 />
               </div>
             </div>
-            {/* Right: Copy */}
-            <div className="order-1 lg:order-2">
-              <span className="tag-pill mb-6">
-                <span className="accent-dot" />
-                Solana Mobile Seeker
-              </span>
-              <h2 className="font-display text-3xl font-bold uppercase tracking-tight leading-tight text-Heres-white sm:text-4xl lg:text-5xl">
-                Set it once.{' '}
-                <span className="text-shimmer">It runs forever.</span>
-              </h2>
-              <p className="mt-6 text-lg leading-relaxed text-Heres-muted">
-                Download the APK, tap a few times, and leave a will-like intent: who gets your assets and after how long of inactivity. Your capsule lives on Solana. Delete the app tomorrow. Execution still runs and distributes to your beneficiaries.
-              </p>
-              <p className="mt-4 text-base leading-relaxed text-white/30">
-                The future is uncertain. Set your capsule while you hold the keys.
-              </p>
-              <Link
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-Heres-accent">Heres Mobile</p>
+            <h2 className="mt-4 text-4xl font-black uppercase leading-tight tracking-tight">
+              Set it once. <span className="text-Heres-accent">It runs</span>
+              <br className="hidden sm:block" /> forever.
+            </h2>
+            <p className="mt-6 max-w-2xl text-base leading-8 text-Heres-white/92">
+              Download the APK, create a capsule in a few taps, and leave a will-like intent that lives on Solana.
+              Even if you delete the app tomorrow, the capsule still executes and distributes to your beneficiaries.
+            </p>
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-Heres-muted">
+              The future is uncertain. Set your capsule while you hold the keys, then let Heres monitor silently.
+            </p>
+
+            <div className="mt-8 flex flex-wrap gap-4">
+              <a
                 href="https://seeker.solanamobile.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-8 inline-flex items-center gap-2 btn-secondary rounded-full py-3.5"
+                className="inline-flex items-center gap-2 rounded-2xl border border-Heres-accent/25 bg-Heres-accent/10 px-5 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-Heres-accent"
               >
+                <Smartphone className="h-4 w-4" />
+                Join To Get Early Access
+              </a>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-2xl border border-Heres-border/80 bg-Heres-card/70 px-5 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-Heres-white"
+              >
+                <Download className="h-4 w-4" />
                 Download APK
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-              </Link>
+              </button>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <div className="glow-line" />
-
-      {/* Unleash the Power of Heres */}
-      <section ref={unleashRef} className="relative overflow-hidden py-28 sm:py-36">
-        {/* Background orbs */}
-        <div className="pointer-events-none absolute top-1/2 left-1/4 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-Heres-cyan/[0.03] blur-[120px]" aria-hidden />
-        <div className="pointer-events-none absolute top-1/2 right-1/4 -translate-y-1/2 w-[400px] h-[400px] rounded-full bg-Heres-purple/[0.03] blur-[100px]" aria-hidden />
-
-        <div className="relative z-10 mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid items-center gap-16 lg:grid-cols-2">
-            <div data-gsap-unleash-text className="max-w-xl">
-              <h2 className="font-display text-4xl font-bold uppercase tracking-tight leading-[1.1] text-Heres-white sm:text-5xl lg:text-6xl">
-                Unleash the Power of{' '}
-                <span className="text-shimmer">Heres</span>
-              </h2>
-              <p className="mt-8 text-lg leading-relaxed text-Heres-muted">
-                Define your intent once: beneficiaries, amounts, inactivity period. Your capsule lives on Solana; Magicblock PER (TEE) monitors privately. When silence becomes truth, execution runs on Devnet. No third party, no bridges.
-              </p>
-              <Link href="/create" className="mt-10 inline-block btn-primary rounded-full px-10 py-4 text-sm">
-                Create Your Capsule
-              </Link>
-            </div>
-            <div
-              data-gsap-unleash-3d
-              className="relative aspect-video max-w-lg overflow-hidden"
-            >
-              <AsciiCapsule bgColor="transparent" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="glow-line" />
-
-      {/* Partners */}
-      <section ref={partnersSectionRef} className="partners-section relative py-24 sm:py-32">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h2 className="font-display text-center text-3xl font-bold uppercase tracking-tight text-Heres-white sm:text-4xl lg:text-5xl">
-            The Possibilities Are Limitless
-          </h2>
-          <p className="mx-auto mt-1 text-center font-display text-lg uppercase tracking-wide text-Heres-accent/60">
-            All On Solana
-          </p>
-          <p className="mx-auto mt-5 max-w-2xl text-center text-Heres-muted">
-            Heres uses Solana for persistence, Magicblock PER (TEE) for private execution, Helius for RPC, Phantom and Backpack for wallets, and Solana Mobile Seeker for the APK.
-          </p>
-        </div>
-        <div className="partners-content relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="partners-orbit relative flex min-h-[420px] sm:min-h-[520px] items-center justify-center overflow-hidden">
-            {/* Orbit paths */}
-            <div className="partners-orbit-rings absolute inset-0 flex items-center justify-center" aria-hidden>
-              <div className="absolute h-[320px] w-[480px] rounded-full border border-white/[0.04]" />
-              <div className="absolute h-[440px] w-[660px] rounded-full border border-white/[0.04]" />
-              <div className="absolute h-[560px] w-[840px] rounded-full border border-white/[0.04]" />
-            </div>
-            {/* Orbiting logos */}
-            {[
-              { radiusX: 240, radiusY: 160, count: 4, duration: 22, reverse: false },
-              { radiusX: 330, radiusY: 220, count: 8, duration: 28, reverse: true },
-              { radiusX: 420, radiusY: 280, count: 12, duration: 35, reverse: false },
-            ].map((ring, ringIdx) => (
-              <div
-                key={ringIdx}
-                className="partners-orbit-ring absolute left-1/2 top-1/2 h-0 w-0 origin-center"
-                style={{
-                  animation: `orbitSpin ${ring.duration}s linear infinite`,
-                  animationDirection: ring.reverse ? 'reverse' : 'normal',
-                } as React.CSSProperties}
-              >
-                {(() => {
-                  const partners = [
-                    { name: 'Solana', href: 'https://solana.com', color: '#9945FF', logo: '/logos/solana.svg' },
-                    { name: 'Solana Mobile Seeker', href: 'https://seeker.solanamobile.com', color: '#ffffff', logo: '/logos/solana-mobile-seeker.png' },
-                    { name: 'Phantom', href: 'https://phantom.app', color: '#ab9ff2', logo: '/logos/phantom.svg' },
-                    { name: 'Helius', href: 'https://helius.dev', color: '#f97316', logo: '/logos/helius.svg' },
-                    { name: 'Backpack', href: 'https://backpack.app', color: '#E33E3F', logo: '/logos/backpack.png' },
-                    { name: 'Magicblock', href: 'https://www.magicblock.xyz', color: '#22d3ee', logo: '/logos/magicblock.svg' },
-                  ]
-                  const items = Array.from({ length: ring.count }, (_, i) => partners[i % partners.length])
-                  return items.map((p, i) => {
-                    const angleDeg = (360 / ring.count) * i
-                    const angleRad = (angleDeg * Math.PI) / 180
-                    const x = Math.round(ring.radiusX * Math.sin(angleRad))
-                    const y = Math.round(-ring.radiusY * Math.cos(angleRad))
-                    return (
-                      <a
-                        key={`${ringIdx}-${i}`}
-                        href={p.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="partners-orbit-item absolute left-0 top-0 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-xl border bg-Heres-surface/60 backdrop-blur-sm transition-all duration-300 hover:scale-110 hover:border-Heres-accent/30"
-                        style={{
-                          transform: `translate(${x}px, ${y}px) rotate(${-angleDeg}deg)`,
-                          borderColor: `${p.color}30`,
-                        }}
-                      >
-                        <Image
-                          src={p.logo}
-                          alt={p.name}
-                          width={36}
-                          height={36}
-                          className="h-full w-full object-contain p-0.5"
-                          unoptimized
-                        />
-                      </a>
-                    )
-                  })
-                })()}
+            <div className="mt-10 max-w-md rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-6 shadow-[0_20px_50px_rgba(0,0,0,0.22)]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-Heres-white/90">Book Your Spot</p>
+                  <p className="mt-2 text-xl font-semibold text-Heres-accent">Join To Get Early Access</p>
+                </div>
+                <div className="rounded-full border border-Heres-accent/20 bg-Heres-accent/10 p-3 text-Heres-accent">
+                  <Wallet className="h-5 w-5" />
+                </div>
               </div>
-            ))}
-            {/* Central content */}
-            <div className="relative z-10 max-w-lg text-center">
-              <h2 className="font-display text-6xl font-bold tracking-tight text-white sm:text-7xl lg:text-8xl">
-                5+
-              </h2>
-              <h3 className="mt-2 font-display text-xl font-semibold uppercase tracking-wide text-white/60 sm:text-2xl">
-                Powered by
-              </h3>
+
+              <form className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <input
+                  type="email"
+                  placeholder="Enter Email"
+                  className="min-w-0 flex-1 rounded-2xl border border-Heres-border/80 bg-white px-4 py-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-Heres-accent/40 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl bg-Heres-accent px-5 py-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-950 shadow-[0_0_28px_rgba(34,211,238,0.22)]"
+                >
+                  Notify Me
+                </button>
+              </form>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="px-4 pt-6 pb-20 text-center sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="text-4xl font-black uppercase tracking-tight">The possibilities are limitless</h2>
+          <p className="mt-4 text-xl font-semibold uppercase tracking-[0.16em] text-Heres-accent">All On Solana</p>
+        </div>
+      </section>
+
+      <section className="border-y border-Heres-border/60 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.94))] px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl text-center">
+          <div className="grid gap-10 border-b border-Heres-border/60 pb-12 md:grid-cols-3">
+            <div className="md:border-r md:border-Heres-border/40">
+              <p className="text-5xl font-black uppercase tracking-tight text-Heres-white">{formatMetricCount(landingStats.total)}</p>
+              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Capsules Created</p>
+            </div>
+            <div className="md:border-r md:border-Heres-border/40">
+              <p className="text-5xl font-black uppercase tracking-tight text-Heres-white">{formatSolAmount(landingStats.totalValueSecuredLamports)} SOL</p>
+              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Value Secured</p>
+            </div>
+            <div>
+              <p className="text-5xl font-black uppercase tracking-tight text-Heres-white">{formatMetricCount(landingStats.active)}</p>
+              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Active Capsules</p>
+            </div>
+          </div>
+
+          <Link
+            href="/create"
+            className="mt-12 inline-flex items-center justify-center rounded-2xl bg-Heres-accent px-8 py-4 text-base font-bold uppercase tracking-[0.16em] text-slate-950 shadow-[0_0_28px_rgba(34,211,238,0.28)]"
+          >
+            Create Capsules
+          </Link>
+
+          <p className="mx-auto mt-8 max-w-4xl text-sm font-semibold uppercase tracking-[0.16em] text-Heres-accent">
+            Currently securing {landingStats.assetSummary}
+          </p>
+          <p className="mx-auto mt-6 max-w-4xl text-lg font-medium uppercase tracking-[0.12em] text-Heres-muted">
+            Your comprehensive digital inheritance vault built on <span className="text-Heres-accent">Solana.</span>
+          </p>
+        </div>
+      </section>
+
+      <section className="px-4 pt-16 pb-14 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-xl text-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-Heres-accent">Feedback</p>
+          <h2 className="mt-4 text-3xl font-black uppercase tracking-tight text-Heres-white">Help Shape Heres</h2>
+          <p className="mx-auto mt-4 max-w-lg text-sm leading-7 text-Heres-muted">
+            Tell us what feels unclear, what should be faster, or what you want to trust before moving real assets.
+          </p>
+
+          <div className="mt-8 rounded-[24px] border border-Heres-border/80 bg-Heres-card/70 p-5 text-left shadow-[0_20px_50px_rgba(0,0,0,0.2)]">
+            <form className="space-y-3">
+              <input
+                type="text"
+                placeholder="Your Name"
+                className="w-full rounded-xl border border-Heres-border/80 bg-black/25 px-4 py-3 text-sm text-Heres-white placeholder:text-Heres-muted focus:border-Heres-accent/40 focus:outline-none"
+              />
+              <input
+                type="email"
+                placeholder="Your Email"
+                className="w-full rounded-xl border border-Heres-border/80 bg-black/25 px-4 py-3 text-sm text-Heres-white placeholder:text-Heres-muted focus:border-Heres-accent/40 focus:outline-none"
+              />
+              <textarea
+                placeholder="Your Message"
+                rows={4}
+                className="w-full rounded-xl border border-Heres-border/80 bg-black/25 px-4 py-3 text-sm text-Heres-white placeholder:text-Heres-muted focus:border-Heres-accent/40 focus:outline-none"
+              />
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center rounded-xl bg-Heres-accent px-4 py-3 text-sm font-bold uppercase tracking-[0.16em] text-slate-950"
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t border-Heres-border/60 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6">
+          <div className="flex items-center gap-3">
+            <Image src="/logo-white-icon.png" alt="Heres" width={32} height={32} className="h-8 w-8" unoptimized />
+            <span className="text-2xl font-black uppercase tracking-[0.2em] text-Heres-white/95">Heres</span>
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-Heres-muted">
+            Privacy-preserving capsule protocol on Solana
+          </p>
         </div>
       </section>
     </div>

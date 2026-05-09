@@ -464,6 +464,39 @@ a {
   height: 100%;
 }
 
+.partner-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: partnerMarquee 28s linear infinite;
+}
+
+.partner-marquee-track:hover {
+  animation-play-state: paused;
+}
+
+.partner-marquee-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-right: 1rem;
+}
+
+.partner-marquee-badge {
+  border: 1px solid rgba(122, 133, 153, 0.28);
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+@keyframes partnerMarquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(calc(-50% - 0.5rem));
+  }
+}
+
 /* Section divider - subtle gradient line */
 .section-divider {
   height: 1px;

@@ -8,6 +8,7 @@ import { parseIntentPayload } from '@/utils/intent'
 import { debugLog, debugWarn } from '@/lib/log'
 import { loadDurableSnapshot, saveDurableSnapshot, persistDashboardIndex, loadSyncCheckpoint, saveSyncCheckpoint } from '@/lib/dashboard-store'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
+import { getDataFilePath } from '@/lib/runtime-paths'
 
 export type DashboardCapsuleEvent = {
   signature: string
@@ -169,8 +170,7 @@ function getRedis(): Redis | null {
 }
 
 function getHistoryLocalPath(programId: string): string {
-  const path = require('path')
-  return path.join(process.cwd(), '.data', `dashboard-history-${programId}.json`)
+  return getDataFilePath(`dashboard-history-${programId}.json`)
 }
 
 async function loadDashboardHistoryIndex(programId: string): Promise<DashboardHistoryIndex | null> {

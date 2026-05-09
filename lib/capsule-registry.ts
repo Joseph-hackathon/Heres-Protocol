@@ -9,6 +9,7 @@
 import { Redis } from '@upstash/redis'
 import { debugLog } from '@/lib/log'
 import { isPostgresConfigured, pgQuery } from '@/lib/postgres'
+import { getDataDir, getDataFilePath } from '@/lib/runtime-paths'
 
 const REDIS_KEY = 'capsule-owners'
 
@@ -25,8 +26,7 @@ function getRedis(): Redis | null {
 function loadLocal(): string[] {
   try {
     const fs = require('fs')
-    const path = require('path')
-    const p = path.join(process.cwd(), '.data', 'capsule-registry.json')
+    const p = getDataFilePath('capsule-registry.json')
     if (!fs.existsSync(p)) return []
     return JSON.parse(fs.readFileSync(p, 'utf8'))
   } catch {
@@ -37,10 +37,9 @@ function loadLocal(): string[] {
 function saveLocal(owners: string[]) {
   try {
     const fs = require('fs')
-    const path = require('path')
-    const dir = path.join(process.cwd(), '.data')
+    const dir = getDataDir()
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    const p = path.join(dir, 'capsule-registry.json')
+    const p = getDataFilePath('capsule-registry.json')
     const tmp = `${p}.tmp`
     fs.writeFileSync(tmp, JSON.stringify(owners))
     fs.renameSync(tmp, p)

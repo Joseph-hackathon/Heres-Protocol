@@ -137,12 +137,13 @@ async function main() {
       .rpc()
   }
 
-  const assets = ['BTC', 'ETH']
+  const assets = ['BTC', 'ETH', 'MSOL']
   let failures = 0
 
   for (const symbol of assets) {
     console.log(`\n=== Local ${symbol} E2E ===`)
-    const mint = await createMint(connection, authority, 8)
+    const decimals = symbol === 'BTC' || symbol === 'ETH' ? 8 : 9
+    const mint = await createMint(connection, authority, decimals)
     const owner = Keypair.generate()
     const beneficiary = Keypair.generate()
     const ownerProvider = new AnchorProvider(connection, new Wallet(owner), { commitment: 'confirmed' })

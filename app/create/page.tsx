@@ -1002,7 +1002,7 @@ export default function CreatePage() {
                   <div className="mt-5 space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <div>
                       <label className="mb-2 block text-sm text-Heres-muted">Asset</label>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {SUPPORTED_TOKEN_ASSETS.map((asset) => {
                           const configured = isAssetConfigured(asset.symbol)
                           return (

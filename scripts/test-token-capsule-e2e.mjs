@@ -108,6 +108,7 @@ async function main() {
   const assets = [
     { symbol: 'BTC', mint: process.env.NEXT_PUBLIC_BTC_DEVNET_MINT },
     { symbol: 'ETH', mint: process.env.NEXT_PUBLIC_ETH_DEVNET_MINT },
+    { symbol: 'MSOL', mint: process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT || process.env.NEXT_PUBLIC_MSOL_MINT },
   ]
 
   for (const asset of assets) {
