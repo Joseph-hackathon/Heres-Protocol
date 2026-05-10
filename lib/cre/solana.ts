@@ -14,6 +14,11 @@ export interface DecodedCapsuleState {
   isActive: boolean
   executedAt: number | null
   accountOwner: PublicKey
+  mint: PublicKey
+  retryCount: number
+  ccipSentBitmap: number
+  privateDistributed: boolean
+  vaultBump: number
 }
 
 function readI64(bytes: Uint8Array, start: number): bigint {
@@ -23,6 +28,14 @@ function readI64(bytes: Uint8Array, start: number): bigint {
   }
   if (result & (1n << 63n)) {
     result -= 1n << 64n
+  }
+  return result
+}
+
+function readU64(bytes: Uint8Array, start: number): bigint {
+  let result = 0n
+  for (let i = 0; i < 8; i++) {
+    result |= BigInt(bytes[start + i]) << BigInt(i * 8)
   }
   return result
 }
@@ -53,6 +66,29 @@ function decodeCapsuleAccountData(capsuleAddress: PublicKey, accountOwner: Publi
   const hasExecutedAt = data[offset] === 1
   offset += 1
   const executedAt = hasExecutedAt ? Number(readI64(data, offset)) : null
+  if (hasExecutedAt) {
+    offset += 8
+  }
+
+  // Read additional fields (added in program v0.2.0)
+  // bump: u8
+  const bump = data[offset]
+  offset += 1
+  // vault_bump: u8
+  const vaultBump = data[offset]
+  offset += 1
+  // mint: Pubkey (32)
+  const mint = new PublicKey(data.slice(offset, offset + 32))
+  offset += 32
+  // retry_count: u64
+  const retryCount = Number(readU64(data, offset))
+  offset += 8
+  // ccip_sent_bitmap: u16
+  const ccipSentBitmap = data[offset] | (data[offset + 1] << 8)
+  offset += 2
+  // private_distributed: bool (u8)
+  const privateDistributed = data[offset] === 1
+  offset += 1
 
   return {
     capsuleAddress: capsuleAddress.toBase58(),
@@ -63,6 +99,11 @@ function decodeCapsuleAccountData(capsuleAddress: PublicKey, accountOwner: Publi
     isActive,
     executedAt,
     accountOwner,
+    mint,
+    retryCount,
+    ccipSentBitmap,
+    privateDistributed,
+    vaultBump,
   }
 }
 

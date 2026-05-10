@@ -203,6 +203,253 @@ You can view the delivery status mapped on the capsule detail page!
 
 ---
 
+## MagicBlock Private Payment API Integration
+
+Heres integrates the [MagicBlock Private Payment API](https://docs.magicblock.gg/pages/private-ephemeral-rollups-pers/api-reference/per/introduction) to enable confidential SPL token transfers inside a Trusted Execution Environment (TEE). This allows assets to be moved privately between beneficiaries without exposing amounts or counterparties on-chain.
+
+### Feature Flag
+
+Set `USE_MAGICBLOCK_PRIVATE_PAYMENTS=1` in your environment to enable the new flow. When disabled (default), Heres uses the classic delegation + crank mechanism.
+
+### Environment Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `MAGICBLOCK_PRIVATE_PAYMENTS_API_KEY` | API key for MagicBlock Private Payments service | `sk_live_xxx` |
+| `MAGICBLOCK_PRIVATE_PAYMENTS_SECRET` | Webhook signing secret (HMAC) | `whsec_xxx` |
+| `MAGICBLOCK_PRIVATE_PAYMENTS_BASE_URL` | Base URL for the API (default shown) | `https://payments.magicblock.app` |
+| `USE_MAGICBLOCK_PRIVATE_PAYMENTS` | Enable integration (set to `1`) | `1` |
+
+Additionally, ensure `NEXT_PUBLIC_<ASSET>_MINT` is set for each SPL token you wish to support (e.g., `NEXT_PUBLIC_USDC_MINT`).
+
+### API Endpoints (Heres → MagicBlock)
+
+Heres provides two convenience endpoints that wrap the MagicBlock API:
+
+#### `POST /api/magicblock/create-distribution`
+
+Builds an entire private distribution plan:
+
+```json
+{
+  "owner": "wallet_pubkey_base58",
+  "assetSymbol": "USDC",
+  "totalAmount": "10.5",
+  "inactivityDays": 365,
+  "beneficiaries": [
+    { "address": "beneficiary1...", "amount": "6.0", "amountType": "fixed" },
+    { "address": "beneficiary2...", "amount": "4.5", "amountType": "fixed" }
+  ],
+  "memo": "Inheritance distribution"
+}
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "deposit": {
+    "step": " deposit ",
+    "transactionBase64": "...",
+    "recentBlockhash": "...",
+    "requiredSigners": ["owner_pubkey"],
+    "sendTo": "base"
+  },
+  "transfers": [
+    {
+      "step": "transfer",
+      "transactionBase64": "...",
+      "requiredSigners": ["owner_pubkey"],
+      "sendTo": "ephemeral"
+    }
+  ],
+  "cluster": "devnet",
+  "paymentRef": "pay_1712345678_owner12"
+}
+```
+
+The client must:
+1. Decode each `transactionBase64` (Buffer.from(..., 'base64'))
+2. Sign the transaction with the owner's wallet
+3. Submit deposit to the base layer RPC (`sendTo: "base"`)
+4. After deposit confirms, submit each transfer to the PER RPC (`sendTo: "ephemeral"`)
+
+All transfers are time-locked and execute automatically inside the TEE after `inactivityDays`.
+
+#### `POST /api/magicblock/webhook`
+
+Receives execution callbacks from MagicBlock when a private payment completes. This endpoint:
+- Verifies HMAC signature using `MAGICBLOCK_PRIVATE_PAYMENTS_SECRET`
+- Marks the capsule as executed in Heres' internal state
+- Triggers CRE intent statement delivery (if enabled)
+
+### Client-Side Usage Example
+
+```typescript
+import { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import magicblock from '@/lib/magicblock-private-payments'
+
+// 1. Build distribution
+const res = await fetch('/api/magicblock/create-distribution', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    owner: wallet.publicKey.toBase58(),
+    assetSymbol: 'USDC',
+    totalAmount: '10',
+    inactivityDays: 365,
+    beneficiaries: [
+      { address: 'beneficiaryA...', amount: '5', amountType: 'fixed' },
+      { address: 'beneficiaryB...', amount: '5', amountType: 'fixed' },
+    ],
+  }),
+})
+const { deposit, transfers } = await res.json()
+
+// 2. Sign & send deposit
+const depositTx = Transaction.from(Buffer.from(deposit.transactionBase64, 'base64'))
+const depositSig = await wallet.sendTransaction(depositTx, connection)
+await connection.confirmTransaction(depositSig, 'confirmed')
+
+// 3. After deposit confirms, sign & send each transfer (to PER RPC)
+const teeRpcUrl = `${process.env.NEXT_PUBLIC_TEE_RPC_URL}`
+const teeConn = new Connection(teeRpcUrl, 'confirmed')
+for (const transfer of transfers) {
+  const tx = Transaction.from(Buffer.from(transfer.transactionBase64, 'base64'))
+  const sig = await wallet.sendTransaction(tx, teeConn)
+  await teeConn.confirmTransaction(sig, 'confirmed')
+  console.log(`Transfer ${transfer.beneficiaryAddress} scheduled: ${sig}`)
+}
+```
+
+## MagicBlock Private Payment API Integration (Distribution Layer)
+
+Heres integrates the [MagicBlock Private Payment API](https://docs.magicblock.gg/pages/private-ephemeral-rollups-pers/api-reference/per/introduction) as an **optional distribution layer for SPL tokens**. This allows assets to be sent to beneficiaries privately within a Trusted Execution Environment (TEE), hiding amounts and counterparties from public view.
+
+**Important**: This integration is **optional** and currently **only for SPL tokens** (USDC, MSOL, etc.). Native SOL distribution continues to use the standard on-chain `distribute_assets` flow.
+
+### Feature Flag
+
+Set `USE_MAGICBLOCK_PRIVATE_PAYMENTS=1` to enable private distribution. When disabled (default), all distributions use the public on-chain path.
+
+### Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `MAGICBLOCK_PRIVATE_PAYMENTS_API_KEY` | API key for MagicBlock Private Payments |
+| `MAGICBLOCK_PRIVATE_PAYMENTS_SECRET` | Webhook signing secret (HMAC) |
+| `MAGICBLOCK_PRIVATE_PAYMENTS_BASE_URL` | API base URL (default: `https://payments.magicblock.app`) |
+
+Also ensure `NEXT_PUBLIC_<ASSET>_MINT` is set for each SPL token (e.g., `NEXT_PUBLIC_USDC_MINT`).
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ HERES PROTOCOL (On-Chain)                                   │
+│   • create_capsule — stores intent on-chain                 │
+│   • execute_intent — marks executed (after inactivity)      │
+│   • is_active=false, executed_at set                        │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         │ After execute_intent, if distributionMode="private"
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│ MAGICBLOCK PRIVATE PAYMENT API (Off-Chain)                  │
+│   • depositToPer: assets move from owner's wallet → PER     │
+│   • transferInPer: private transfers inside TEE             │
+│   • Automatic execution after inactivity period             │
+│   • Beneficiaries receive funds without knowing sender      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- Capsule record (intent, timestamps) remains on-chain
+- Asset custody shifts to MagicBlock PER for distribution
+- Heres monitors execution via on-chain state changes (not webhooks)
+- CRE delivery still triggered by Heres cron after `executed_at` is set
+
+### Distribution Flow
+
+1. **Capsule Creation**: User creates capsule with `distributionMode: "private"` in `intentData`
+2. **Funding**: User signs deposit transaction (built via `depositToPer`) to move SPL tokens from their wallet into MagicBlock PER vault
+3. **Execution**: After inactivity period, MagicBlock TEE automatically executes private transfers to each beneficiary
+4. **Settlement**: Beneficiaries receive tokens directly in their wallets
+5. **On-chain record**: Heres program's `execute_intent` still fires (via MagicBlock crank) to mark capsule as executed
+6. **CRE delivery**: Heres cron detects `executed_at` and sends encrypted intent statement
+
+### API Reference (Client-Side)
+
+The integration exposes a TypeScript utility (`lib/magicblock-private-payments.ts`) with these key methods:
+
+#### `depositToPer(ownerPubkey, amount, mint, options)`
+Builds an unsigned transaction to move SPL tokens from base layer to PER vault.
+
+```typescript
+const { data } = await depositToPer(wallet.publicKey, '1000000', USDC_MINT, {
+  memo: 'Heres private distribution',
+})
+```
+
+#### `transferInPer(from, to, mint, amount, 'private', { fromBalance: 'ephemeral', toBalance: 'base', minDelayMs })`
+Builds a private transfer from PER vault to beneficiary's base wallet.
+
+```typescript
+const { data } = await transferInPer(
+  wallet.publicKey,
+  beneficiaryPubkey,
+  USDC_MINT,
+  '500000',
+  'private',
+  {
+    fromBalance: 'ephemeral',
+    toBalance: 'base',
+    minDelayMs: inactivityDays * 86400 * 1000,
+  }
+)
+```
+
+### Sample Usage (Frontend)
+
+```typescript
+// In app/create/page.tsx — after capsule created on-chain:
+if (distributionMode === 'private' && assetSymbol !== 'SOL') {
+  // Build deposit + transfers via MagicBlock API
+  const depositRes = await depositToPer(owner, totalUnits, mint, { memo })
+  const depositTx = Transaction.from(Buffer.from(depositRes.data!.transactionBase64, 'base64'))
+  await wallet.sendTransaction(depositTx, connection)  // sends to base RPC
+
+  // Wait for deposit to confirm
+  await connection.confirmTransaction(depositSig, 'confirmed')
+
+  // Build and send private transfers (one per beneficiary)
+  for (const b of beneficiaries) {
+    const transferRes = await transferInPer(owner, b.address, mint, b.amountUnits, 'private', {
+      fromBalance: 'ephemeral',
+      toBalance: 'base',
+      minDelayMs: inactivityDays * 86400 * 1000,
+    })
+    const transferTx = Transaction.from(Buffer.from(transferRes.data!.transactionBase64, 'base64'))
+    // Send to PER RPC
+    const teeRpc = `${process.env.NEXT_PUBLIC_TEE_RPC_URL}`
+    const teeConn = new Connection(teeRpc, 'confirmed')
+    await wallet.sendTransaction(transferTx, teeConn)
+  }
+}
+```
+
+### Limitations
+
+- **SOL not supported** — use standard `distribute_assets` for SOL
+- **No percentage splits** — fixed amounts only (future: implement via multiple transfers)
+- **No on-chain vault usage** — SPL tokens skip vault during capsule lifetime (held in PER)
+- **Manual distribution** — Heres frontend must orchestrate deposit + transfers (server-side API planned)
+- **No MagicBlock webhook** — execution monitoring uses existing on-chain polling
+
+---
+
 ## License
 
 MIT.
+
