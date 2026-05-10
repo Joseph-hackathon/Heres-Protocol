@@ -464,6 +464,148 @@ a {
   height: 100%;
 }
 
+.landing-aurora {
+  position: relative;
+  isolation: isolate;
+}
+
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 88%);
+}
+
+.landing-noise {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px),
+    radial-gradient(circle at 80% 30%, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px),
+    radial-gradient(circle at 60% 80%, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px);
+  background-size: 180px 180px, 240px 240px, 220px 220px;
+}
+
+.landing-spotlight {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(34, 211, 238, 0.16), transparent 24%),
+    radial-gradient(circle at 18% 62%, rgba(67, 91, 214, 0.14), transparent 28%),
+    radial-gradient(circle at 82% 34%, rgba(34, 211, 238, 0.1), transparent 22%);
+  animation: landingSpotlightDrift 18s ease-in-out infinite alternate;
+}
+
+.landing-beam {
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.18) 0%, rgba(56, 189, 248, 0.08) 28%, transparent 68%);
+  filter: blur(10px);
+  animation: landingBeamFloat 14s ease-in-out infinite;
+}
+
+.landing-beam-delay {
+  animation-delay: -7s;
+}
+
+.landing-scanline {
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.6), transparent);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.28);
+  animation: landingScanlineMove 10s linear infinite;
+}
+
+.landing-float-card {
+  animation: landingCardFloat 12s ease-in-out infinite;
+}
+
+.landing-float-card:nth-child(2n) {
+  animation-duration: 15s;
+  animation-delay: -4s;
+}
+
+.landing-float-card:nth-child(3n) {
+  animation-duration: 18s;
+  animation-delay: -7s;
+}
+
+.landing-interactive-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-interactive-card::before {
+  content: "";
+  position: absolute;
+  left: 1.5rem;
+  right: 1.5rem;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.9), rgba(96, 165, 250, 0.7), transparent);
+  transform: translateX(-18%) scaleX(0.35);
+  transform-origin: left center;
+  opacity: 0.45;
+  transition: transform 600ms ease, opacity 300ms ease;
+}
+
+.landing-interactive-card::after {
+  content: "";
+  position: absolute;
+  inset: -30% auto auto -40%;
+  width: 45%;
+  height: 180%;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.12), transparent);
+  transform: rotate(18deg) translateX(-140%);
+  transition: transform 850ms ease;
+  pointer-events: none;
+}
+
+.landing-interactive-card:hover::before {
+  transform: translateX(0) scaleX(1);
+  opacity: 0.95;
+}
+
+.landing-interactive-card:hover::after {
+  transform: rotate(18deg) translateX(360%);
+}
+
+.landing-stat-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 0%, rgba(34, 211, 238, 0.14) 45%, transparent 60%);
+  transform: translateX(-140%);
+  animation: landingStatSweep 9s ease-in-out infinite;
+}
+
+.landing-stat-card:nth-child(2)::before {
+  animation-delay: -2s;
+}
+
+.landing-stat-card:nth-child(3)::before {
+  animation-delay: -4s;
+}
+
+.landing-stat-card:nth-child(4)::before {
+  animation-delay: -6s;
+}
+
+.landing-section-beam {
+  position: relative;
+}
+
+.landing-section-beam::after {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.18), rgba(96, 165, 250, 0.26), transparent);
+  transform: skewX(-28deg);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 .partner-marquee-track {
   display: flex;
   width: max-content;
@@ -494,6 +636,78 @@ a {
 
   to {
     transform: translateX(calc(-50% - 0.5rem));
+  }
+}
+
+@keyframes landingSpotlightDrift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  100% {
+    transform: translate3d(0, 18px, 0) scale(1.05);
+  }
+}
+
+@keyframes landingBeamFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: translate3d(18px, -20px, 0) scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes landingScanlineMove {
+  0% {
+    opacity: 0;
+    transform: translateX(-12%);
+  }
+
+  8% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(12%);
+  }
+}
+
+@keyframes landingCardFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes landingStatSweep {
+  0%, 100% {
+    transform: translateX(-140%);
+    opacity: 0;
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  55% {
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: translateX(180%);
+    opacity: 0;
   }
 }
 
