@@ -1,14 +1,14 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import { ArrowRight, Download, Shield, Smartphone, Wallet } from 'lucide-react'
+import { ArrowRight, Download, Shield, Smartphone } from 'lucide-react'
 import { getDashboardSnapshot } from '@/lib/dashboard'
 
 const partnerLogos = [
-  { name: 'Colosseum', src: '/logos/colosseum-mark.svg', href: 'https://www.colosseum.org/' },
+  { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', href: 'https://colosseum.com/', logoWidth: 122, wordmarkOnly: true },
   { name: 'MagicBlock', src: '/logos/magicblock.svg', href: 'https://www.magicblock.gg/' },
   { name: 'Solana', src: '/logos/solana.svg', href: 'https://solana.com/' },
   { name: 'Helius', src: '/logos/helius.svg', href: 'https://www.helius.dev/' },
-  { name: 'Alchemy', src: '/logos/alchemy-mark.svg', href: 'https://www.alchemy.com/' },
+  { name: 'Alchemy', src: '/logos/alchemy-logo.svg', href: 'https://www.alchemy.com/', logoWidth: 112, wordmarkOnly: true },
 ]
 
 const featureCards = [
@@ -54,34 +54,19 @@ const whyCards = [
   },
 ]
 
-const howSteps = [
-  {
-    step: 'Step 1',
-    title: 'Create Capsule',
-    description:
-      'Create a capsule to define beneficiaries, amounts, and inactivity period on the active Solana network.',
-    href: '/create',
-    cta: 'Create Capsule',
-  },
-  {
-    step: 'Step 2',
-    title: 'Delegate',
-    description:
-      'Create and delegate your capsule with Anchor. Capsule PDA is derived from owner; delegate to MagicBlock PER (TEE) for private monitoring.',
-    href: '/capsules',
-    cta: 'Delegate Capsule',
-  },
-  {
-    step: 'Step 3',
-    title: 'Serve',
-    description:
-      'Create a capsule to define beneficiaries, amounts, and inactivity period on Solana, then watch execution settle on-chain.',
-    href: '/dashboard',
-    cta: 'View Dashboard',
-  },
-]
-
-function PartnerBadge({ name, src, href }: { name: string; src: string; href: string }) {
+function PartnerBadge({
+  name,
+  src,
+  href,
+  logoWidth,
+  wordmarkOnly,
+}: {
+  name: string
+  src: string
+  href: string
+  logoWidth?: number
+  wordmarkOnly?: boolean
+}) {
   return (
     <a
       href={href}
@@ -89,8 +74,15 @@ function PartnerBadge({ name, src, href }: { name: string; src: string; href: st
       rel="noopener noreferrer"
       className="partner-marquee-badge flex h-14 min-w-[176px] items-center justify-center gap-3 rounded-2xl px-5 py-3 transition-colors hover:border-Heres-accent/30 hover:bg-Heres-card/70"
     >
-      <Image src={src} alt={name} width={28} height={28} className="h-6 w-6 object-contain" unoptimized />
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-Heres-white">{name}</span>
+      <Image
+        src={src}
+        alt={name}
+        width={logoWidth || 28}
+        height={28}
+        className={`${wordmarkOnly ? 'h-6 w-auto max-w-[122px]' : 'h-6 w-6'} object-contain`}
+        unoptimized
+      />
+      {!wordmarkOnly && <span className="text-xs font-semibold uppercase tracking-[0.18em] text-Heres-white">{name}</span>}
     </a>
   )
 }
@@ -261,40 +253,6 @@ export default async function HomePage() {
       </section>
 
       <section className="px-4 py-20 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-6xl">
-          <div className="text-center">
-            <h2 className="text-3xl font-black uppercase tracking-tight sm:text-4xl">How It Works?</h2>
-            <p className="mx-auto mt-4 max-w-3xl text-sm leading-7 text-Heres-muted">
-              With Heres, define your intent once on Solana. MagicBlock PER (TEE) monitors privately; execution runs
-              on devnet when conditions are met.
-            </p>
-          </div>
-
-          <div className="mt-14 grid gap-6 lg:grid-cols-3">
-            {howSteps.map((step) => (
-              <div
-                key={step.step}
-                className="rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-8"
-              >
-                <div className="inline-flex rounded-full border border-Heres-accent/25 bg-Heres-accent/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-Heres-accent">
-                  {step.step}
-                </div>
-                <h3 className="mt-5 text-2xl font-black uppercase tracking-tight">{step.title}</h3>
-                <p className="mt-4 text-sm leading-7 text-Heres-muted">{step.description}</p>
-                <Link
-                  href={step.href}
-                  className="mt-8 inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-Heres-accent"
-                >
-                  {step.cta}
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="px-4 py-20 sm:px-6 lg:px-8">
         <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.05fr_1.2fr] lg:items-center">
           <div className="rounded-[32px] border border-Heres-border/80 bg-[radial-gradient(circle_at_28%_20%,rgba(34,211,238,0.28),transparent_40%),linear-gradient(145deg,rgba(67,91,214,0.9),rgba(34,211,238,0.82))] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.25)]">
             <div className="flex items-center justify-between gap-4">
@@ -356,31 +314,6 @@ export default async function HomePage() {
               </button>
             </div>
 
-            <div className="mt-10 max-w-md rounded-[28px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-6 shadow-[0_20px_50px_rgba(0,0,0,0.22)]">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-Heres-white/90">Book Your Spot</p>
-                  <p className="mt-2 text-xl font-semibold text-Heres-accent">Join To Get Early Access</p>
-                </div>
-                <div className="rounded-full border border-Heres-accent/20 bg-Heres-accent/10 p-3 text-Heres-accent">
-                  <Wallet className="h-5 w-5" />
-                </div>
-              </div>
-
-              <form className="mt-6 flex flex-col gap-3 sm:flex-row">
-                <input
-                  type="email"
-                  placeholder="Enter Email"
-                  className="min-w-0 flex-1 rounded-2xl border border-Heres-border/80 bg-white px-4 py-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-Heres-accent/40 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-2xl bg-Heres-accent px-5 py-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-950 shadow-[0_0_28px_rgba(34,211,238,0.22)]"
-                >
-                  Notify Me
-                </button>
-              </form>
-            </div>
           </div>
         </div>
       </section>
@@ -461,17 +394,6 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="border-t border-Heres-border/60 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <Image src="/logo-white-icon.png" alt="Heres" width={32} height={32} className="h-8 w-8" unoptimized />
-            <span className="text-2xl font-black uppercase tracking-[0.2em] text-Heres-white/95">Heres</span>
-          </div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-Heres-muted">
-            Privacy-preserving capsule protocol on Solana
-          </p>
-        </div>
-      </section>
     </div>
   )
 }
