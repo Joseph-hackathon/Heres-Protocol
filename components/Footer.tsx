@@ -7,6 +7,7 @@ const navLinks = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/create', label: 'Create Capsule' },
   { href: '/capsules', label: 'My Capsule' },
+  { href: 'https://doc.heresprotocol.com', label: 'Documentation', external: true },
 ]
 
 const socialLinks = [
@@ -57,13 +58,25 @@ export function Footer() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted/80">Product</p>
               <nav className="mt-3 flex flex-col gap-2">
                 {navLinks.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="py-1 text-sm text-Heres-white/90 transition-colors hover:text-Heres-accent"
-                  >
-                    {item.label}
-                  </Link>
+                  item.external ? (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-1 text-sm text-Heres-white/90 transition-colors hover:text-Heres-accent"
+                    >
+                      {item.label}
+                    </a>
+                  ) : (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className="py-1 text-sm text-Heres-white/90 transition-colors hover:text-Heres-accent"
+                    >
+                      {item.label}
+                    </Link>
+                  )
                 ))}
               </nav>
             </div>
