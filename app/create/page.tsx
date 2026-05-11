@@ -693,11 +693,7 @@ export default function CreatePage() {
 
       setCurrentStep(null)
 
-      if (automationIssues.length) {
-        alert(
-          `Capsule created, but automatic execution setup is incomplete.\n\nMissing or failed: ${automationIssues.join(', ')}.\n\nExternal cron may still pick it up if registry is configured, but please confirm automation before relying on it.`
-        )
-      }
+
 
       // Redirect to capsules page after successful creation
       window.location.href = '/capsules'
