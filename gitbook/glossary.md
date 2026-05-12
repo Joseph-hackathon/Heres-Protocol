@@ -24,7 +24,7 @@ Solana's development network. Tokens have no real-world value and are used for t
 
 The protocol action that marks a capsule as no longer active and records an execution timestamp after inactivity conditions are met.
 
-## Helius
+## Alchemy
 
 Infrastructure provider used for RPC, NFT reads, enhanced transactions, and dashboard support.
 
@@ -51,4 +51,3 @@ The email recipient for the encrypted Intent Statement.
 ## Vault
 
 The program-controlled address or token account that holds capsule assets until distribution.
-

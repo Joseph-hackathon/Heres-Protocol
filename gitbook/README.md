@@ -1,50 +1,22 @@
-# Heres Protocol Documentation
+# Welcome to Heres
 
-Heres is a privacy-preserving capsule protocol for Solana. It lets a wallet owner create an Intent Capsule, define beneficiaries, lock assets, attach an encrypted private message, and set an inactivity rule. If the owner does not refresh activity before the deadline, the capsule can execute and distribute the assets according to the original instructions.
+Heres is the world’s first **Autonomous Death Insurance Protocol** built on Solana. We specialize in **Decoupling Death from Value Loss**, ensuring your digital legacy is securely transferred to the next generation.
 
-Heres is designed for long-horizon digital asset recovery, inheritance, and contingency planning. The protocol combines on-chain settlement with private execution infrastructure and confidential message delivery.
+### Key Features
 
-## What Heres Does
+* **Autonomous Legal Layer**: Acts as a "Code-as-Law" engine, executing a user’s final intent instantly and autonomously without the friction of traditional probate processes.
+* **Enclave-level Privacy**: Leverages Magicblock’s TEE to provide an **Isolated Privacy** environment (Secure Enclave), ensuring that even the protocol cannot access user intents or confidential data.
+* **Multi-Asset & Cross-chain Support**: Manages not only Solana native assets but also cross-chain assets like BTC and ETH within a single Intent Capsule, powered by Chainlink CCIP.
+* **Confidential Messaging (Emotional Legacy)**: Beyond asset transfer, it securely delivers encrypted final messages to heirs, preserving the emotional essence of one's legacy.
+* **Stepped-up Basis Tax Plan**: Provides economic optimization by capturing the "Stepped-up Basis" timing through instant execution, significantly minimizing capital gains tax for beneficiaries.
+* **Intelligent Liveness Guard**: A multi-layered monitoring system utilizing Alchemy infrastructure for precise detection of on-chain activity, ensuring fail-safe execution.
 
-- Creates on-chain capsules that hold asset distribution instructions.
-- Locks SOL or configured token assets in a program-controlled vault.
-- Supports beneficiary rules for Solana addresses and planned cross-chain delivery paths.
-- Tracks an inactivity period based on the capsule owner.
-- Lets the owner refresh activity before execution.
-- Executes the capsule once the inactivity period has passed.
-- Delivers an encrypted Intent Statement to a representative using Chainlink CRE.
+### Quick Start <a href="#user-content-quick-start-1" id="user-content-quick-start-1"></a>
 
-## Core Stack
+The fastest way to secure your legacy with Heres.
 
-| Layer | Technology | Purpose |
-| --- | --- | --- |
-| Settlement | Solana | Stores capsule state and settles asset movement. |
-| Program | Anchor / Rust | Enforces capsule creation, activity updates, execution, and distribution. |
-| Private monitoring | MagicBlock ER / PER | Monitors capsule conditions and supports automated execution. |
-| Confidential delivery | Chainlink CRE | Handles encrypted Intent Statement delivery after execution. |
-| Data and indexing | Helius, PostgreSQL or local store | Reads wallet activity, NFTs, dashboard metrics, and capsule history. |
-| Client | Next.js, React, Tailwind | Web app for capsule creation, monitoring, and dashboard views. |
-| Mobile | Android / Jetpack Compose | Native mobile MVP for monitoring and one-tap extension flows. |
-
-## Product Flow
-
-1. Connect a Solana wallet.
-2. Create a capsule with an asset, beneficiaries, and inactivity window.
-3. Add an Intent Statement and representative email.
-4. Confirm the transaction and lock the selected assets.
-5. Delegate or register the capsule for automation.
-6. Refresh activity while the capsule should remain active.
-7. After the inactivity window passes, execution marks the capsule as executed.
-8. Distribution sends assets to beneficiaries and CRE delivers the encrypted statement.
-
-## Important Notice
-
-Heres is protocol software for digital asset automation. It is not legal, tax, custody, estate planning, or financial advice. Users should understand wallet risk, smart contract risk, network risk, and local legal requirements before relying on any automated inheritance or recovery process.
-
-## Where To Start
-
-- Start with [Quickstart](getting-started/quickstart.md) if you want to try the app.
-- Read [Create a Capsule](user-guide/create-a-capsule.md) if you are writing user-facing help pages.
-- Read [Architecture](developers/architecture.md) if you are integrating or maintaining the project.
-- Read [GitBook Publishing Guide](operations/gitbook-publishing.md) to insert these docs into your website.
+* [**How Heres Works**](https://docs.heresprotocol.com/introduction/how-heres-works): Understand the protocol mechanism.
+* [**Setup Your Account**](https://docs.heresprotocol.com/getting-started/log-in): Connect your wallet and start your subscription.
+* [**Create Your First Capsule**](https://docs.heresprotocol.com/user-guide/create-capsule): Create your first Intent Capsule.
+* [**Monitor Status**](https://docs.heresprotocol.com/user-guide/dashboard): Check your capsule status on the dashboard.
 

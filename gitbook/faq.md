@@ -2,7 +2,9 @@
 
 ## What is Heres?
 
-Heres is a Solana-based capsule protocol for automated digital asset instructions. A user can lock assets, define beneficiaries, set an inactivity period, and attach an encrypted Intent Statement.
+Heres Protocol is the world’s first autonomous 'Death Insurance Protocol' built on the Solana ecosystem.
+
+By monitoring a user’s '**Autonomous Presence Signals**' on-chain, the protocol solves the '**Digital Graveyard**' problem. It autonomously transfers assets secured within TEE (Trusted Execution Environments) to designated heirs in the event of the owner’s absence, ensuring that digital wealth is never lost.
 
 ## Is Heres a wallet?
 
@@ -43,4 +45,3 @@ CRE delivery status is tracked. Reconciliation jobs can retry or operators can r
 ## What fees apply?
 
 The default repository configuration includes a 0.05 SOL creation fee and a 3% execution fee. Always check the live app before signing.
-
