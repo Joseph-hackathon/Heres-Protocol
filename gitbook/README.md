@@ -15,7 +15,7 @@ Heres is the world’s first **Autonomous Death Insurance Protocol** built on So
 
 The fastest way to secure your legacy with Heres.
 
-* [**How Heres Works**](https://docs.heresprotocol.com/introduction/how-heres-works): Understand the protocol mechanism.
+* [**How Heres Protocol Works**](https://docs.heresprotocol.com/introduction/how-heres-works): Understand the protocol mechanism.
 * [**Setup Your Account**](https://docs.heresprotocol.com/getting-started/log-in): Connect your wallet and start your subscription.
 * [**Create Your First Capsule**](https://docs.heresprotocol.com/user-guide/create-capsule): Create your first Intent Capsule.
 * [**Monitor Status**](https://docs.heresprotocol.com/user-guide/dashboard): Check your capsule status on the dashboard.
