@@ -1,12 +1,12 @@
 # FAQ
 
-## What is Heres?
+## What is Heres Protocol ?
 
 Heres Protocol is the world’s first autonomous 'Death Insurance Protocol' built on the Solana ecosystem.
 
 By monitoring a user’s '**Autonomous Presence Signals**' on-chain, the protocol solves the '**Digital Graveyard**' problem. It autonomously transfers assets secured within TEE (Trusted Execution Environments) to designated heirs in the event of the owner’s absence, ensuring that digital wealth is never lost.
 
-## Is Heres a wallet?
+## Is Heres Protocol a wallet?
 
 No. Heres connects to existing Solana wallets. Users keep control of their wallet keys.
 
@@ -26,7 +26,13 @@ After the inactivity period is met, execution is permissionless by design. The p
 
 No. Beneficiaries do not control the capsule unless they are also the owner wallet.
 
-## Can I use Heres on mainnet?
+## What is Capsule rule?
+
+* You can create up to 3 capsules per wallet.
+* Currently, you can create a new capsule after one capsule has been executed. (Update coming soon)
+* Once a capsule is created and delegated to on-chain delegation, it is currently not possible to modify or cancel it. (Update coming soon)
+
+## Can I use Heres Protocol on mainnet?
 
 This repository defaults to Devnet. Mainnet use requires a production deployment, audited program, production automation, and correct environment configuration.
 
@@ -44,4 +50,4 @@ CRE delivery status is tracked. Reconciliation jobs can retry or operators can r
 
 ## What fees apply?
 
-The default repository configuration includes a 0.05 SOL creation fee and a 3% execution fee. Always check the live app before signing.
+The default repository configuration includes a $5 subscribe fee and a 1.5% execution fee. Always check the live app before signing.
