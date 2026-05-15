@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     'A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth. Powered by Helius & Phantom.',
   manifest: '/manifest.json',
   icons: {
-    icon: [{ url: '/logo-white.png', type: 'image/png' }],
+    icon: [{ url: '/logo-white-icon.png', type: 'image/png' }],
   },
 }
 
@@ -46,6 +46,20 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${notoSansKR.variable} ${oswald.variable}`}>
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'Organization',
+              name: 'Heres',
+              url: 'https://heresprotocol.com',
+              logo: 'https://heresprotocol.com/logo-white-icon.png',
+            }),
+          }}
+        />
+      </head>
       <body className="min-h-screen font-sans antialiased">
         <Providers>
           <ServiceWorkerRegister />
