@@ -1,6 +1,9 @@
-# Summary
+# Table of contents
 
-* [Overview](README.md)
+## Welcome
+
+* [Welcome to Heres](README.md)
+* [How Heres Protocol works](welcome/how-heres-protocol-works.md)
 
 ## Getting Started
 
@@ -23,18 +26,9 @@
 ## Developers
 
 * [Architecture](developers/architecture.md)
-* [Local Development](developers/local-development.md)
 * [Environment Variables](developers/environment-variables.md)
-* [API Reference](developers/api-reference.md)
-
-## Operations
-
-* [Deployment](operations/deployment.md)
-* [Automation and Cron Jobs](operations/automation-and-cron.md)
-* [GitBook Publishing Guide](operations/gitbook-publishing.md)
 
 ## Reference
 
 * [FAQ](faq.md)
 * [Glossary](glossary.md)
-
