@@ -12,7 +12,10 @@
         "cre:setup": "node scripts/setup_cre.mjs",
         "cre:setup:mock": "node scripts/setup_cre.mjs --mode mock",
         "cre:setup:real": "node scripts/setup_cre.mjs --mode real",
-        "worker:dashboard-index": "node scripts/dashboard-indexer.mjs"
+        "worker:dashboard-index": "node scripts/dashboard-indexer.mjs",
+        "verify:magicblock": "node scripts/test-er-delegation.mjs",
+        "verify:cre:mock": "node scripts/setup_cre.mjs --mode mock && node --test --experimental-strip-types tests/cre-auth.test.mts",
+        "verify:capsule:e2e": "node --experimental-strip-types scripts/test-capsule-e2e.ts"
     },
     "dependencies": {
         "@coral-xyz/anchor": "0.32.1",
