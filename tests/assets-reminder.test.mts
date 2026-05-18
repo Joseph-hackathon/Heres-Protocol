@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
-import { getAssetConfig, inferAssetConfig, isAssetConfigured, toAtomicAmount } from '../lib/assets.ts'
+import { getAssetConfig, getAssetMintPublicKey, inferAssetConfig, isAssetConfigured, toAtomicAmount } from '../lib/assets.ts'
 import { computeNextReminderAt, createReminderIdempotencyKey } from '../lib/cre/reminder-schedule.ts'
 
 test('asset registry exposes supported BTC, ETH, and mSOL symbols even when mints are env-driven', () => {
@@ -16,6 +16,14 @@ test('asset registry exposes supported BTC, ETH, and mSOL symbols even when mint
   assert.equal(typeof btc.mint === 'string' || btc.mint === null, true)
   assert.equal(typeof eth.mint === 'string' || eth.mint === null, true)
   assert.equal(typeof msol.mint === 'string' || msol.mint === null, true)
+})
+
+test('BTC and ETH configuration flags follow whether a mint is present', () => {
+  const btc = getAssetConfig('BTC')
+  const eth = getAssetConfig('ETH')
+
+  assert.equal(isAssetConfigured('BTC'), Boolean(btc.mint))
+  assert.equal(isAssetConfigured('ETH'), Boolean(eth.mint))
 })
 
 test('inferAssetConfig prefers explicit payload symbol over mint fallback', () => {
@@ -43,5 +51,23 @@ test('reminder helpers default to a 30-day cadence and deterministic idempotency
 test('toAtomicAmount respects asset decimals for SOL, BTC, and mSOL', () => {
   assert.equal(toAtomicAmount('1.25', { assetSymbol: 'SOL' }), 1_250_000_000n)
   assert.equal(toAtomicAmount('0.12345678', { assetSymbol: 'BTC' }), 12_345_678n)
+  assert.equal(toAtomicAmount('0.12345678', { assetSymbol: 'ETH' }), 12_345_678n)
   assert.equal(toAtomicAmount('1.25', { assetSymbol: 'MSOL' }), 1_250_000_000n)
+})
+
+test('BTC and ETH mint helpers return undefined when the asset is not configured', () => {
+  const btc = getAssetConfig('BTC')
+  const eth = getAssetConfig('ETH')
+
+  if (btc.mint) {
+    assert.equal(getAssetMintPublicKey('BTC')?.toBase58(), btc.mint)
+  } else {
+    assert.equal(getAssetMintPublicKey('BTC'), undefined)
+  }
+
+  if (eth.mint) {
+    assert.equal(getAssetMintPublicKey('ETH')?.toBase58(), eth.mint)
+  } else {
+    assert.equal(getAssetMintPublicKey('ETH'), undefined)
+  }
 })
