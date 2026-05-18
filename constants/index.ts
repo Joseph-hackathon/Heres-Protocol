@@ -8,6 +8,10 @@ const KNOWN_DEVNET_ASSET_MINTS: Partial<Record<string, string>> = {
   MSOL: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
 }
 
+const KNOWN_MAINNET_ASSET_MINTS: Partial<Record<string, string>> = {
+  AUDD: 'AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw',
+}
+
 function normalizeSolanaNetwork(value: string | undefined): SolanaNetwork {
   const normalized = value?.trim().toLowerCase()
   if (normalized === 'mainnet' || normalized === 'mainnet-beta') return 'mainnet-beta'
@@ -55,6 +59,9 @@ export function getAssetMintFromEnv(symbol: string): string | null {
     case 'MSOL':
       value = process.env.NEXT_PUBLIC_MSOL_MINT || process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT
       break
+    case 'AUDD':
+      value = process.env.NEXT_PUBLIC_AUDD_MINT || process.env.NEXT_PUBLIC_AUDD_DEVNET_MINT
+      break
     default:
       value = process.env[getAssetMintEnvKey(symbol)]
       break
@@ -64,6 +71,9 @@ export function getAssetMintFromEnv(symbol: string): string | null {
   const network = normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK)
   if (network === 'devnet') {
     return KNOWN_DEVNET_ASSET_MINTS[symbol] || null
+  }
+  if (network === 'mainnet-beta') {
+    return KNOWN_MAINNET_ASSET_MINTS[symbol] || null
   }
   return null
 }

@@ -61,3 +61,14 @@ test('mSOL falls back to the known devnet mint when env is absent', () => {
 
   delete process.env.NEXT_PUBLIC_SOLANA_NETWORK
 })
+
+test('AUDD falls back to the known mainnet mint when env is absent', () => {
+  process.env.NEXT_PUBLIC_SOLANA_NETWORK = 'mainnet-beta'
+  delete process.env.NEXT_PUBLIC_AUDD_MINT
+  delete process.env.NEXT_PUBLIC_AUDD_DEVNET_MINT
+
+  assert.equal(getAssetMintEnvKey('AUDD'), 'NEXT_PUBLIC_AUDD_MINT')
+  assert.equal(getAssetMintFromEnv('AUDD'), 'AUDDttiEpCydTm7joUMbYddm72jAWXZnCpPZtDoxqBSw')
+
+  delete process.env.NEXT_PUBLIC_SOLANA_NETWORK
+})

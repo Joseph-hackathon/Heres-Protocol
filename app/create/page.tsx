@@ -280,7 +280,7 @@ export default function CreatePage() {
   const updateBeneficiary = (
     index: number,
     field: keyof Beneficiary,
-    value: string | 'fixed' | 'percentage' | 'solana' | 'evm'
+    value: string | 'fixed' | 'percentage' | 'solana' | 'evm' | 'stellar'
   ) => {
     const updated = [...beneficiaries]
     const oldBeneficiary = updated[index]
