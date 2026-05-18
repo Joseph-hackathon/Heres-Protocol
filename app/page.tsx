@@ -4,11 +4,11 @@ import { ArrowRight, Shield, Smartphone, Sparkles } from 'lucide-react'
 import { getDashboardSnapshot } from '@/lib/dashboard'
 
 const partnerLogos = [
-  { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', href: 'https://colosseum.com/', logoWidth: 122, wordmarkOnly: true },
-  { name: 'MagicBlock', src: '/logos/magicblock.svg', href: 'https://www.magicblock.gg/' },
-  { name: 'Solana', src: '/logos/solana.svg', href: 'https://solana.com/' },
-  { name: 'Helius', src: '/logos/helius.svg', href: 'https://www.helius.dev/' },
-  { name: 'Alchemy', src: '/logos/alchemy-logo.svg', href: 'https://www.alchemy.com/', logoWidth: 112, wordmarkOnly: true },
+  { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', logoWidth: 122, wordmarkOnly: true },
+  { name: 'MagicBlock', src: '/logos/magicblock.svg' },
+  { name: 'Solana', src: '/logos/solana.svg' },
+  { name: 'Helius', src: '/logos/helius.svg' },
+  { name: 'Alchemy', src: '/logos/alchemy-logo.svg', logoWidth: 112, wordmarkOnly: true },
 ]
 
 const capabilityCards = [
@@ -71,21 +71,17 @@ const useCases = [
 function PartnerBadge({
   name,
   src,
-  href,
   logoWidth,
   wordmarkOnly,
 }: {
   name: string
   src: string
-  href: string
   logoWidth?: number
   wordmarkOnly?: boolean
 }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+    <div
+      aria-label={name}
       className="partner-marquee-badge flex h-14 min-w-[176px] items-center justify-center gap-3 rounded-2xl px-5 py-3 transition-colors hover:border-Heres-accent/30 hover:bg-Heres-card/70"
     >
       <Image
@@ -97,7 +93,7 @@ function PartnerBadge({
         unoptimized
       />
       {!wordmarkOnly && <span className="text-xs font-semibold uppercase tracking-[0.18em] text-Heres-white">{name}</span>}
-    </a>
+    </div>
   )
 }
 
