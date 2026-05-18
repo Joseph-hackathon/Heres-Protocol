@@ -33,11 +33,9 @@ import {
   validatePercentageTotals,
   isValidEmail,
 } from '@/utils/validation'
-import { getSolanaConnection, isValidSolanaAddress } from '@/config/solana'
+import { isValidSolanaAddress } from '@/config/solana'
 import { PublicKey } from '@solana/web3.js'
 import { SectionEyebrow, ServiceAccordionSection, ServiceMetaCard, ServicePageHeader } from '@/components/ui/service-page'
-
-const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
 export type CapsuleAssetType = 'token' | 'nft' | null
 type InactivityUnit = 'days' | 'minutes'
@@ -118,65 +116,37 @@ export default function CreatePage() {
   const [creUnlockCode, setCreUnlockCode] = useState('')
   const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
-  // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
+  // Fetch wallet NFTs when NFT path is selected (Alchemy first, fallback provider next, else RPC)
   useEffect(() => {
     if (capsuleType !== 'nft' || !publicKey || !connected) return
     let cancelled = false
     setNftListLoading(true)
 
     const run = async () => {
-      if (SOLANA_CONFIG.HELIUS_API_KEY) {
-        try {
-          const res = await fetch(`/api/helius/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
-            cache: 'no-store',
-          })
-          const payload = await res.json().catch(() => null)
-          if (!res.ok || !payload) {
-            throw new Error(payload?.error || `NFT request failed (${res.status})`)
-          }
-          const items = Array.isArray(payload.items) ? payload.items as Array<{ mint: string; name?: string; symbol?: string; imageUri?: string }> : []
-          if (cancelled) return
-          const nfts: NftItem[] = items.map((item) => ({
-            mint: item.mint,
-            name: item.name,
-            symbol: item.symbol,
-            imageUri: item.imageUri,
-          }))
-          setNftList(nfts)
-        } catch {
-          if (!cancelled) setNftList([])
-        } finally {
-          if (!cancelled) setNftListLoading(false)
+      try {
+        const res = await fetch(`/api/assets/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
+          cache: 'no-store',
+        })
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload) {
+          throw new Error(payload?.error || `NFT request failed (${res.status})`)
         }
-        return
+        const items = Array.isArray(payload.items) ? payload.items as Array<{ mint: string; name?: string; symbol?: string; imageUri?: string }> : []
+        if (cancelled) return
+        const nfts: NftItem[] = items.map((item) => ({
+          mint: item.mint,
+          name: item.name,
+          symbol: item.symbol,
+          imageUri: item.imageUri,
+        }))
+        setNftList(nfts)
+      } catch {
+        if (!cancelled) setNftList([])
+      } finally {
+        if (!cancelled) setNftListLoading(false)
       }
+      return
 
-      const connection = getSolanaConnection()
-      connection
-        .getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID })
-        .then(({ value }) => {
-          if (cancelled) return
-          const nfts: NftItem[] = value
-            .filter((acc) => {
-              const info = acc.account?.data?.parsed?.info
-              if (!info?.tokenAmount) return false
-              const decimals = Number(info.tokenAmount.decimals)
-              const amount = info.tokenAmount.amount ?? info.tokenAmount.uiAmount
-              return decimals === 0 && (Number(amount) === 1 || amount === '1')
-            })
-            .map((acc) => {
-              const info = acc.account?.data?.parsed?.info
-              const mint = info?.mint ?? ''
-              return { mint, name: undefined, symbol: undefined }
-            })
-          setNftList(nfts)
-        })
-        .catch(() => {
-          if (!cancelled) setNftList([])
-        })
-        .finally(() => {
-          if (!cancelled) setNftListLoading(false)
-        })
     }
 
     run()

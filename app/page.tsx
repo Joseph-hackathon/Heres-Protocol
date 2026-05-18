@@ -7,7 +7,6 @@ const partnerLogos = [
   { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', href: 'https://colosseum.com/', logoWidth: 122, wordmarkOnly: true },
   { name: 'MagicBlock', src: '/logos/magicblock.svg', href: 'https://www.magicblock.gg/' },
   { name: 'Solana', src: '/logos/solana.svg', href: 'https://solana.com/' },
-  { name: 'Helius', src: '/logos/helius.svg', href: 'https://www.helius.dev/' },
   { name: 'Alchemy', src: '/logos/alchemy-logo.svg', href: 'https://www.alchemy.com/', logoWidth: 112, wordmarkOnly: true },
 ]
 

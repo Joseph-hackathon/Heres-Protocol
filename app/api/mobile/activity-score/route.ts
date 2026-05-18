@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getEnhancedTransactions } from '@/lib/helius'
+import { getEnhancedTransactions } from '@/lib/solana-data'
 import { buildActivityScore, validateWalletQuery } from '@/lib/mobile'
 
 export async function GET(request: NextRequest) {

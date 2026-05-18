@@ -4,6 +4,7 @@
 declare namespace NodeJS {
   interface ProcessEnv {
     NEXT_PUBLIC_SOLANA_NETWORK?: string
+    NEXT_PUBLIC_ALCHEMY_API_KEY?: string
     NEXT_PUBLIC_HELIUS_API_KEY?: string
     NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL?: string
     SOLANA_RPC_URL?: string
