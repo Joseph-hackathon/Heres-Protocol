@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isValidSolanaAddress } from '@/config/solana'
-import { SOLANA_CONFIG } from '@/constants'
-import { getAlchemyAssetsByOwner } from '@/lib/alchemy'
-import { getNftsByOwner } from '@/lib/helius'
+import { getNftAssetsByOwner } from '@/lib/solana-data'
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,10 +12,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid wallet address' }, { status: 400 })
     }
 
-    const items = SOLANA_CONFIG.ALCHEMY_API_KEY
-      ? await getAlchemyAssetsByOwner(wallet)
-      : await getNftsByOwner(wallet)
-
+    const items = await getNftAssetsByOwner(wallet)
     return NextResponse.json({ items })
   } catch (error: any) {
     return NextResponse.json(

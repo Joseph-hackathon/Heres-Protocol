@@ -72,3 +72,13 @@ test('AUDD falls back to the known mainnet mint when env is absent', () => {
 
   delete process.env.NEXT_PUBLIC_SOLANA_NETWORK
 })
+
+test('Alchemy env can coexist without changing asset mint env resolution', () => {
+  process.env.NEXT_PUBLIC_ALCHEMY_API_KEY = 'alchemy-key'
+  process.env.NEXT_PUBLIC_BTC_MINT = 'btc-mint-from-env'
+
+  assert.equal(getAssetMintFromEnv('BTC'), 'btc-mint-from-env')
+
+  delete process.env.NEXT_PUBLIC_ALCHEMY_API_KEY
+  delete process.env.NEXT_PUBLIC_BTC_MINT
+})

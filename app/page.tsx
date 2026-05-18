@@ -7,7 +7,6 @@ const partnerLogos = [
   { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', logoWidth: 122, wordmarkOnly: true },
   { name: 'MagicBlock', src: '/logos/magicblock.svg' },
   { name: 'Solana', src: '/logos/solana.svg' },
-  { name: 'Helius', src: '/logos/helius.svg' },
   { name: 'Alchemy', src: '/logos/alchemy-logo.svg', logoWidth: 112, wordmarkOnly: true },
 ]
 

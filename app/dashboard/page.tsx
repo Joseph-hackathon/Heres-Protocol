@@ -18,7 +18,7 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG, getExplorerUrl } from '@/constants'
 import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
-import { getEnhancedTransactions } from '@/lib/helius'
+import { getEnhancedTransactions } from '@/lib/solana-data'
 import { initFeeConfig } from '@/lib/solana'
 import { getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
@@ -310,7 +310,7 @@ const getBlockTimeFromTx = (tx: any) => {
   return typeof timestamp === 'number' ? timestamp : parseInt(String(timestamp), 10)
 }
 
-/** Fetch all enhanced transactions from Helius (paginated). */
+/** Fetch all supplemental transactions from the current Solana data provider (paginated). */
 const fetchAllEnhancedTransactions = async (address: string, pageSize = 100, maxPages = 10) => {
   let all: any[] = []
   let before: string | undefined
@@ -604,25 +604,23 @@ export default function DashboardPage() {
 
         const nowSeconds = Math.floor(Date.now() / 1000)
 
-        // Collect signatures: RPC first, then add any extra from Helius
+        // Collect signatures from RPC, then add any supplemental provider-only signatures.
         let signatureInfos: any[] = []
         try {
           signatureInfos = await fetchAllSignatures(connection, programId)
-          if (SOLANA_CONFIG.HELIUS_API_KEY) {
-            const enhancedTransactions = await fetchAllEnhancedTransactions(programId.toBase58())
-            const heliusSigs = new Set(signatureInfos.map((s) => s.signature))
-            for (const tx of enhancedTransactions) {
-              const sig = getSignatureFromTx(tx)
-              if (sig && !heliusSigs.has(sig)) {
-                heliusSigs.add(sig)
-                signatureInfos.push({
-                  signature: sig,
-                  err: null,
-                  blockTime: getBlockTimeFromTx(tx) || undefined,
-                  memo: null,
-                  slot: (tx?.slot || tx?.transaction?.slot || 0) as number,
-                })
-              }
+          const enhancedTransactions = await fetchAllEnhancedTransactions(programId.toBase58())
+          const providerSigs = new Set(signatureInfos.map((s) => s.signature))
+          for (const tx of enhancedTransactions) {
+            const sig = getSignatureFromTx(tx)
+            if (sig && !providerSigs.has(sig)) {
+              providerSigs.add(sig)
+              signatureInfos.push({
+                signature: sig,
+                err: null,
+                blockTime: getBlockTimeFromTx(tx) || undefined,
+                memo: null,
+                slot: (tx?.slot || tx?.transaction?.slot || 0) as number,
+              })
             }
           }
         } catch (e) {

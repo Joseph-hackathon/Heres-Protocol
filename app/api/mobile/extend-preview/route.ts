@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
 import { getCapsule } from '@/lib/solana'
-import { getEnhancedTransactions } from '@/lib/helius'
+import { getEnhancedTransactions } from '@/lib/solana-data'
 import { buildActivityScore } from '@/lib/mobile'
 
 export async function POST(request: NextRequest) {
