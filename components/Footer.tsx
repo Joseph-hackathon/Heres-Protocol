@@ -85,15 +85,13 @@ export function Footer() {
             © {new Date().getFullYear()} Heres. All rights reserved.
           </p>
           <div className="flex items-center gap-4">
-            <a
-              href="https://solana.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-Heres-border/70 bg-Heres-surface/45 px-4 py-2 text-sm text-Heres-white transition-colors hover:border-Heres-accent/20"
+            <div
+              aria-label="Powered by Solana"
+              className="inline-flex items-center gap-2 rounded-xl border border-Heres-border/70 bg-Heres-surface/45 px-4 py-2 text-sm text-Heres-white"
             >
               <Image src="/logos/solana.svg" alt="Solana" width={20} height={20} className="h-5 w-5 shrink-0" />
               <span className="font-medium">Powered by Solana</span>
-            </a>
+            </div>
           </div>
         </div>
       </div>
