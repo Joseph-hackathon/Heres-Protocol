@@ -118,16 +118,16 @@ export default function CreatePage() {
   const [creUnlockCode, setCreUnlockCode] = useState('')
   const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
-  // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
+  // Fetch wallet NFTs when NFT path is selected (Alchemy DAS first, Helius fallback, else RPC)
   useEffect(() => {
     if (capsuleType !== 'nft' || !publicKey || !connected) return
     let cancelled = false
     setNftListLoading(true)
 
     const run = async () => {
-      if (SOLANA_CONFIG.HELIUS_API_KEY) {
+      if (SOLANA_CONFIG.ALCHEMY_API_KEY || SOLANA_CONFIG.HELIUS_API_KEY) {
         try {
-          const res = await fetch(`/api/helius/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
+          const res = await fetch(`/api/assets/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
             cache: 'no-store',
           })
           const payload = await res.json().catch(() => null)

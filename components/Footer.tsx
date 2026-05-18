@@ -72,7 +72,7 @@ export function Footer() {
               <div className="mt-3 flex flex-col gap-2 text-sm text-Heres-white/90">
                 <span>Solana</span>
                 <span>MagicBlock ER</span>
-                <span>Helius</span>
+                <span>Alchemy</span>
               </div>
             </div>
           </div>
