@@ -6,17 +6,35 @@ import { Beneficiary } from '@/types'
 import { isValidSolanaAddress } from '@/config/solana'
 import { CreIntentData } from '@/utils/intent'
 
+const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
+const STELLAR_PUBLIC_KEY_RE = /^G[A-Z2-7]{55}$/
+
+export function isValidEvmAddress(value: string): boolean {
+  return EVM_ADDRESS_RE.test(value)
+}
+
+export function isValidStellarAddress(value: string): boolean {
+  return STELLAR_PUBLIC_KEY_RE.test(value)
+}
+
 /**
  * Validate beneficiary addresses
  */
 export function validateBeneficiaryAddresses(beneficiaries: Beneficiary[]): boolean {
-  return beneficiaries.every(b => 
-    b.address && isValidSolanaAddress(b.address)
-  )
+  return beneficiaries.every(isValidBeneficiaryAddress)
 }
 
 export function isValidBeneficiaryAddress(beneficiary: Beneficiary): boolean {
-  return Boolean(beneficiary.address && isValidSolanaAddress(beneficiary.address))
+  if (!beneficiary.address) return false
+  switch (beneficiary.chain) {
+    case 'evm':
+      return isValidEvmAddress(beneficiary.address)
+    case 'stellar':
+      return isValidStellarAddress(beneficiary.address)
+    case 'solana':
+    default:
+      return isValidSolanaAddress(beneficiary.address)
+  }
 }
 
 /**
