@@ -23,7 +23,7 @@ function XIcon({ className }: { className?: string }) {
 
 export function Footer() {
   return (
-    <footer className="border-t border-Heres-border/70 bg-[#060a17] text-Heres-white">
+    <footer className="border-t border-Heres-border/70 bg-Heres-navyDeep text-Heres-white">
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-sm">

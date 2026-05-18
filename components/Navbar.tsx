@@ -121,7 +121,7 @@ export function Navbar() {
             {networkOpen && (
               <ul
                 role="listbox"
-                className="absolute right-0 top-full z-50 mt-2 min-w-[200px] rounded-2xl border border-Heres-border/80 bg-[#0d142d]/95 py-1 shadow-[0_16px_50px_rgba(0,0,0,0.35)] backdrop-blur-xl"
+                className="absolute right-0 top-full z-50 mt-2 min-w-[200px] rounded-2xl border border-Heres-border/80 bg-Heres-navy/95 py-1 shadow-[0_16px_50px_rgba(0,0,0,0.35)] backdrop-blur-xl"
               >
                 {NETWORKS.map((net) => (
                   <li key={net.id} role="option" aria-selected={selectedNetwork.id === net.id}>
@@ -154,9 +154,9 @@ export function Navbar() {
       {/* Mobile menu: extend toward bottom, height slightly cut so panel doesn't go full viewport */}
       {mobileOpen && (
         <div
-          className="overflow-x-hidden border-t border-Heres-border/70 bg-[#0a1022] lg:hidden"
+          className="overflow-x-hidden border-t border-Heres-border/70 bg-Heres-navyDeep lg:hidden"
           style={{
-            backgroundColor: '#0f172a',
+            backgroundColor: 'var(--Heres-navy-deep)',
             minHeight: 'calc(100dvh - 4rem - env(safe-area-inset-top, 0px) - 25rem)',
           }}
         >
