@@ -13,12 +13,11 @@ import {
   Signal,
   User,
 } from 'lucide-react'
-import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { getProgramId, getSolanaConnection } from '@/config/solana'
-import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG, getExplorerUrl } from '@/constants'
+import { getProgramId, getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
+import { SOLANA_CONFIG, PLATFORM_FEE, getExplorerUrl } from '@/constants'
 import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
-import { getEnhancedTransactions } from '@/lib/helius'
 import { initFeeConfig } from '@/lib/solana'
 import { getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
@@ -296,50 +295,12 @@ const fetchTransactionsBatched = async (
   return results
 }
 
-const getSignatureFromTx = (tx: any) =>
-  tx?.signature ||
-  tx?.transactionSignature ||
-  tx?.transaction?.signatures?.[0] ||
-  tx?.signatures?.[0] ||
-  tx?.tx?.signature ||
-  ''
-
-const getBlockTimeFromTx = (tx: any) => {
-  const timestamp = tx?.timestamp || tx?.blockTime || tx?.tx?.blockTime || tx?.transaction?.blockTime
-  if (!timestamp) return null
-  return typeof timestamp === 'number' ? timestamp : parseInt(String(timestamp), 10)
-}
-
-/** Fetch all enhanced transactions from Helius (paginated). */
-const fetchAllEnhancedTransactions = async (address: string, pageSize = 100, maxPages = 10) => {
-  let all: any[] = []
-  let before: string | undefined
-  for (let page = 0; page < maxPages; page += 1) {
-    const batch = await getEnhancedTransactions(address, pageSize, before)
-    all = all.concat(batch)
-    if (batch.length < pageSize) break
-    const lastSig = getSignatureFromTx(batch[batch.length - 1])
-    if (!lastSig) break
-    before = lastSig
-  }
-  return all
-}
-
 const toTxRecordFromRpc = (info: any, tx: any) => ({
   signature: info.signature,
   blockTime: info.blockTime || null,
   err: info.err || tx?.meta?.err || null,
   logs: tx?.meta?.logMessages || [],
   message: tx?.transaction?.message || null,
-  meta: tx?.meta || null,
-})
-
-const toTxRecordFromEnhanced = (tx: any) => ({
-  signature: getSignatureFromTx(tx),
-  blockTime: getBlockTimeFromTx(tx),
-  err: tx?.err || tx?.meta?.err || tx?.transactionError || null,
-  logs: tx?.meta?.logMessages || tx?.logs || [],
-  message: tx?.transaction?.message || tx?.tx?.message || tx?.message || null,
   meta: tx?.meta || null,
 })
 
@@ -558,7 +519,7 @@ export default function DashboardPage() {
           if (e?.message?.includes('403') || e?.message?.includes('Forbidden') || e?.message?.includes('Bad request')) {
             console.log('Detection of 403/Forbidden. Retrying with fallback RPC...')
             try {
-              const fallbackConnection = new Connection(HELIUS_CONFIG.PUBLIC_RPC_URL, 'confirmed')
+              const fallbackConnection = getSolanaFallbackConnection()
               accounts = await fallbackConnection.getProgramAccounts(programId, {
                 commitment: 'confirmed',
               })
@@ -604,27 +565,10 @@ export default function DashboardPage() {
 
         const nowSeconds = Math.floor(Date.now() / 1000)
 
-        // Collect signatures: RPC first, then add any extra from Helius
+        // Collect signatures via RPC only.
         let signatureInfos: any[] = []
         try {
           signatureInfos = await fetchAllSignatures(connection, programId)
-          if (SOLANA_CONFIG.HELIUS_API_KEY) {
-            const enhancedTransactions = await fetchAllEnhancedTransactions(programId.toBase58())
-            const heliusSigs = new Set(signatureInfos.map((s) => s.signature))
-            for (const tx of enhancedTransactions) {
-              const sig = getSignatureFromTx(tx)
-              if (sig && !heliusSigs.has(sig)) {
-                heliusSigs.add(sig)
-                signatureInfos.push({
-                  signature: sig,
-                  err: null,
-                  blockTime: getBlockTimeFromTx(tx) || undefined,
-                  memo: null,
-                  slot: (tx?.slot || tx?.transaction?.slot || 0) as number,
-                })
-              }
-            }
-          }
         } catch (e) {
           console.warn('Failed to fetch signatures (history may be incomplete):', e)
         }

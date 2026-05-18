@@ -21,6 +21,13 @@ function isVerified(authHeader: string | null): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  if (!process.env.HELIUS_WEBHOOK_AUTH_TOKEN) {
+    return NextResponse.json(
+      { error: 'Helius webhook intake is retired. Use the dashboard indexer or generic RPC ingestion instead.' },
+      { status: 410 }
+    )
+  }
+
   const contentType = request.headers.get('content-type') || ''
   if (contentType && !contentType.toLowerCase().includes('application/json')) {
     return NextResponse.json({ error: 'Unsupported content type' }, { status: 415 })
@@ -58,4 +65,3 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ ok: true, queued: true })
 }
-

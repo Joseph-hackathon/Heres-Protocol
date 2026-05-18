@@ -118,65 +118,35 @@ export default function CreatePage() {
   const [creUnlockCode, setCreUnlockCode] = useState('')
   const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
-  // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
+  // Fetch wallet NFTs when NFT path is selected.
   useEffect(() => {
     if (capsuleType !== 'nft' || !publicKey || !connected) return
     let cancelled = false
     setNftListLoading(true)
 
     const run = async () => {
-      if (SOLANA_CONFIG.HELIUS_API_KEY) {
-        try {
-          const res = await fetch(`/api/helius/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
-            cache: 'no-store',
-          })
-          const payload = await res.json().catch(() => null)
-          if (!res.ok || !payload) {
-            throw new Error(payload?.error || `NFT request failed (${res.status})`)
-          }
-          const items = Array.isArray(payload.items) ? payload.items as Array<{ mint: string; name?: string; symbol?: string; imageUri?: string }> : []
-          if (cancelled) return
-          const nfts: NftItem[] = items.map((item) => ({
-            mint: item.mint,
-            name: item.name,
-            symbol: item.symbol,
-            imageUri: item.imageUri,
-          }))
-          setNftList(nfts)
-        } catch {
-          if (!cancelled) setNftList([])
-        } finally {
-          if (!cancelled) setNftListLoading(false)
+      try {
+        const res = await fetch(`/api/assets/nfts?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
+          cache: 'no-store',
+        })
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload) {
+          throw new Error(payload?.error || `NFT request failed (${res.status})`)
         }
-        return
+        const items = Array.isArray(payload.items) ? payload.items as Array<{ mint: string; name?: string; symbol?: string; imageUri?: string }> : []
+        if (cancelled) return
+        const nfts: NftItem[] = items.map((item) => ({
+          mint: item.mint,
+          name: item.name,
+          symbol: item.symbol,
+          imageUri: item.imageUri,
+        }))
+        setNftList(nfts)
+      } catch {
+        if (!cancelled) setNftList([])
+      } finally {
+        if (!cancelled) setNftListLoading(false)
       }
-
-      const connection = getSolanaConnection()
-      connection
-        .getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID })
-        .then(({ value }) => {
-          if (cancelled) return
-          const nfts: NftItem[] = value
-            .filter((acc) => {
-              const info = acc.account?.data?.parsed?.info
-              if (!info?.tokenAmount) return false
-              const decimals = Number(info.tokenAmount.decimals)
-              const amount = info.tokenAmount.amount ?? info.tokenAmount.uiAmount
-              return decimals === 0 && (Number(amount) === 1 || amount === '1')
-            })
-            .map((acc) => {
-              const info = acc.account?.data?.parsed?.info
-              const mint = info?.mint ?? ''
-              return { mint, name: undefined, symbol: undefined }
-            })
-          setNftList(nfts)
-        })
-        .catch(() => {
-          if (!cancelled) setNftList([])
-        })
-        .finally(() => {
-          if (!cancelled) setNftListLoading(false)
-        })
     }
 
     run()
@@ -280,7 +250,7 @@ export default function CreatePage() {
   const updateBeneficiary = (
     index: number,
     field: keyof Beneficiary,
-    value: string | 'fixed' | 'percentage' | 'solana' | 'evm'
+    value: string | 'fixed' | 'percentage' | 'solana' | 'evm' | 'stellar'
   ) => {
     const updated = [...beneficiaries]
     const oldBeneficiary = updated[index]
@@ -332,7 +302,7 @@ export default function CreatePage() {
     }
 
     if (!validateBeneficiaryAddresses(beneficiaries)) {
-      alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x...).')
+      alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x..., Stellar: G...).')
       return false
     }
 
@@ -1142,7 +1112,7 @@ export default function CreatePage() {
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'solana')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain !== 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'solana' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
                                 {tokenAssetUnit}
                               </button>
@@ -1153,20 +1123,33 @@ export default function CreatePage() {
                               >
                                 EVM
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => updateBeneficiary(index, 'chain', 'stellar')}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'stellar' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                              >
+                                Stellar
+                              </button>
                             </div>
                             <input
                               type="text"
                               value={beneficiary.address}
                               onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
-                              placeholder={beneficiary.chain === 'evm' ? '0xEvmAddress...' : 'Solana address...'}
+                              placeholder={
+                                beneficiary.chain === 'evm'
+                                  ? '0xEvmAddress...'
+                                  : beneficiary.chain === 'stellar'
+                                    ? 'G... Stellar public key'
+                                    : 'Solana address...'
+                              }
                               className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                             />
-                            {beneficiary.chain === 'evm' && (
+                            {beneficiary.chain !== 'solana' && (
                               <input
                                 type="text"
                                 value={beneficiary.destinationChainSelector || ''}
                                 onChange={(e) => updateBeneficiary(index, 'destinationChainSelector', e.target.value.trim())}
-                                placeholder="Destination chain selector (default: Ethereum Sepolia)"
+                                placeholder={beneficiary.chain === 'evm' ? 'Destination chain selector (default: Ethereum Sepolia)' : 'Optional Stellar memo or settlement route hint'}
                                 className="mt-2 w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-xs text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                               />
                             )}
@@ -1209,7 +1192,11 @@ export default function CreatePage() {
                         </div>
                         {beneficiary.address && !isValidBeneficiaryAddress(beneficiary) && (
                           <p className="text-xs text-red-400">
-                            {beneficiary.chain === 'evm' ? 'Invalid EVM address (0x...)' : 'Invalid Solana address'}
+                            {beneficiary.chain === 'evm'
+                              ? 'Invalid EVM address (0x...)'
+                              : beneficiary.chain === 'stellar'
+                                ? 'Invalid Stellar public key (G...)'
+                                : 'Invalid Solana address'}
                           </p>
                         )}
                         {beneficiary.address && beneficiary.amount && totalAmount && (

@@ -178,6 +178,8 @@ export default function CapsuleDetailPage() {
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [creDispatchLoading, setCreDispatchLoading] = useState(false)
   const [creDispatchResult, setCreDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [stellarSettlementLoading, setStellarSettlementLoading] = useState(false)
+  const [stellarSettlementResult, setStellarSettlementResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [distributionComplete, setDistributionComplete] = useState(false)
 
   const isOwner = Boolean(wallet.connected && wallet.publicKey && capsule?.owner && capsule.owner.equals(wallet.publicKey))
@@ -298,6 +300,38 @@ export default function CapsuleDetailPage() {
     }
   }
 
+  const handleStellarSettlement = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule || !wallet.signMessage) return
+    setStellarSettlementLoading(true)
+    setStellarSettlementResult(null)
+    try {
+      const owner = wallet.publicKey.toBase58()
+      const timestamp = Date.now()
+      const message = buildCreSignedMessage({
+        action: 'stellar-settlement',
+        owner,
+        capsuleAddress: capsule.capsuleAddress,
+        timestamp,
+      })
+      const signature = bytesToBase64(await wallet.signMessage(new TextEncoder().encode(message)))
+      const res = await fetch('/api/stellar/settlement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cre-signature': signature },
+        body: JSON.stringify({ capsule: capsule.capsuleAddress, owner, timestamp }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Stellar settlement failed')
+      setStellarSettlementResult({
+        type: 'success',
+        message: `Stellar settlement ${data.status || 'queued'} (${data.queuedCount || 0} beneficiary entries)`,
+      })
+    } catch (err: any) {
+      setStellarSettlementResult({ type: 'error', message: err.message || 'Stellar settlement failed' })
+    } finally {
+      setStellarSettlementLoading(false)
+    }
+  }
+
   const intentParsed = useMemo(() => {
     if (!capsule?.intentData) return null
     return parseIntentData(capsule.intentData)
@@ -315,6 +349,9 @@ export default function CapsuleDetailPage() {
     creConfig.secretHash &&
     (creConfig.recipientEmailHash || creConfig.recipientEmail)
   )
+  const stellarBeneficiaries = isToken && Array.isArray(intentParsed?.beneficiaries)
+    ? intentParsed.beneficiaries.filter((beneficiary: any) => beneficiary?.chain === 'stellar' && beneficiary?.address?.trim())
+    : []
 
   useEffect(() => {
     if (!address) {
@@ -812,6 +849,7 @@ export default function CapsuleDetailPage() {
             const canUndelegate = Boolean(isDelegated)
             const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
             const canDispatchCre = Boolean(isExecuted && isDistributed && isCreEnabled && !isCreDelivered)
+            const canQueueStellar = Boolean(isExecuted && isDistributed && stellarBeneficiaries.length > 0)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
 
             const steps = [
@@ -851,6 +889,11 @@ export default function CapsuleDetailPage() {
                   {isDistributed && isCreEnabled && !isCreDelivered && (
                     <p className="text-sm text-Heres-accent">
                       Assets already reached the beneficiary. Proceed to <strong>Deliver Intent Statement</strong> via CRE.
+                    </p>
+                  )}
+                  {isDistributed && stellarBeneficiaries.length > 0 && (
+                    <p className="text-sm text-cyan-300">
+                      Solana-side distribution is complete. Queue the off-chain <strong>Stellar settlement</strong> for cross-network beneficiaries.
                     </p>
                   )}
                   {isExecuted && !isDistributed && !allDone && !isDelegated && (
@@ -955,6 +998,17 @@ export default function CapsuleDetailPage() {
                       {creDispatchLoading ? 'Dispatching...' : 'Deliver Intent Statement'}
                     </button>
                   )}
+                  {stellarBeneficiaries.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleStellarSettlement}
+                      disabled={!canQueueStellar || stellarSettlementLoading || !!actionLoading}
+                      title={!canQueueStellar ? 'Distribute assets on Solana first' : 'Queue Stellar settlement payload for off-chain execution'}
+                      className="rounded-lg border border-cyan-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20"
+                    >
+                      {stellarSettlementLoading ? 'Queueing...' : 'Queue Stellar Settlement'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Result messages */}
@@ -974,6 +1028,15 @@ export default function CapsuleDetailPage() {
                       : 'border-red-500/30 bg-red-500/10 text-red-400'
                   }`}>
                     {creDispatchResult.message}
+                  </div>
+                )}
+                {stellarSettlementResult && (
+                  <div className={`mt-3 rounded-lg border p-3 text-sm break-all ${
+                    stellarSettlementResult.type === 'success'
+                      ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                      : 'border-red-500/30 bg-red-500/10 text-red-400'
+                  }`}>
+                    {stellarSettlementResult.message}
                   </div>
                 )}
               </ServiceSection>
