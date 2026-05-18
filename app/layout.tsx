@@ -32,7 +32,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: 'Heres - Privacy-Preserving Capsule Protocol on Solana',
   description:
-    'A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth. Powered by Helius & Phantom.',
+    'A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth. Powered by Alchemy & Phantom.',
   manifest: '/manifest.json',
   icons: {
     icon: [{ url: '/logo-white.png', type: 'image/png' }],

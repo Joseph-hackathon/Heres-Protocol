@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const items = SOLANA_CONFIG.ALCHEMY_API_KEY
       ? await getAlchemyAssetsByOwner(wallet)
       : await getNftsByOwner(wallet)
+
     return NextResponse.json({ items })
   } catch (error: any) {
     return NextResponse.json(

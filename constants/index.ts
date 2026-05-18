@@ -37,6 +37,11 @@ function getDefaultHeliusApiBaseUrl(network: SolanaNetwork): string {
   return `https://api-${subdomain}.helius-rpc.com/v0`
 }
 
+function getDefaultAlchemyRpcUrl(network: SolanaNetwork, apiKey: string): string {
+  const subdomain = network === 'mainnet-beta' ? 'mainnet' : network
+  return `https://solana-${subdomain}.g.alchemy.com/v2/${apiKey}`
+}
+
 export function getAssetMintEnvKey(symbol: string): string {
   return `NEXT_PUBLIC_${symbol}_MINT`
 }
@@ -92,6 +97,7 @@ export function getNetworkDisplayLabel(network = SOLANA_CONFIG.NETWORK): string 
 export const SOLANA_CONFIG = {
   NETWORK: normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK),
   PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW',
+  ALCHEMY_API_KEY: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || '',
   HELIUS_API_KEY: process.env.NEXT_PUBLIC_HELIUS_API_KEY || '',
   RPC_URL: process.env.SOLANA_RPC_URL || '',
   FALLBACK_RPC_URL:
@@ -103,11 +109,19 @@ export const SOLANA_CONFIG = {
   CRANK_WALLET_PUBLIC_KEY: process.env.NEXT_PUBLIC_CRANK_WALLET_PUBLIC_KEY || '8DzPUhZ8Jd6Rfu9R7QWuZ7gMBjdrnrjH22FHyfDUPeHW',
 } as const
 
+export const ALCHEMY_CONFIG = {
+  RPC_URL: SOLANA_CONFIG.ALCHEMY_API_KEY
+    ? getDefaultAlchemyRpcUrl(SOLANA_CONFIG.NETWORK, SOLANA_CONFIG.ALCHEMY_API_KEY)
+    : '',
+} as const
+
 // Helius API Configuration
 export const HELIUS_CONFIG = {
   BASE_URL: getDefaultHeliusApiBaseUrl(SOLANA_CONFIG.NETWORK),
   RPC_URL: SOLANA_CONFIG.RPC_URL
     ? SOLANA_CONFIG.RPC_URL
+    : SOLANA_CONFIG.ALCHEMY_API_KEY
+      ? getDefaultAlchemyRpcUrl(SOLANA_CONFIG.NETWORK, SOLANA_CONFIG.ALCHEMY_API_KEY)
     : SOLANA_CONFIG.HELIUS_API_KEY
       ? getDefaultHeliusRpcUrl(SOLANA_CONFIG.NETWORK, SOLANA_CONFIG.HELIUS_API_KEY)
       : getDefaultSolanaRpcUrl(SOLANA_CONFIG.NETWORK),
