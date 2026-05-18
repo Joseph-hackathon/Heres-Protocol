@@ -1112,9 +1112,16 @@ export default function CreatePage() {
                               <button
                                 type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'solana')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain !== 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'solana' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
                                 {tokenAssetUnit}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateBeneficiary(index, 'chain', 'stellar')}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'stellar' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                              >
+                                Stellar
                               </button>
                               <button
                                 type="button"
@@ -1128,15 +1135,25 @@ export default function CreatePage() {
                               type="text"
                               value={beneficiary.address}
                               onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
-                              placeholder={beneficiary.chain === 'evm' ? '0xEvmAddress...' : 'Solana address...'}
+                              placeholder={
+                                beneficiary.chain === 'evm'
+                                  ? '0xEvmAddress...'
+                                  : beneficiary.chain === 'stellar'
+                                    ? 'G... Stellar public key'
+                                    : 'Solana address...'
+                              }
                               className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                             />
-                            {beneficiary.chain === 'evm' && (
+                            {(beneficiary.chain === 'evm' || beneficiary.chain === 'stellar') && (
                               <input
                                 type="text"
                                 value={beneficiary.destinationChainSelector || ''}
                                 onChange={(e) => updateBeneficiary(index, 'destinationChainSelector', e.target.value.trim())}
-                                placeholder="Destination chain selector (default: Ethereum Sepolia)"
+                                placeholder={
+                                  beneficiary.chain === 'evm'
+                                    ? 'Destination chain selector (default: Ethereum Sepolia)'
+                                    : 'Stellar memo / route hint (optional)'
+                                }
                                 className="mt-2 w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-xs text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                               />
                             )}
@@ -1179,7 +1196,11 @@ export default function CreatePage() {
                         </div>
                         {beneficiary.address && !isValidBeneficiaryAddress(beneficiary) && (
                           <p className="text-xs text-red-400">
-                            {beneficiary.chain === 'evm' ? 'Invalid EVM address (0x...)' : 'Invalid Solana address'}
+                            {beneficiary.chain === 'evm'
+                              ? 'Invalid EVM address (0x...)'
+                              : beneficiary.chain === 'stellar'
+                                ? 'Invalid Stellar public key (G...)'
+                                : 'Invalid Solana address'}
                           </p>
                         )}
                         {beneficiary.address && beneficiary.amount && totalAmount && (
