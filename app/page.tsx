@@ -149,7 +149,7 @@ export default async function HomePage() {
   const landingStats = await getLandingStats()
 
   return (
-    <div className="landing-aurora bg-[#060916] text-Heres-white">
+    <div className="landing-aurora bg-Heres-navyDeep text-Heres-white">
       <section className="relative overflow-hidden px-4 pt-32 pb-24 sm:px-6 lg:px-8">
         <div className="landing-grid pointer-events-none absolute inset-0 opacity-70" />
         <div className="landing-noise pointer-events-none absolute inset-0 opacity-20" />

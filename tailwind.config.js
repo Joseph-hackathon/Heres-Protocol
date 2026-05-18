@@ -10,6 +10,8 @@ module.exports = {
       colors: {
         Heres: {
           bg: '#050816',
+          navy: '#0d142d',
+          navyDeep: '#0a1022',
           surface: '#0c1024',
           card: '#111832',
           border: 'rgba(34, 211, 238, 0.15)',
