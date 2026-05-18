@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Copy, RefreshCw, Shield } from 'lucide-react'
+import { Copy, FileDown, Lock, RefreshCw, Shield } from 'lucide-react'
 import {
   getCapsuleByAddress,
   executeIntent,
@@ -20,6 +20,8 @@ import { parseIntentPayload, formatDuration } from '@/utils/intent'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64 } from '@/utils/creCrypto'
 import { inferAssetConfig } from '@/lib/assets'
+import { getCapsuleDetailAccess } from '@/lib/capsule-privacy'
+import { buildSimplePdf } from '@/utils/pdf'
 import {
   XAxis,
   YAxis,
@@ -152,9 +154,13 @@ function timeAgo(ms: number | null) {
   return `${Math.floor(h / 24)}d ago`
 }
 
+function formatDateTime(value: number | null | undefined): string {
+  if (!value) return '—'
+  return new Date(value).toLocaleString()
+}
+
 export default function CapsuleDetailPage() {
   const params = useParams()
-  const router = useRouter()
   const wallet = useWallet()
   const address = typeof params?.address === 'string' ? params.address : null
   const [capsule, setCapsule] = useState<Awaited<ReturnType<typeof getCapsuleByAddress>>>(null)
@@ -175,6 +181,7 @@ export default function CapsuleDetailPage() {
   const [creDeliveryLoading, setCreDeliveryLoading] = useState(false)
   const [creDeliveryError, setCreDeliveryError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [exportLoading, setExportLoading] = useState(false)
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [creDispatchLoading, setCreDispatchLoading] = useState(false)
   const [creDispatchResult, setCreDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -298,6 +305,47 @@ export default function CapsuleDetailPage() {
     }
   }
 
+  const handleExportPdf = async () => {
+    if (!capsule || !canExportPdf) return
+    setExportLoading(true)
+    try {
+      const releaseAt = detailAccess.releaseAtMs
+      const lines = [
+        `Capsule ID: ${capsule.capsuleAddress}`,
+        `Viewer role: ${detailAccess.role}`,
+        `Owner: ${capsule.owner.toBase58()}`,
+        `Asset: ${assetConfig.symbol}`,
+        `Intent type: ${isNft ? 'NFT' : 'Token'}`,
+        `Status: ${capsule.executedAt ? 'Executed' : capsule.isActive ? 'Active' : 'Waiting'}`,
+        `Last activity: ${formatDateTime(capsule.lastActivity ? capsule.lastActivity * 1000 : null)}`,
+        `Executed at: ${formatDateTime(capsule.executedAt ? capsule.executedAt * 1000 : null)}`,
+        `Beneficiary release: ${formatDateTime(releaseAt)}`,
+        `Delegated: ${isDelegated ? 'yes' : 'no'}`,
+        `Distribution complete: ${distributionComplete ? 'yes' : 'no'}`,
+        `CRE enabled: ${isCreEnabled ? 'yes' : 'no'}`,
+        `CRE delivery status: ${creDeliveryStatus?.status || 'pending'}`,
+        `Intent: ${intentParsed?.intent || 'No decoded intent'}`,
+        isToken && intentParsed && 'totalAmount' in intentParsed
+          ? `Total amount: ${intentParsed.totalAmount || '—'} ${assetConfig.symbol}`
+          : `NFT recipients: ${isNft && intentParsed && 'nftRecipients' in intentParsed ? intentParsed.nftRecipients?.length || 0 : 0}`,
+        `Beneficiaries: ${detailAccess.beneficiaryAddresses.join(', ') || '—'}`,
+      ]
+
+      const pdfBytes = buildSimplePdf('Heres Capsule Execution Report', lines)
+      const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength)
+      new Uint8Array(pdfBuffer).set(pdfBytes)
+      const blob = new Blob([pdfBuffer], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `capsule-report-${capsule.capsuleAddress.slice(0, 12)}.pdf`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setExportLoading(false)
+    }
+  }
+
   const intentParsed = useMemo(() => {
     if (!capsule?.intentData) return null
     return parseIntentData(capsule.intentData)
@@ -315,6 +363,26 @@ export default function CapsuleDetailPage() {
     creConfig.secretHash &&
     (creConfig.recipientEmailHash || creConfig.recipientEmail)
   )
+  const detailAccess = useMemo(() => {
+    if (!capsule?.owner) {
+      return {
+        role: 'none' as const,
+        releaseAtMs: null,
+        beneficiaryAddresses: [],
+        reason: 'Capsule owner is unavailable.',
+      }
+    }
+
+    return getCapsuleDetailAccess({
+      ownerAddress: capsule.owner.toBase58(),
+      viewerAddress: wallet.publicKey?.toBase58() || null,
+      executedAtSeconds: capsule.executedAt,
+      intent: intentParsed ?? undefined,
+    })
+  }, [capsule?.owner, capsule?.executedAt, intentParsed, wallet.publicKey])
+  const canViewPrivateDetails = detailAccess.role === 'owner' || detailAccess.role === 'beneficiary'
+  const canExportPdf = Boolean(canViewPrivateDetails && capsule?.executedAt)
+  const isDelegated = capsule?.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
 
   useEffect(() => {
     if (!address) {
@@ -589,7 +657,6 @@ export default function CapsuleDetailPage() {
       : capsule.lastActivity + capsule.inactivityPeriod < Math.floor(Date.now() / 1000)
         ? 'Expired'
         : 'Active'
-  const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
   const lastUpdatedMs = capsule.lastActivity ? capsule.lastActivity * 1000 : null
 
   return (
@@ -639,26 +706,36 @@ export default function CapsuleDetailPage() {
             </ServiceMetaCard>
             <ServiceMetaCard label="Capsule ID">
               <div className="flex items-center gap-1">
-                <a
-                  href={getExplorerUrl('address', capsule.capsuleAddress)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-mono text-Heres-accent truncate min-w-0 hover:underline"
-                  title={capsule.capsuleAddress}
-                >
-                  {maskAddress(capsule.capsuleAddress)}
-                </a>
-                <CopyButton value={capsule.capsuleAddress} />
+                {canViewPrivateDetails ? (
+                  <>
+                    <a
+                      href={getExplorerUrl('address', capsule.capsuleAddress)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-mono text-Heres-accent truncate min-w-0 hover:underline"
+                      title={capsule.capsuleAddress}
+                    >
+                      {maskAddress(capsule.capsuleAddress)}
+                    </a>
+                    <CopyButton value={capsule.capsuleAddress} />
+                  </>
+                ) : (
+                  <p className="text-sm font-mono text-Heres-muted truncate min-w-0" title="Protected capsule identifier">
+                    {maskAddress(capsule.capsuleAddress)}
+                  </p>
+                )}
               </div>
             </ServiceMetaCard>
-            <ServiceMetaCard label="Owner">
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.owner.toBase58()}>
-                  {maskAddress(capsule.owner.toBase58())}
-                </p>
-                <CopyButton value={capsule.owner.toBase58()} />
-              </div>
-            </ServiceMetaCard>
+            {canViewPrivateDetails && (
+              <ServiceMetaCard label="Owner">
+                <div className="flex items-center gap-1">
+                  <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.owner.toBase58()}>
+                    {maskAddress(capsule.owner.toBase58())}
+                  </p>
+                  <CopyButton value={capsule.owner.toBase58()} />
+                </div>
+              </ServiceMetaCard>
+            )}
             <ServiceMetaCard label="Program ID">
               <div className="flex items-center gap-1">
                 <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={getProgramId().toBase58()}>
@@ -680,7 +757,58 @@ export default function CapsuleDetailPage() {
             <ServiceMetaCard label="Retries">
               <p className="text-sm font-mono text-Heres-white">{(capsule as any).retryCount?.toString() || '0'}</p>
             </ServiceMetaCard>
+            <ServiceMetaCard label="Privacy">
+              <div className="flex items-center gap-2 text-sm">
+                <Lock className="h-4 w-4 text-Heres-accent" />
+                <span className={canViewPrivateDetails ? 'text-Heres-accent' : 'text-Heres-muted'}>
+                  {canViewPrivateDetails ? `${detailAccess.role} access` : 'locked'}
+                </span>
+              </div>
+            </ServiceMetaCard>
           </ServiceMetaGrid>
+
+          {canExportPdf && (
+            <div className="mb-6 flex justify-end">
+              <button
+                type="button"
+                onClick={handleExportPdf}
+                disabled={exportLoading}
+                className="inline-flex items-center gap-2 rounded-lg border border-Heres-accent/40 bg-Heres-accent/10 px-4 py-2 text-sm font-medium text-Heres-accent transition-colors hover:bg-Heres-accent/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <FileDown className="h-4 w-4" />
+                {exportLoading ? 'Exporting PDF...' : 'Export PDF Report'}
+              </button>
+            </div>
+          )}
+
+          {!canViewPrivateDetails && (
+            <ServiceSection
+              title={
+                <span className="flex items-center gap-2">
+                  <Lock className="h-4 w-4 text-Heres-accent" />
+                  Private Detail Access
+                </span>
+              }
+              description="Capsule details are access-controlled on the My Capsule page."
+              className="mb-6"
+              tone="warning"
+            >
+              <div className="rounded-xl border border-Heres-border/50 bg-Heres-surface/30 p-4">
+                <p className="text-sm text-Heres-white">{detailAccess.reason}</p>
+                {detailAccess.releaseAtMs && (
+                  <p className="mt-2 text-xs text-Heres-muted">
+                    Beneficiary release window: {formatDateTime(detailAccess.releaseAtMs)}
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-Heres-muted">
+                  Explorer-safe mode is active. Detailed addresses, transaction navigation, and intent contents stay hidden until the authorized viewer connects.
+                </p>
+              </div>
+            </ServiceSection>
+          )}
+
+          {canViewPrivateDetails && (
+            <>
 
           {/* Privacy & Delegation (PER / TEE) */}
           <ServiceSection
@@ -1055,6 +1183,8 @@ export default function CapsuleDetailPage() {
               </div>
             )}
           </ServiceSection>
+          </>
+          )}
 
         </div>
       </main>
