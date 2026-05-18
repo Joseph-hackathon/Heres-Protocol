@@ -7,7 +7,7 @@ import { SupportedAssetSymbol } from '@/lib/assets'
 
 // Beneficiary types
 export interface Beneficiary {
-  chain: 'solana' | 'evm'
+  chain: 'solana' | 'evm' | 'stellar'
   address: string
   amount: string
   amountType: 'fixed' | 'percentage'

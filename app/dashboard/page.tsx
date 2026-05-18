@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Copy,
   Database,
+  Lock,
   RefreshCw,
   Settings,
   Signal,
@@ -405,6 +406,7 @@ export default function DashboardPage() {
   const [zkPublicInputsHash, setZkPublicInputsHash] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [privateMode, setPrivateMode] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [feeConfigExists, setFeeConfigExists] = useState<boolean | null>(null)
   const [initFeePending, setInitFeePending] = useState(false)
@@ -1015,16 +1017,30 @@ export default function DashboardPage() {
                 <span className="rounded-lg border border-Heres-border bg-Heres-card/70 px-2.5 py-1 text-xs font-medium text-Heres-accent">
                   {formatNumber(summary.total)} Capsules
                 </span>
-                <a
-                  href={getExplorerUrl('address', programIdStr)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-xs font-medium text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent"
-                  title={programIdStr}
-                >
-                  <span className="uppercase tracking-wider text-[10px]">Program ID</span>
-                  <span className="font-mono text-Heres-white">{maskAddress(programIdStr)}</span>
-                </a>
+                <span className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-xs font-medium text-Heres-muted">
+                  <Lock className="h-3.5 w-3.5 text-Heres-accent" />
+                  {privateMode ? 'Private explorer mode' : 'Public explorer mode'}
+                </span>
+                {privateMode ? (
+                  <div
+                    className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-xs font-medium text-Heres-muted"
+                    title={programIdStr}
+                  >
+                    <span className="uppercase tracking-wider text-[10px]">Program ID</span>
+                    <span className="font-mono text-Heres-white">{maskAddress(programIdStr)}</span>
+                  </div>
+                ) : (
+                  <a
+                    href={getExplorerUrl('address', programIdStr)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-xs font-medium text-Heres-muted transition-colors hover:border-Heres-accent/40 hover:text-Heres-accent"
+                    title={programIdStr}
+                  >
+                    <span className="uppercase tracking-wider text-[10px]">Program ID</span>
+                    <span className="font-mono text-Heres-white">{maskAddress(programIdStr)}</span>
+                  </a>
+                )}
               </>
             }
             actions={
@@ -1194,6 +1210,17 @@ export default function DashboardPage() {
                   {formatNumber(filteredCapsules.length)} records
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPrivateMode((value) => !value)}
+                    className={`rounded-lg border px-3 py-2 text-xs whitespace-nowrap transition ${
+                      privateMode
+                        ? 'border-Heres-accent/40 bg-Heres-accent/10 text-Heres-accent'
+                        : 'border-Heres-border bg-Heres-surface/80 text-Heres-muted hover:border-Heres-accent/40 hover:text-Heres-white'
+                    }`}
+                  >
+                    {privateMode ? 'Private Mode On' : 'Private Mode Off'}
+                  </button>
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
@@ -1242,7 +1269,7 @@ export default function DashboardPage() {
                           <span className="font-mono text-Heres-muted break-all max-w-full min-w-0">
                             {capsule.signature ? maskAddress(capsule.signature) : '...'}
                           </span>
-                          {capsule.signature && <CopyButton value={capsule.signature} />}
+                          {!privateMode && capsule.signature && <CopyButton value={capsule.signature} />}
                         </div>
                         <div className="grid gap-2 text-xs text-Heres-muted md:grid-cols-3">
                           <div>
@@ -1251,7 +1278,7 @@ export default function DashboardPage() {
                               <p className="font-mono text-Heres-white break-all truncate">
                                 {maskAddress(capsule.capsuleAddress)}
                               </p>
-                              <CopyButton value={capsule.capsuleAddress} />
+                              {!privateMode && <CopyButton value={capsule.capsuleAddress} />}
                             </div>
                           </div>
                           <div>
@@ -1260,7 +1287,7 @@ export default function DashboardPage() {
                               <p className="font-mono text-Heres-white break-all truncate">
                                 {capsule.owner ? maskAddress(capsule.owner) : '...'}
                               </p>
-                              {capsule.owner && <CopyButton value={capsule.owner} />}
+                              {!privateMode && capsule.owner && <CopyButton value={capsule.owner} />}
                             </div>
                           </div>
                           <div>
@@ -1293,7 +1320,7 @@ export default function DashboardPage() {
                         onClick={() => setExpandedId(expandedId === capsule.id ? null : capsule.id)}
                         className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-surface/80 px-4 py-2 text-xs text-Heres-muted transition hover:border-Heres-accent/50 hover:text-Heres-accent"
                       >
-                        Details
+                        {privateMode ? 'Protected Details' : 'Details'}
                         {expandedId === capsule.id ? (
                           <ChevronUp className="w-4 h-4" />
                         ) : (
@@ -1304,6 +1331,12 @@ export default function DashboardPage() {
 
                     {expandedId === capsule.id && (
                       <div className="mt-4 w-full min-w-0 rounded-xl border border-Heres-border bg-Heres-surface/80 px-4 py-4 text-xs text-Heres-muted space-y-4 overflow-hidden">
+                        {privateMode ? (
+                          <div className="rounded-lg border border-Heres-border/70 bg-Heres-card/70 px-4 py-4 text-sm text-Heres-muted">
+                            Detailed capsule internals, transaction signatures, and logs are hidden while private mode is enabled.
+                          </div>
+                        ) : (
+                        <>
                         <div className="grid gap-3 md:grid-cols-2 max-w-full">
                           <div>
                             <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted">Capsule</p>
@@ -1424,6 +1457,8 @@ export default function DashboardPage() {
                             </div>
                           )}
                         </div>
+                        </>
+                        )}
                       </div>
                     )}
                   </div>
