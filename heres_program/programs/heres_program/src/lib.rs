@@ -357,6 +357,26 @@ pub mod heres_program {
                 continue;
             }
 
+            if beneficiary_chain == "stellar" {
+                if to_send > 0 {
+                    let memo = beneficiary
+                        .get("destinationChainSelector")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+
+                    emit!(StellarSettlementRequested {
+                        capsule: ctx.accounts.capsule.key(),
+                        beneficiary_index: idx as u16,
+                        stellar_address: address_str.to_string(),
+                        memo,
+                        amount_lamports: to_send,
+                    });
+                    msg!("Queued Stellar settlement for beneficiary {}: {} lamports", address_str, to_send);
+                }
+                continue;
+            }
+
             if beneficiary_chain != "solana" {
                 return err!(ErrorCode::UnsupportedBeneficiaryChain);
             }
@@ -1177,6 +1197,15 @@ pub struct CcipTransferSent {
     pub beneficiary_index: u16,
     pub evm_address: String,
     pub destination_chain_selector: String,
+    pub amount_lamports: u64,
+}
+
+#[event]
+pub struct StellarSettlementRequested {
+    pub capsule: Pubkey,
+    pub beneficiary_index: u16,
+    pub stellar_address: String,
+    pub memo: String,
     pub amount_lamports: u64,
 }
 

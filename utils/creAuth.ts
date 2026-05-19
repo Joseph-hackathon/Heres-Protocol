@@ -2,6 +2,7 @@ export type CreSignedAction =
   | 'register-secret'
   | 'delivery-status'
   | 'dispatch'
+  | 'stellar-settlement'
   | 'register-reminder'
   | 'reminder-status'
 

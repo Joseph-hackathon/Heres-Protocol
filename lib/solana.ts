@@ -314,7 +314,7 @@ export async function updateIntent(
 export async function executeIntent(
   wallet: WalletContextState,
   ownerPublicKey: PublicKey,
-  beneficiaries?: Array<{ chain?: 'solana' | 'evm'; address: string; amount: string; amountType: string }>,
+  beneficiaries?: Array<{ chain?: 'solana' | 'evm' | 'stellar'; address: string; amount: string; amountType: string }>,
   mint?: PublicKey
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')
@@ -612,7 +612,7 @@ export async function scheduleExecuteIntent(
 export async function distributeAssets(
   wallet: WalletContextState,
   ownerPublicKey: PublicKey,
-  beneficiaries?: Array<{ chain?: 'solana' | 'evm'; address: string; amount: string; amountType: string }>,
+  beneficiaries?: Array<{ chain?: 'solana' | 'evm' | 'stellar'; address: string; amount: string; amountType: string }>,
   mint?: PublicKey
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isValidSolanaAddress } from '@/config/solana'
-import { getNftAssetsByOwner } from '@/lib/solana-data'
+import { getNftsByOwnerViaRpc } from '@/lib/solana-data'
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid wallet address' }, { status: 400 })
     }
 
-    const items = await getNftAssetsByOwner(wallet)
+    const items = await getNftsByOwnerViaRpc(wallet)
     return NextResponse.json({ items })
   } catch (error: any) {
     return NextResponse.json(

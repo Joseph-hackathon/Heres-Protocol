@@ -4,7 +4,6 @@ import { SOLANA_CONFIG } from '@/constants'
 import { getAlchemyAssetsByOwner, type AlchemyNftItem } from '@/lib/alchemy'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-
 const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,128}$/
 
 function isValidSolanaSignature(value: string): boolean {
@@ -12,14 +11,13 @@ function isValidSolanaSignature(value: string): boolean {
 }
 
 function getSignatureFromParsedTx(tx: any): string {
-  return (
-    tx?.transaction?.signatures?.[0] ||
-    tx?.signature ||
-    ''
-  )
+  return tx?.transaction?.signatures?.[0] || tx?.signature || ''
 }
 
-function buildTokenTransfers(meta: any, transaction: any): Array<{ mint: string; fromUserAccount?: string; toUserAccount?: string; tokenAmount?: number }> {
+function buildTokenTransfers(
+  meta: any,
+  transaction: any
+): Array<{ mint: string; fromUserAccount?: string; toUserAccount?: string; tokenAmount?: number }> {
   const pre = Array.isArray(meta?.preTokenBalances) ? meta.preTokenBalances : []
   const post = Array.isArray(meta?.postTokenBalances) ? meta.postTokenBalances : []
   const accountKeys = transaction?.message?.accountKeys || []
@@ -63,10 +61,14 @@ export async function getEnhancedTransactions(
   try {
     const connection = getSolanaConnection()
     const pubkey = new PublicKey(address)
-    const signatures = await connection.getSignaturesForAddress(pubkey, {
-      limit,
-      ...(before && isValidSolanaSignature(before) ? { before } : {}),
-    }, 'confirmed')
+    const signatures = await connection.getSignaturesForAddress(
+      pubkey,
+      {
+        limit,
+        ...(before && isValidSolanaSignature(before) ? { before } : {}),
+      },
+      'confirmed'
+    )
 
     if (!signatures.length) return []
 
@@ -98,6 +100,88 @@ export async function getEnhancedTransactions(
       .filter(Boolean)
   } catch (error) {
     console.error('Solana RPC transaction fetch error:', error)
+    return []
+  }
+}
+
+export type AddressTransaction = {
+  signature: string
+  blockTime: number | null
+  err: unknown
+  tokenTransfers: Array<{ mint: string; delta: string }>
+}
+
+function extractTokenTransfers(tx: any): Array<{ mint: string; delta: string }> {
+  const preBalances = Array.isArray(tx?.meta?.preTokenBalances) ? tx.meta.preTokenBalances : []
+  const postBalances = Array.isArray(tx?.meta?.postTokenBalances) ? tx.meta.postTokenBalances : []
+  const balances = new Map<string, { mint: string; pre: bigint; post: bigint }>()
+
+  for (const entry of preBalances) {
+    const key = `${entry.accountIndex}:${entry.mint}`
+    balances.set(key, {
+      mint: String(entry.mint || ''),
+      pre: BigInt(entry.uiTokenAmount?.amount || '0'),
+      post: 0n,
+    })
+  }
+
+  for (const entry of postBalances) {
+    const key = `${entry.accountIndex}:${entry.mint}`
+    const existing = balances.get(key)
+    balances.set(key, {
+      mint: String(entry.mint || existing?.mint || ''),
+      pre: existing?.pre || 0n,
+      post: BigInt(entry.uiTokenAmount?.amount || '0'),
+    })
+  }
+
+  return Array.from(balances.values())
+    .map((entry) => ({ mint: entry.mint, delta: (entry.post - entry.pre).toString() }))
+    .filter((entry) => entry.mint && entry.delta !== '0')
+}
+
+export async function getAddressTransactionsViaRpc(
+  address: string,
+  limit = 100,
+  before?: string
+): Promise<AddressTransaction[]> {
+  try {
+    const connection = getSolanaConnection()
+    const pubkey = new PublicKey(address)
+    const signatures = await connection.getSignaturesForAddress(
+      pubkey,
+      {
+        limit,
+        ...(before && isValidSolanaSignature(before) ? { before } : {}),
+      },
+      'confirmed'
+    )
+
+    return Promise.all(
+      signatures.map(async (signatureInfo) => {
+        try {
+          const tx = await connection.getTransaction(signatureInfo.signature, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          })
+          return {
+            signature: signatureInfo.signature,
+            blockTime: signatureInfo.blockTime ?? tx?.blockTime ?? null,
+            err: signatureInfo.err ?? tx?.meta?.err ?? null,
+            tokenTransfers: extractTokenTransfers(tx),
+          }
+        } catch {
+          return {
+            signature: signatureInfo.signature,
+            blockTime: signatureInfo.blockTime ?? null,
+            err: signatureInfo.err ?? null,
+            tokenTransfers: [],
+          }
+        }
+      })
+    )
+  } catch (error) {
+    console.error('Solana RPC address transaction fetch error:', error)
     return []
   }
 }
@@ -134,4 +218,8 @@ export async function getNftAssetsByOwner(ownerAddress: string): Promise<Alchemy
     console.error('Solana RPC NFT owner lookup error:', error)
     return []
   }
+}
+
+export async function getNftsByOwnerViaRpc(ownerAddress: string): Promise<AlchemyNftItem[]> {
+  return getNftAssetsByOwner(ownerAddress)
 }

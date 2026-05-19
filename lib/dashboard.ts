@@ -1,7 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js'
 import { Redis } from '@upstash/redis'
 import { getProgramId, getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
-import { HELIUS_CONFIG, MAGICBLOCK_ER } from '@/constants'
+import { MAGICBLOCK_ER } from '@/constants'
 import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 import { getRegisteredOwners, registerCapsuleOwner } from '@/lib/capsule-registry'
 import { parseIntentPayload } from '@/utils/intent'

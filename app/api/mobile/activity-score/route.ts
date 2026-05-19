@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getEnhancedTransactions } from '@/lib/solana-data'
 import { buildActivityScore, validateWalletQuery } from '@/lib/mobile'
+import { getAddressTransactionsViaRpc } from '@/lib/solana-data'
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: validation.error }, { status: 400 })
     }
 
-    const txs = await getEnhancedTransactions(wallet!, 100)
+    const txs = await getAddressTransactionsViaRpc(wallet!, 100)
     const response = buildActivityScore(wallet!, txs)
     return NextResponse.json(response)
   } catch (error: any) {

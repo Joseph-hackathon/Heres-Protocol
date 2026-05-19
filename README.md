@@ -108,14 +108,14 @@ For capsules that were **not** delegated, a cron job calls `execute_intent` for 
 
 ---
 
-## How we use Solana, Magicblock, Chainlink, and Helius
+## How we use Solana, Magicblock, Chainlink, and Alchemy
 
 | Provider | How we use it | Integration Details |
 |--------|----------------|---------------|
 | **Solana** | The **Heres program** deployed on Devnet acts as the immutable registry. It handles capsule accounts, PDAs for the vault, execution instructions, and stores delegation parameters. | **Contract:** `heres_program` |
 | **Magicblock** | We use **Ephemeral Rollups (ER)** and **Private Ephemeral Rollup (PER / TEE)** for private condition monitoring. The private runtime evaluates inactivity without exposing logic on the public ledger. | **App:** `lib/solana.ts`, `lib/tee.ts` |
 | **Chainlink** | We integrate the **Chainlink Runtime Environment (CRE)** as a Confidential Bridge. It acts as an isolated TEE vault to retrieve, decrypt, and deliver our client-side encrypted *Intent Statements* to an email provider, and callbacks execution status without exposing secrets to our core backend. | **App:** `lib/cre/`, `/api/cre/dispatch` |
-| **Helius** | We use Helius for **RPC** (primary Solana connection), **Enhanced Transactions API** for the dashboard, and **DAS API** for NFT listings. | **App:** `lib/helius.ts`, `config/solana.ts` |
+| **Alchemy / RPC** | We use direct Solana RPC plus Alchemy-backed RPC where configured for account fetches, dashboard indexing, and NFT inventory reads. | **App:** `config/solana.ts`, `lib/solana-data.ts` |
 
 ---
 
@@ -151,12 +151,12 @@ For capsules that were **not** delegated, a cron job calls `execute_intent` for 
 Heres-Protocol/
 ├── app/                 # Next.js app (landing, create, capsules, dashboard)
 ├── components/          # Reusable UI components
-├── config/              # Solana & Helius connection configurations
+├── config/              # Solana connection configurations
 ├── constants/           # Program ID, Magicblock endpoints, CRE variables
 ├── heres-cre/           # Chainlink CRE Delivery Workflow scripts & config
 ├── heres_program/       # Anchor program (Rust) smart contract
 ├── idl/                 # heres_program.json IDL
-├── lib/                 # Core utilities (solana.ts, helius.ts, crank.ts, tee.ts)
+├── lib/                 # Core utilities (solana.ts, solana-data.ts, crank.ts, tee.ts)
 │   └── cre/             # CRE crypto, auth, and dispatch logic
 └── scripts/             # CRE testing & local environment scripts
 ```
@@ -176,7 +176,7 @@ Heres-Protocol/
    Create `.env.local`:
    ```env
    NEXT_PUBLIC_SOLANA_NETWORK=devnet
-   NEXT_PUBLIC_HELIUS_API_KEY=your_helius_api_key
+   NEXT_PUBLIC_SOLANA_RPC_URL=your_alchemy_or_custom_rpc_url
    NEXT_PUBLIC_PROGRAM_ID=BiAB1qZpx8kDgS5dJxKFdCJDNMagCn8xfj4afNhRZWms
    
    # Chainlink CRE Webhook settings

@@ -79,3 +79,28 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
   })
   assert.equal(expired, false)
 })
+
+test('verifyCreSignedRequest supports stellar settlement actions', () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+  const spki = publicKey.export({ format: 'der', type: 'spki' })
+  const owner = bs58.encode(spki.subarray(spki.length - 32))
+  const timestamp = Date.now()
+
+  const message = buildCreSignedMessage({
+    action: 'stellar-settlement',
+    owner,
+    timestamp,
+    capsuleAddress: 'capsule-stellar-1',
+  })
+  const signature = sign(null, Buffer.from(message, 'utf8'), privateKey).toString('base64')
+
+  const valid = verifyCreSignedRequest({
+    action: 'stellar-settlement',
+    owner,
+    timestamp,
+    capsuleAddress: 'capsule-stellar-1',
+    signatureBase64: signature,
+  })
+
+  assert.equal(valid, true)
+})

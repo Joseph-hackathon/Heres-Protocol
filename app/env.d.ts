@@ -5,6 +5,8 @@ declare namespace NodeJS {
   interface ProcessEnv {
     NEXT_PUBLIC_SOLANA_NETWORK?: string
     NEXT_PUBLIC_ALCHEMY_API_KEY?: string
+    NEXT_PUBLIC_SOLANA_RPC_URL?: string
+    NEXT_PUBLIC_SOLANA_RPC_URL?: string
     NEXT_PUBLIC_HELIUS_API_KEY?: string
     NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL?: string
     SOLANA_RPC_URL?: string
@@ -23,6 +25,7 @@ declare namespace NodeJS {
     CHAINLINK_CRE_REMINDER_API_KEY?: string
     CHAINLINK_CRE_REMINDER_SIGNING_SECRET?: string
     CHAINLINK_CRE_REMINDER_CALLBACK_SECRET?: string
+    STELLAR_SETTLEMENT_WEBHOOK_URL?: string
     MOCK_CRE_AUTO_CALLBACK?: string
     MOCK_CRE_FORCE_FAIL?: string
     MOCK_CRE_CALLBACK_BASE_URL?: string

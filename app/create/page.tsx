@@ -116,7 +116,6 @@ export default function CreatePage() {
   const [creUnlockCode, setCreUnlockCode] = useState('')
   const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
-<<<<<<< HEAD
   // Fetch wallet NFTs when NFT path is selected (Alchemy first, fallback provider next, else RPC)
   useEffect(() => {
     if (capsuleType !== 'nft' || !publicKey || !connected) return
@@ -146,7 +145,6 @@ export default function CreatePage() {
       } finally {
         if (!cancelled) setNftListLoading(false)
       }
-      return
     }
 
     run()
@@ -302,7 +300,7 @@ export default function CreatePage() {
     }
 
     if (!validateBeneficiaryAddresses(beneficiaries)) {
-      alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x...).')
+      alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x..., Stellar: G...).')
       return false
     }
 
@@ -1130,6 +1128,13 @@ export default function CreatePage() {
                               >
                                 EVM
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => updateBeneficiary(index, 'chain', 'stellar')}
+                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'stellar' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                              >
+                                Stellar
+                              </button>
                             </div>
                             <input
                               type="text"
@@ -1144,16 +1149,12 @@ export default function CreatePage() {
                               }
                               className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                             />
-                            {(beneficiary.chain === 'evm' || beneficiary.chain === 'stellar') && (
+                            {beneficiary.chain !== 'solana' && (
                               <input
                                 type="text"
                                 value={beneficiary.destinationChainSelector || ''}
                                 onChange={(e) => updateBeneficiary(index, 'destinationChainSelector', e.target.value.trim())}
-                                placeholder={
-                                  beneficiary.chain === 'evm'
-                                    ? 'Destination chain selector (default: Ethereum Sepolia)'
-                                    : 'Stellar memo / route hint (optional)'
-                                }
+                                placeholder={beneficiary.chain === 'evm' ? 'Destination chain selector (default: Ethereum Sepolia)' : 'Optional Stellar memo or settlement route hint'}
                                 className="mt-2 w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-xs text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                               />
                             )}

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
 import { getCapsule } from '@/lib/solana'
-import { getEnhancedTransactions } from '@/lib/solana-data'
 import { buildActivityScore } from '@/lib/mobile'
+import { getAddressTransactionsViaRpc } from '@/lib/solana-data'
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const txs = await getEnhancedTransactions(wallet, 100)
+    const txs = await getAddressTransactionsViaRpc(wallet, 100)
     const score = buildActivityScore(wallet, txs)
 
     const now = Date.now()
