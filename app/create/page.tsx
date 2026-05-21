@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import dynamic from 'next/dynamic'
-import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink } from 'lucide-react'
+import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink, Activity, CreditCard } from 'lucide-react'
 
 // Dynamic import to prevent hydration errors
 const WalletMultiButton = dynamic(
@@ -107,6 +107,8 @@ export default function CreatePage() {
   const [modifyCount, setModifyCount] = useState<number>(0)
   const [openSection, setOpenSection] = useState<'asset' | 'beneficiaries' | 'intent' | 'review'>('asset')
   const [openFaq, setOpenFaq] = useState<string | null>(CREATE_FAQS[0].key)
+  const [monitoringEnabled, setMonitoringEnabled] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'web3_stream'>('stripe')
   // NFT flow
   const [nftList, setNftList] = useState<NftItem[]>([])
   const [nftListLoading, setNftListLoading] = useState(false)
@@ -691,9 +693,86 @@ export default function CreatePage() {
         }
       }
 
-      setCurrentStep(null)
+      if (automationIssues.length > 0) {
+        alert(
+          `Capsule created, but automation needs attention: ${automationIssues.join(', ')}. Open the capsule and use Refresh Automation.`
+        )
+      }
 
+      // Handle subscription option if enabled
+      if (monitoringEnabled && publicKey) {
+        const [capsulePDA] = getCapsulePDA(publicKey)
+        const capsuleAddress = capsulePDA.toBase58()
+        const ownerAddress = publicKey.toBase58()
 
+        if (paymentMethod === 'stripe') {
+          setCurrentStep('Redirecting to payment...')
+          try {
+            const sessionRes = await fetch('/api/subscription/create-checkout-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                capsuleAddress,
+                ownerAddress,
+              }),
+            })
+            if (!sessionRes.ok) {
+              const sessionErr = await sessionRes.json()
+              throw new Error(sessionErr.error || 'Failed to create Stripe Checkout session')
+            }
+            const sessionData = await sessionRes.json()
+            if (sessionData.url) {
+              window.location.href = sessionData.url
+              return
+            }
+          } catch (subErr: any) {
+            console.error('[Subscription] Stripe redirection failed:', subErr)
+            alert(`Capsule created, but automated monitoring subscription failed: ${subErr.message}. You can enable it on the dashboard.`)
+          }
+        } else if (paymentMethod === 'web3_stream') {
+          setCurrentStep('Starting token stream...')
+          try {
+            const { Transaction, SystemProgram, PublicKey } = await import('@solana/web3.js')
+            const connection = getSolanaConnection()
+            const recipient = new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT || 'Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb')
+            
+            const transferTx = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: publicKey,
+                toPubkey: recipient,
+                lamports: 2000000, // 0.002 SOL (representing $2 for devnet simulation)
+              })
+            )
+            transferTx.feePayer = publicKey
+            const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+            transferTx.recentBlockhash = blockhash
+            
+            const signedTransferTx = await wallet.signTransaction!(transferTx)
+            const sig = await connection.sendRawTransaction(signedTransferTx.serialize(), { skipPreflight: true })
+            
+            console.log('[Subscription] Web3 stream simulation transfer signature:', sig)
+            
+            const registerRes = await fetch('/api/subscription/register-stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                capsuleAddress,
+                ownerAddress,
+                streamId: sig,
+                durationSeconds: 30 * 24 * 60 * 60, // 30 days
+              }),
+            })
+            if (!registerRes.ok) {
+              const registerErr = await registerRes.json()
+              throw new Error(registerErr.error || 'Failed to register stream in database')
+            }
+            alert('Automated monitoring subscription activated successfully via Web3 Stream!')
+          } catch (subErr: any) {
+            console.error('[Subscription] Web3 streaming failed:', subErr)
+            alert(`Capsule created, but token stream subscription failed: ${subErr.message}. You can retry from the dashboard.`)
+          }
+        }
+      }
 
       // Redirect to capsules page after successful creation
       window.location.href = '/capsules'
@@ -1572,6 +1651,57 @@ export default function CreatePage() {
                         This capsule uses MagicBlock&apos;s Private Ephemeral Rollup so intent and trigger execution can remain confidential until conditions are met.
                       </p>
                     </div>
+                    {/* Automated Capsule Monitoring Subscription Toggle */}
+                    <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4 transition-all duration-300 hover:border-Heres-accent/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Activity className={`h-5 w-5 ${monitoringEnabled ? 'text-emerald-400 animate-pulse' : 'text-Heres-muted'}`} />
+                          <div>
+                            <p className="text-sm font-semibold text-Heres-white">Automated Monitoring</p>
+                            <p className="text-xs text-Heres-muted">Let Heres crank automatically execute when inactivity expires ($2/mo)</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setMonitoringEnabled(!monitoringEnabled)}
+                          className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${monitoringEnabled ? 'bg-Heres-accent' : 'bg-Heres-surface/80 border-Heres-border'}`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${monitoringEnabled ? 'translate-x-5' : 'translate-x-0'}`}
+                          />
+                        </button>
+                      </div>
+
+                      {monitoringEnabled && (
+                        <div className="mt-5 space-y-3 border-t border-Heres-border/50 pt-4">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-Heres-accent">Select Payment Method</p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('stripe')}
+                              className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all duration-200 ${paymentMethod === 'stripe' ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-white' : 'border-Heres-border bg-Heres-surface/40 text-Heres-muted hover:border-Heres-border/80 hover:bg-Heres-surface/60'}`}
+                            >
+                              <CreditCard className={`h-6 w-6 ${paymentMethod === 'stripe' ? 'text-Heres-accent' : 'text-Heres-muted'}`} />
+                              <span className="text-xs font-medium">Stripe (Card / Fiat)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('web3_stream')}
+                              className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all duration-200 ${paymentMethod === 'web3_stream' ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-white' : 'border-Heres-border bg-Heres-surface/40 text-Heres-muted hover:border-Heres-border/80 hover:bg-Heres-surface/60'}`}
+                            >
+                              <Coins className={`h-6 w-6 ${paymentMethod === 'web3_stream' ? 'text-Heres-accent' : 'text-Heres-muted'}`} />
+                              <span className="text-xs font-medium">SOL Stream (Web3)</span>
+                            </button>
+                          </div>
+                          <p className="text-xs text-Heres-muted leading-relaxed">
+                            {paymentMethod === 'stripe' 
+                              ? 'You will be redirected to Stripe checkout after capsule creation to complete the subscription.' 
+                              : 'You will sign a transaction to deposit SOL stream for $2 equivalent to secure the automated crank monitoring.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Readiness Checklist</p>
                       <div className="mt-4 space-y-3 text-sm">

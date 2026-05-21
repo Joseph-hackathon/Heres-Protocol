@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js'
 import { getAssetMintFromEnv } from '../constants/index.ts'
 
-export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH' | 'MSOL'
+export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH' | 'MSOL' | 'AUDD'
 
 export type AssetConfig = {
   symbol: SupportedAssetSymbol
@@ -58,6 +58,14 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     mint: normalizeMint(getAssetMintFromEnv('MSOL')),
     decimals: 9,
     coingeckoId: 'msol',
+    isNative: false,
+  },
+  AUDD: {
+    symbol: 'AUDD',
+    label: 'Australian Digital Dollar',
+    mint: normalizeMint(getAssetMintFromEnv('AUDD')),
+    decimals: 6,
+    coingeckoId: 'australian-digital-dollar',
     isNative: false,
   },
 }

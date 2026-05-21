@@ -455,23 +455,23 @@ export async function delegateCapsule(
   const [vaultDelegationRecordPDA] = getDelegationRecordPDA(vaultPDA, delegationProgramId)
   const [vaultDelegationMetadataPDA] = getDelegationMetadataPDA(vaultPDA, delegationProgramId)
 
-  const accounts = {
-    payer: wallet.publicKey,
-    owner: wallet.publicKey,
-    validator: activeValidator,
-    pda: capsulePDA,
-    pdaBuffer: bufferPDA,
-    pdaDelegationRecord: delegationRecordPDA,
-    pdaDelegationMetadata: delegationMetadataPDA,
-    vault: vaultPDA,
-    vaultBuffer: vaultBufferPDA,
-    vaultDelegationRecord: vaultDelegationRecordPDA,
-    vaultDelegationMetadata: vaultDelegationMetadataPDA,
-    // Programs at the end
-    magicProgram: magicProgramId,
-    delegationProgram: delegationProgramId,
-    systemProgram: SystemProgram.programId,
-  }
+   const accounts = {
+     payer: wallet.publicKey,
+     owner: wallet.publicKey,
+     validator: activeValidator,
+     buffer_pda: bufferPDA,
+     delegation_record_pda: delegationRecordPDA,
+     delegation_metadata_pda: delegationMetadataPDA,
+     pda: capsulePDA,
+     buffer_vault: vaultBufferPDA,
+     delegation_record_vault: vaultDelegationRecordPDA,
+     delegation_metadata_vault: vaultDelegationMetadataPDA,
+     vault: vaultPDA,
+     magic_program: magicProgramId,
+     delegation_program: delegationProgramId,
+     owner_program: getProgramId(),
+     system_program: SystemProgram.programId,
+   }
 
   const tx = await program.methods
     .delegateCapsule()

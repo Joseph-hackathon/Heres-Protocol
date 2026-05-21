@@ -12,6 +12,9 @@ import {
   Settings,
   Signal,
   User,
+  Activity,
+  CreditCard,
+  Coins,
 } from 'lucide-react'
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
@@ -410,6 +413,119 @@ export default function DashboardPage() {
   const [initFeePending, setInitFeePending] = useState(false)
   const [initFeeTx, setInitFeeTx] = useState<string | null>(null)
   const [initFeeError, setInitFeeError] = useState<string | null>(null)
+  const [subStatuses, setSubStatuses] = useState<Record<string, any>>({})
+  const [subLoading, setSubLoading] = useState<Record<string, boolean>>({})
+
+  const fetchSubscriptionStatus = useCallback(async (capsuleAddress: string) => {
+    setSubLoading(prev => ({ ...prev, [capsuleAddress]: true }))
+    try {
+      const res = await fetch(`/api/subscription/status?capsule=${capsuleAddress}`)
+      if (res.ok) {
+        const data = await res.json()
+        setSubStatuses(prev => ({ ...prev, [capsuleAddress]: data }))
+      }
+    } catch (err) {
+      console.error(`Failed to fetch subscription status for ${capsuleAddress}:`, err)
+    } finally {
+      setSubLoading(prev => ({ ...prev, [capsuleAddress]: false }))
+    }
+  }, [])
+
+  useEffect(() => {
+    const capsuleAddresses = capsules
+      .filter((c) => c.kind === 'capsule')
+      .map((c) => c.capsuleAddress)
+    
+    capsuleAddresses.forEach((address) => {
+      fetchSubscriptionStatus(address)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, capsules.length, fetchSubscriptionStatus])
+
+  const handleManageStripeBilling = async (capsuleAddress: string) => {
+    try {
+      const res = await fetch('/api/subscription/portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capsuleAddress }),
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Failed to open billing portal')
+      }
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch (err: any) {
+      alert(err.message)
+    }
+  }
+
+  const handleActivateStripe = async (capsuleAddress: string, ownerAddress: string) => {
+    try {
+      const res = await fetch('/api/subscription/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capsuleAddress, ownerAddress }),
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Failed to initiate Stripe session')
+      }
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch (err: any) {
+      alert(err.message)
+    }
+  }
+
+  const handleActivateWeb3Stream = async (capsuleAddress: string, ownerAddress: string) => {
+    if (!wallet.connected || !wallet.publicKey) {
+      alert('Please connect your wallet first')
+      return
+    }
+    try {
+      const { Transaction, SystemProgram, PublicKey } = await import('@solana/web3.js')
+      const connection = getSolanaConnection()
+      const recipient = new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT || 'Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb')
+      
+      const transferTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: recipient,
+          lamports: 2000000, // 0.002 SOL
+        })
+      )
+      transferTx.feePayer = wallet.publicKey
+      const { blockhash } = await connection.getLatestBlockhash('confirmed')
+      transferTx.recentBlockhash = blockhash
+      
+      const signedTx = await wallet.signTransaction!(transferTx)
+      const sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true })
+      
+      const registerRes = await fetch('/api/subscription/register-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          capsuleAddress,
+          ownerAddress,
+          streamId: sig,
+          durationSeconds: 30 * 24 * 60 * 60, // 30 days
+        }),
+      })
+      if (!registerRes.ok) {
+        const registerErr = await registerRes.json()
+        throw new Error(registerErr.error || 'Failed to register stream in database')
+      }
+      alert('Subscription activated successfully!')
+      fetchSubscriptionStatus(capsuleAddress)
+    } catch (err: any) {
+      alert(`Activation failed: ${err.message}`)
+    }
+  }
   const [summary, setSummary] = useState({
     total: 0,
     active: 0,
@@ -1227,7 +1343,7 @@ export default function DashboardPage() {
                   >
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="space-y-2">
-                        <div className="flex items-center gap-3 text-sm text-Heres-muted">
+                        <div className="flex items-center gap-3 text-sm text-Heres-muted flex-wrap">
                           <span className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-Heres-muted">
                             {capsule.kind === 'event' ? 'Event' : 'Capsule'}
                           </span>
@@ -1239,6 +1355,29 @@ export default function DashboardPage() {
                           >
                             {capsule.status}
                           </span>
+                          {capsule.kind === 'capsule' && (() => {
+                            const sub = subStatuses[capsule.capsuleAddress]
+                            const isLoading = subLoading[capsule.capsuleAddress]
+                            if (isLoading) {
+                              return (
+                                <span className="rounded-lg bg-Heres-surface px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-Heres-muted animate-pulse">
+                                  Monitoring: Checking...
+                                </span>
+                              )
+                            }
+                            if (sub?.active) {
+                              return (
+                                <span className="rounded-lg bg-emerald-400/20 px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-emerald-400">
+                                  Auto-Monitoring: Active
+                                </span>
+                              )
+                            }
+                            return (
+                              <span className="rounded-lg bg-slate-500/20 px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-300">
+                                Manual Crank Only
+                              </span>
+                            )
+                          })()}
                           <span className="font-mono text-Heres-muted break-all max-w-full min-w-0">
                             {capsule.signature ? maskAddress(capsule.signature) : '...'}
                           </span>
@@ -1380,6 +1519,102 @@ export default function DashboardPage() {
                             </div>
                           </div>
                         </div>
+
+                        {capsule.kind === 'capsule' && (
+                          <div className="rounded-xl border border-Heres-border bg-Heres-card/40 p-4 space-y-4">
+                            <div className="flex items-center justify-between border-b border-Heres-border/50 pb-3">
+                              <div className="flex items-center gap-2">
+                                <Activity className={`h-4.5 w-4.5 ${subStatuses[capsule.capsuleAddress]?.active ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+                                <span className="text-sm font-semibold text-Heres-white">Automated Capsule Monitoring</span>
+                              </div>
+                              {subLoading[capsule.capsuleAddress] ? (
+                                <span className="text-xs text-Heres-muted">Checking status...</span>
+                              ) : subStatuses[capsule.capsuleAddress]?.active ? (
+                                <span className="rounded-md bg-emerald-400/10 px-2 py-0.5 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                                  Active
+                                </span>
+                              ) : (
+                                <span className="rounded-md bg-slate-500/10 px-2 py-0.5 text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                                  Inactive
+                                </span>
+                              )}
+                            </div>
+
+                            {(() => {
+                              const sub = subStatuses[capsule.capsuleAddress]
+                              const isLoading = subLoading[capsule.capsuleAddress]
+                              if (isLoading) return <p className="text-xs text-Heres-muted">Loading billing details...</p>
+
+                              if (sub?.active) {
+                                if (sub.paymentMethod === 'stripe') {
+                                  return (
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                      <div>
+                                        <p className="text-xs text-Heres-muted">
+                                          Your subscription is managed via Stripe. Next billing cycle ends: <span className="text-Heres-white font-medium">{new Date(sub.currentPeriodEnd).toLocaleDateString()}</span>
+                                        </p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleManageStripeBilling(capsule.capsuleAddress)}
+                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-Heres-accent bg-Heres-accent/10 px-3.5 py-1.5 text-xs font-medium text-Heres-accent transition hover:bg-Heres-accent/25"
+                                      >
+                                        <CreditCard className="h-3.5 w-3.5" />
+                                        Manage Billing
+                                      </button>
+                                    </div>
+                                  )
+                                } else if (sub.paymentMethod === 'web3_stream') {
+                                  return (
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <span className="text-Heres-muted">Payment Method:</span>
+                                        <span className="text-Heres-white font-medium">SOL Stream (Web3)</span>
+                                      </div>
+                                      {sub.streamId && (
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <span className="text-Heres-muted">Stream ID (Tx Signature):</span>
+                                          <span className="font-mono text-Heres-white break-all max-w-[250px] truncate">{sub.streamId}</span>
+                                          <CopyButton value={sub.streamId} />
+                                        </div>
+                                      )}
+                                      <p className="text-[11px] text-Heres-muted">
+                                        Your automated monitoring is powered by a Web3 SOL stream.
+                                      </p>
+                                    </div>
+                                  )
+                                }
+                              }
+
+                              // Inactive / Disabled
+                              return (
+                                <div className="space-y-4">
+                                  <p className="text-xs text-Heres-muted leading-relaxed">
+                                    Automated monitoring executes your capsule automatically once the inactivity window closes. Without monitoring, the capsule must be triggered manually by you or your beneficiaries.
+                                  </p>
+                                  <div className="flex flex-col sm:flex-row gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleActivateStripe(capsule.capsuleAddress, capsule.owner!)}
+                                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-xs font-semibold text-Heres-accent transition hover:bg-Heres-accent/20"
+                                    >
+                                      <CreditCard className="h-4 w-4" />
+                                      Activate via Stripe ($2/mo)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleActivateWeb3Stream(capsule.capsuleAddress, capsule.owner!)}
+                                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-Heres-border bg-Heres-surface/60 px-4 py-2.5 text-xs font-semibold text-Heres-white transition hover:border-Heres-border/80 hover:bg-Heres-surface/80"
+                                    >
+                                      <Coins className="h-4 w-4 text-Heres-accent" />
+                                      Activate via Web3 Stream ($2 equivalent)
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })()}
+                          </div>
+                        )}
 
                         <div>
                           <p className="text-[10px] font-medium uppercase tracking-wider text-Heres-muted mb-2">

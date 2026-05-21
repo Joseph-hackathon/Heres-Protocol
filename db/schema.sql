@@ -69,3 +69,21 @@ CREATE TABLE IF NOT EXISTS helius_webhook_logs (
 
 CREATE INDEX IF NOT EXISTS idx_helius_webhook_logs_pending
   ON helius_webhook_logs (processed, processing_started_at, received_at);
+
+CREATE TABLE IF NOT EXISTS capsule_subscriptions (
+  capsule_address TEXT PRIMARY KEY,
+  owner_address TEXT NOT NULL,
+  monitoring_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  payment_method TEXT, -- 'stripe' or 'web3_stream'
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  stream_id TEXT, -- Streamflow stream public key / address
+  status TEXT NOT NULL DEFAULT 'inactive', -- 'active', 'canceled', 'paused', 'inactive'
+  current_period_end TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_capsule_subscriptions_status ON capsule_subscriptions (status);
+CREATE INDEX IF NOT EXISTS idx_capsule_subscriptions_owner ON capsule_subscriptions (owner_address);
+

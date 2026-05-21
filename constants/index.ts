@@ -55,6 +55,9 @@ export function getAssetMintFromEnv(symbol: string): string | null {
     case 'MSOL':
       value = process.env.NEXT_PUBLIC_MSOL_MINT || process.env.NEXT_PUBLIC_MSOL_DEVNET_MINT
       break
+    case 'AUDD':
+      value = process.env.NEXT_PUBLIC_AUDD_MINT || process.env.NEXT_PUBLIC_AUDD_DEVNET_MINT
+      break
     default:
       value = process.env[getAssetMintEnvKey(symbol)]
       break

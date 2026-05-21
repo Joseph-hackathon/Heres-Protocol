@@ -1,0 +1,38 @@
+{
+  "token": "7zUep7wHPgmWq3HaQki1WuCJjMwUTu46oW8FAdo2hRZi",
+  "symbol": "SOLAUDD",
+  "network": "devnet",
+  "mint": "7zUep7wHPgmWq3HaQki1WuCJjMwUTu46oW8FAdo2hRZi",
+  "decimals": 9,
+  "generatedAt": "2026-05-15T13:20:13.361Z",
+  "steps": [
+    {
+      "label": "S1 global-config",
+      "signal": "PDA:7fHH5bc3nkCEr1nvetVKZ1Jfe9WUtdMk5QLZ8zeowjJ2 NEEDS_POOL_DEPLOYER_KEY"
+    },
+    {
+      "label": "S2 pool-init",
+      "signal": "PDA:3j7Kmtuzcg4t4NTagi2EcM6EtkNDwrMYNGDjytEYx9Qh NEEDS_POOL_DEPLOYER_KEY"
+    },
+    {
+      "label": "S3 admin-handshake",
+      "signal": "tarPDA:CL5XFhtZbSaiZLF3YEtyYiN5E5omxYn5BZUkCbdineph NEEDS_MINT_AUTHORITY_KEY"
+    },
+    {
+      "label": "S4 ALT",
+      "signal": "NEEDS_CHAINLINK_ADMIN KP — 10 entries prepared"
+    },
+    {
+      "label": "S5-ethereum chain-config",
+      "signal": "NEEDS_CHAINLINK_ADMIN + EVM_ethereum_ADDRESSES"
+    },
+    {
+      "label": "S5-sepolia chain-config",
+      "signal": "NEEDS_CHAINLINK_ADMIN + EVM_sepolia_ADDRESSES"
+    }
+  ],
+  "chainSelectors": {
+    "ethereum": "500929755",
+    "sepolia": "1628171783"
+  }
+}

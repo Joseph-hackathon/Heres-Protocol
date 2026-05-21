@@ -12,6 +12,7 @@ import {
   distributeAssets,
   undelegateCapsule,
   registerCapsuleOwnerForAutomation,
+  scheduleExecuteIntent,
 } from '@/lib/solana'
 import { getCapsuleVaultPDA } from '@/lib/program'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
@@ -253,6 +254,16 @@ export default function CapsuleDetailPage() {
     setActionLoading('automation')
     setActionResult(null)
     try {
+      const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
+      if (isDelegated) {
+        const tx = await scheduleExecuteIntent(wallet as any, capsule.owner)
+        setActionResult({
+          type: 'success',
+          message: `MagicBlock crank rescheduled on ER. TX: ${tx}`,
+        })
+        return
+      }
+
       await registerCapsuleOwnerForAutomation(capsule.owner.toBase58())
       setActionResult({
         type: 'success',
@@ -840,7 +851,7 @@ export default function CapsuleDetailPage() {
                   )}
                   {isExpired && !isExecuted && (
                     <p className="mt-2 text-sm text-blue-400">
-                      If external automation missed this capsule, use <strong>Refresh Automation</strong> to re-register it for the crank without creating a new capsule.
+                      If automation missed this capsule, use <strong>Refresh Automation</strong> to re-register the base cron or reschedule the ER crank.
                     </p>
                   )}
                   {isExecuted && isDelegated && (
@@ -930,7 +941,7 @@ export default function CapsuleDetailPage() {
                     type="button"
                     onClick={handleRefreshAutomation}
                     disabled={!canRefreshAutomation || !!actionLoading}
-                    title={!canRefreshAutomation ? 'Only pending capsules can be re-registered for automation' : 'Re-register this capsule for external crank discovery'}
+                    title={!canRefreshAutomation ? 'Only pending capsules can refresh automation' : isDelegated ? 'Reschedule this capsule on MagicBlock ER' : 'Re-register this capsule for external crank discovery'}
                     className="rounded-lg border border-cyan-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20"
                   >
                     {actionLoading === 'automation' ? 'Refreshing...' : 'Refresh Automation'}

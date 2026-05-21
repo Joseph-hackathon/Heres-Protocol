@@ -1,6 +1,6 @@
 /**
  * Cron endpoint: run crank to execute all eligible capsules (conditions met).
- * Call this at intervals (e.g. every 5??5 min) via Vercel Cron or external cron.
+ * Call this at intervals (e.g. every minute) via Vercel Cron or external cron.
  * Set CRANK_WALLET_PRIVATE_KEY (base58, base64, or JSON array of 64 bytes) and optionally
  * CRON_SECRET for auth.
  */
@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { runCrank } from '@/lib/crank'
+import { distributeExecutedCapsules, runCrank, undelegateExecutedCapsules } from '@/lib/crank'
 import { reconcileCreDeliveries } from '@/lib/cre/service'
 
 function getCrankKeypair(): Keypair | null {
@@ -29,6 +29,25 @@ function getCrankKeypair(): Keypair | null {
   }
 }
 
+function isAuthorized(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET
+  if (!secret || !secret.trim()) return false
+
+  const auth = request.headers.get('authorization')
+  if (auth === `Bearer ${secret}`) return true
+
+  const headerSecret = request.headers.get('x-cron-secret')
+  if (headerSecret === secret) return true
+
+  return request.nextUrl.searchParams.get('secret') === secret
+}
+
+function getMaxExecutions(request: NextRequest): number {
+  const raw = request.nextUrl.searchParams.get('limit') || process.env.CRON_MAX_EXECUTIONS_PER_TICK || '1'
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
 export async function GET(request: NextRequest) {
   return handleCron(request)
 }
@@ -38,12 +57,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleCron(request: NextRequest) {
-  const auth = request.headers.get('authorization')
   const secret = process.env.CRON_SECRET
   if (!secret || !secret.trim()) {
     return NextResponse.json({ error: 'CRON_SECRET is required' }, { status: 503 })
   }
-  if (auth !== `Bearer ${secret}`) {
+  if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -56,26 +74,22 @@ async function handleCron(request: NextRequest) {
   }
 
   try {
-    const [crankResult, creResult] = await Promise.allSettled([
-      runCrank(keypair),
+    const maxExecutions = getMaxExecutions(request)
+    const crankResult = await Promise.allSettled([
+      runCrank(keypair, { maxExecutions }),
+      undelegateExecutedCapsules(keypair, maxExecutions),
+      distributeExecutedCapsules(keypair, maxExecutions),
       reconcileCreDeliveries(),
     ])
 
-    if (crankResult.status === 'rejected') {
-      const message = crankResult.reason instanceof Error ? crankResult.reason.message : String(crankResult.reason)
-      const cre =
-        creResult.status === 'fulfilled'
-          ? creResult.value
-          : { error: creResult.reason instanceof Error ? creResult.reason.message : String(creResult.reason) }
-      return NextResponse.json({ error: message, cre }, { status: 500 })
-    }
+    const [execution, undelegation, distribution, cre] = crankResult
 
     return NextResponse.json({
-      ...crankResult.value,
-      cre:
-        creResult.status === 'fulfilled'
-          ? creResult.value
-          : { error: creResult.reason instanceof Error ? creResult.reason.message : String(creResult.reason) },
+      maxExecutions,
+      execution: execution.status === 'fulfilled' ? execution.value : { error: String(execution.reason) },
+      undelegation: undelegation.status === 'fulfilled' ? undelegation.value : { error: String(undelegation.reason) },
+      distribution: distribution.status === 'fulfilled' ? distribution.value : { error: String(distribution.reason) },
+      cre: cre.status === 'fulfilled' ? cre.value : { error: String(cre.reason) },
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
