@@ -41,8 +41,8 @@ To ensure maximum flexibility for users, Heres Protocol is designed to support a
 
 | Phase | Asset Category | Examples | Status |
 |-------|----------------|----------|--------|
-| **Phase 1** | Native & Major Stablecoins | SOL, USDC, USDT, solAUDD | Live |
-| **Phase 2** | Blue-chip & Liquid Staking | wBTC, ETH, JitoSOL, mSOL | Upcoming |
+| **Phase 1** | Native & Core Assets | SOL, BTC, ETH, solAUDD  | Live |
+| **Phase 2** | Major Stablecoins & Liquid Staking | USDC, USDT, wBTC, JitoSOL, mSOL | Upcoming |
 | **Phase 3** | Yield-Bearing & DeFi Assets | LP Tokens, Vault Shares | Roadmap |
 | **Phase 4** | Real World Assets (RWA) | Tokenized Treasuries, Real Estate | Roadmap |
 
@@ -52,6 +52,7 @@ To ensure maximum flexibility for users, Heres Protocol is designed to support a
 | **Settlement** | **Solana** | Persistent capsule state (owner, vault, inactivity, delegation), asset locking. |
 | **Private Sentinel** | **Magicblock PER (TEE)** | Hardware-isolated private monitoring of conditions; triggers the Crank when conditions are met. |
 | **Confidential Bridge** | **Chainlink CRE** | Secure off-chain delivery of encrypted Intent Statements to beneficiaries exactly where they need to go. |
+| **Monitoring** | **Alchemy** | Robust on-chain indexing and webhooks to ensure stable heartbeat tracking, subscription processing, and system liveliness. |
 
 ---
 
@@ -107,21 +108,23 @@ sequenceDiagram
     participant S as Solana Smart Contract
     participant T as Magicblock PER (TEE)
     participant C as Chainlink CRE
+    participant A as Alchemy
     participant B as Beneficiary
     
     %% Setup Phase
     rect rgba(59, 130, 246, 0.1)
         Note over U, S: 1. Setup & Delegation
-        U->>S: Create Capsule, Deposit Assets (USDC, SOL, etc.)
+        U->>S: Create Capsule, Deposit Assets (SOL, ETH, etc.)
         U->>S: Attach Encrypted Intent Statement (Off-chain secrets)
         U->>T: Delegate Monitoring & Conditions to TEE
     end
     
     %% Active Phase
     rect rgba(34, 197, 94, 0.1)
-        Note over U, T: 2. Active Lifecycle (Heartbeat)
+        Note over U, A: 2. Active Lifecycle (Heartbeat)
         loop Monthly Subscription ($2/mo)
             U->>S: Ping "I am alive" (Update Last Activity)
+            A->>S: Index Activity & Verify Subscription Payment
             S->>T: Refresh Activity Timestamp in Enclave
         end
     end
