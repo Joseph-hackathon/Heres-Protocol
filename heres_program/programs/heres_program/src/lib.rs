@@ -1252,6 +1252,8 @@ fn infer_asset_decimals(intent_json: &serde_json::Value, mint_decimals: Option<u
         .unwrap_or("SOL")
     {
         "BTC" | "ETH" => 8,
+        "AUDD" => 6,
+        "XLM" => 7,
         "MSOL" => 9,
         _ => 9,
     }

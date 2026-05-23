@@ -1,7 +1,14 @@
 import { PublicKey } from '@solana/web3.js'
 import { getAssetMintFromEnv } from '../constants/index.ts'
 
-export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH' | 'MSOL' | 'AUDD'
+export type AssetNetwork = 'solana' | 'stellar'
+export type SupportedAssetSymbol = 'SOL' | 'BTC' | 'ETH' | 'MSOL' | 'AUDD' | 'XLM'
+
+export type StellarAssetConfig = {
+  code: string
+  issuer: string | null
+  native: boolean
+}
 
 export type AssetConfig = {
   symbol: SupportedAssetSymbol
@@ -10,6 +17,8 @@ export type AssetConfig = {
   decimals: number
   coingeckoId: string
   isNative: boolean
+  networks: AssetNetwork[]
+  stellar?: StellarAssetConfig
 }
 
 type AssetIntentLike = {
@@ -35,6 +44,7 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     decimals: 9,
     coingeckoId: 'solana',
     isNative: true,
+    networks: ['solana'],
   },
   BTC: {
     symbol: 'BTC',
@@ -43,6 +53,12 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     decimals: 8,
     coingeckoId: 'bitcoin',
     isNative: false,
+    networks: ['solana', 'stellar'],
+    stellar: {
+      code: process.env.NEXT_PUBLIC_STELLAR_BTC_CODE || 'BTC',
+      issuer: process.env.NEXT_PUBLIC_STELLAR_BTC_ISSUER || null,
+      native: false,
+    },
   },
   ETH: {
     symbol: 'ETH',
@@ -51,6 +67,12 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     decimals: 8,
     coingeckoId: 'ethereum',
     isNative: false,
+    networks: ['solana', 'stellar'],
+    stellar: {
+      code: process.env.NEXT_PUBLIC_STELLAR_ETH_CODE || 'ETH',
+      issuer: process.env.NEXT_PUBLIC_STELLAR_ETH_ISSUER || null,
+      native: false,
+    },
   },
   MSOL: {
     symbol: 'MSOL',
@@ -59,6 +81,7 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     decimals: 9,
     coingeckoId: 'msol',
     isNative: false,
+    networks: ['solana'],
   },
   AUDD: {
     symbol: 'AUDD',
@@ -67,10 +90,32 @@ export const ASSET_REGISTRY: Record<SupportedAssetSymbol, AssetConfig> = {
     decimals: 6,
     coingeckoId: 'novatti-australian-digital-dollar',
     isNative: false,
+    networks: ['solana', 'stellar'],
+    stellar: {
+      code: process.env.NEXT_PUBLIC_STELLAR_AUDD_CODE || 'AUDD',
+      issuer: process.env.NEXT_PUBLIC_STELLAR_AUDD_ISSUER || null,
+      native: false,
+    },
+  },
+  XLM: {
+    symbol: 'XLM',
+    label: 'Stellar Lumens',
+    mint: null,
+    decimals: 7,
+    coingeckoId: 'stellar',
+    isNative: false,
+    networks: ['stellar'],
+    stellar: {
+      code: 'XLM',
+      issuer: null,
+      native: true,
+    },
   },
 }
 
-export const SUPPORTED_TOKEN_ASSETS = (Object.keys(ASSET_REGISTRY) as SupportedAssetSymbol[]).map(
+export const SUPPORTED_TOKEN_ASSET_SYMBOLS: SupportedAssetSymbol[] = ['BTC', 'ETH', 'SOL', 'AUDD', 'XLM']
+
+export const SUPPORTED_TOKEN_ASSETS = SUPPORTED_TOKEN_ASSET_SYMBOLS.map(
   (symbol) => ASSET_REGISTRY[symbol]
 )
 
@@ -79,8 +124,26 @@ export function getAssetConfig(symbol: SupportedAssetSymbol): AssetConfig {
 }
 
 export function isAssetConfigured(symbol: SupportedAssetSymbol): boolean {
+  return isSolanaAssetConfigured(symbol) || isStellarIssuerConfigured(symbol)
+}
+
+export function isSolanaAssetConfigured(symbol: SupportedAssetSymbol): boolean {
   const asset = getAssetConfig(symbol)
-  return asset.isNative || Boolean(asset.mint)
+  return asset.networks.includes('solana') && (asset.isNative || Boolean(asset.mint))
+}
+
+export function getAssetNetworkLabels(symbol: SupportedAssetSymbol): string {
+  const asset = getAssetConfig(symbol)
+  return asset.networks
+    .map((network) => (network === 'solana' ? 'Solana' : 'Stellar'))
+    .join(' / ')
+}
+
+export function isStellarIssuerConfigured(symbol: SupportedAssetSymbol): boolean {
+  const asset = getAssetConfig(symbol)
+  if (!asset.networks.includes('stellar')) return false
+  if (asset.stellar?.native) return true
+  return Boolean(asset.stellar?.issuer)
 }
 
 export function isSupportedAssetSymbol(value: unknown): value is SupportedAssetSymbol {

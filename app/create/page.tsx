@@ -23,7 +23,16 @@ import {
   getAssetMintEnvKey,
 } from '@/constants'
 import { encodeIntentData, daysToSeconds } from '@/utils/intent'
-import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
+import {
+  getAssetConfig,
+  getAssetMintPublicKey,
+  getAssetNetworkLabels,
+  isAssetConfigured,
+  isSolanaAssetConfigured,
+  isStellarIssuerConfigured,
+  SUPPORTED_TOKEN_ASSETS,
+  SupportedAssetSymbol,
+} from '@/lib/assets'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
 import {
@@ -189,7 +198,10 @@ export default function CreatePage() {
   const supportsMinuteMode = SOLANA_CONFIG.NETWORK === 'devnet'
   const tokenAssetConfig = getAssetConfig(selectedTokenAsset)
   const tokenAssetUnit = tokenAssetConfig.symbol
-  const tokenAssetReady = isAssetConfigured(selectedTokenAsset)
+  const tokenAssetReady = isSolanaAssetConfigured(selectedTokenAsset)
+  const tokenAssetSupportsSolana = tokenAssetConfig.networks.includes('solana')
+  const tokenAssetSupportsStellar = tokenAssetConfig.networks.includes('stellar')
+  const tokenAssetStellarReady = isStellarIssuerConfigured(selectedTokenAsset)
 
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
@@ -295,7 +307,11 @@ export default function CreatePage() {
 
   const validateBeneficiaries = (): boolean => {
     if (!tokenAssetReady) {
-      alert(`${selectedTokenAsset} mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
+      if (!tokenAssetSupportsSolana) {
+        alert(`${selectedTokenAsset} is Stellar-only. Stellar custody requires the Privy/Stellar wallet flow before it can be created as a capsule.`)
+      } else {
+        alert(`${selectedTokenAsset} Solana mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
+      }
       return false
     }
 
@@ -729,7 +745,7 @@ export default function CreatePage() {
 
   const hasAssetSelection = capsuleType !== null && (
     capsuleType === 'token'
-      ? Boolean(totalAmount.trim())
+      ? Boolean(totalAmount.trim()) && tokenAssetReady
       : selectedNftMints.length > 0
   )
   const hasBeneficiaryDetails = capsuleType === 'token'
@@ -973,6 +989,9 @@ export default function CreatePage() {
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {SUPPORTED_TOKEN_ASSETS.map((asset) => {
                           const configured = isAssetConfigured(asset.symbol)
+                          const solanaReady = isSolanaAssetConfigured(asset.symbol)
+                          const networkLabel = getAssetNetworkLabels(asset.symbol)
+                          const stellarReady = isStellarIssuerConfigured(asset.symbol)
                           return (
                             <button
                               key={asset.symbol}
@@ -989,6 +1008,15 @@ export default function CreatePage() {
                             >
                               <p className="text-sm font-semibold">{asset.symbol}</p>
                               <p className="text-xs text-Heres-muted">{asset.label}</p>
+                              <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-Heres-muted">
+                                {networkLabel}
+                              </p>
+                              {asset.networks.includes('stellar') && !stellarReady && (
+                                <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Stellar issuer env required</p>
+                              )}
+                              {configured && !solanaReady && (
+                                <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Stellar custody flow required</p>
+                              )}
                               {!configured && <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Env required</p>}
                             </button>
                           )
@@ -997,7 +1025,19 @@ export default function CreatePage() {
                     </div>
                     {!tokenAssetReady && (
                       <p className="text-xs text-amber-300">
-                        {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid token mint for the active network.
+                        {tokenAssetSupportsSolana
+                          ? (
+                            <>
+                              {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid Solana token mint before this Solana capsule can be created.
+                            </>
+                          )
+                          : `${selectedTokenAsset} is supported on Stellar only. Add the Privy/Stellar custody flow before enabling capsule creation for this asset.`}
+                      </p>
+                    )}
+                    {tokenAssetSupportsStellar && (
+                      <p className="text-xs text-Heres-muted">
+                        Stellar route: {tokenAssetConfig.stellar?.native ? 'native XLM' : `${tokenAssetConfig.stellar?.code || selectedTokenAsset} issued asset`}
+                        {!tokenAssetConfig.stellar?.native && !tokenAssetStellarReady ? ' (issuer not configured)' : ''}
                       </p>
                     )}
                     <div>
