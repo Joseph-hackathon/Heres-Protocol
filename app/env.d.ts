@@ -11,6 +11,10 @@ declare namespace NodeJS {
     SOLANA_FALLBACK_RPC_URL?: string
     NEXT_PUBLIC_PROGRAM_ID?: string
     NEXT_PUBLIC_PLATFORM_FEE_RECIPIENT?: string
+    NEXT_PUBLIC_PRIVY_APP_ID?: string
+    NEXT_PUBLIC_PRIVY_CLIENT_ID?: string
+    PRIVY_APP_ID?: string
+    PRIVY_APP_SECRET?: string
     NEXT_PUBLIC_BTC_MINT?: string
     NEXT_PUBLIC_BTC_DEVNET_MINT?: string
     NEXT_PUBLIC_ETH_MINT?: string

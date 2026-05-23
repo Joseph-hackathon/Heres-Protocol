@@ -45,6 +45,7 @@ import {
 import { isValidSolanaAddress } from '@/config/solana'
 import { PublicKey } from '@solana/web3.js'
 import { SectionEyebrow, ServiceAccordionSection, ServiceMetaCard, ServicePageHeader } from '@/components/ui/service-page'
+import { PrivyConnectButton } from '@/components/PrivyConnectButton'
 
 export type CapsuleAssetType = 'token' | 'nft' | null
 type InactivityUnit = 'days' | 'minutes'
@@ -917,9 +918,11 @@ export default function CreatePage() {
               <h2 className="text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
               <p className="mx-auto mt-3 max-w-2xl text-Heres-muted">
                 Connect Phantom or another Solana wallet to unlock capsule creation and NFT/token selection.
+                Use Privy to also link EVM and Stellar-capable account flows for cross-network assets.
               </p>
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex flex-wrap justify-center gap-3">
                 <WalletMultiButton className="!h-11 !rounded-xl !bg-Heres-surface !px-5 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!bg-Heres-card active:scale-95" />
+                <PrivyConnectButton />
               </div>
             </div>
           )}

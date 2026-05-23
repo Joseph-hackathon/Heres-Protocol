@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { Menu, User, X, ChevronDown } from 'lucide-react'
 import { SOLANA_CONFIG, getNetworkDisplayLabel } from '@/constants'
+import { PrivyConnectButton } from '@/components/PrivyConnectButton'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
 const WalletMultiButton = dynamic(
@@ -148,6 +149,9 @@ export function Navbar() {
           <div className="relative z-50 hidden items-center wallet-nav-trigger sm:flex">
             <WalletMultiButton className="!h-10 !rounded-2xl !border !border-Heres-accent/20 !bg-Heres-accent !px-4 !py-0 !text-sm !font-semibold !text-slate-950 transition-opacity hover:!border-Heres-accent/40 hover:!opacity-95 active:scale-95" />
           </div>
+          <div className="relative z-50 hidden items-center sm:flex">
+            <PrivyConnectButton />
+          </div>
         </div>
       </div>
 
@@ -212,6 +216,9 @@ export function Navbar() {
             </div>
             <div className="mobile-menu-wallet-wrap mt-2 w-full min-w-0 overflow-hidden border-t border-Heres-border/70 px-6 pt-2 pb-3">
               <WalletMultiButton className="!h-11 !min-h-[44px] !w-full !max-w-full !min-w-0 !rounded-xl !bg-Heres-surface !px-4 !py-0 !text-sm !font-medium !text-white transition-opacity hover:!bg-Heres-card active:scale-95" />
+              <div className="mt-2">
+                <PrivyConnectButton compact />
+              </div>
             </div>
           </nav>
         </div>
