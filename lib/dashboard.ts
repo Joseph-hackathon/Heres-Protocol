@@ -1254,7 +1254,7 @@ async function buildDashboardSnapshot(
       const events = (historyIndex?.capsuleEventsByCapsule[capsule.capsuleAddress] || []).sort(
         (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
       )
-      const parsedIntent = parseIntentPayload(capsule.intentData)
+            const parsedIntent = parseIntentPayload(capsule.intentData, { silent: true })
       const asset = inferAssetConfig(parsedIntent, null)
       const totalAmount =
         parsedIntent && 'totalAmount' in parsedIntent && typeof parsedIntent.totalAmount === 'string'

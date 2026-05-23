@@ -20,14 +20,15 @@ function loadEnv(): Record<string, string> {
 }
 
 const env = loadEnv()
-const HELIUS_RPC = env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://devnet.helius-rpc.com/?api-key=${env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : 'https://api.devnet.solana.com'
+const RPC_URL = env.SOLANA_RPC_URL ||
+    (env.NEXT_PUBLIC_ALCHEMY_API_KEY
+        ? `https://solana-devnet.g.alchemy.com/v2/${env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+        : 'https://api.devnet.solana.com')
 
 async function main() {
     console.log("=== Updating Fee Config to Zero ===\n")
 
-    const connection = new Connection(HELIUS_RPC, 'confirmed')
+    const connection = new Connection(RPC_URL, 'confirmed')
 
     const privateKey = env.CRANK_WALLET_PRIVATE_KEY
     if (!privateKey) {

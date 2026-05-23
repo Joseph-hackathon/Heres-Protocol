@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS capsule_owner_registry (
   registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS helius_webhook_logs (
+CREATE TABLE IF NOT EXISTS rpc_ingestion_logs (
   id BIGSERIAL PRIMARY KEY,
   event_hash TEXT NOT NULL UNIQUE,
   verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -73,6 +73,6 @@ CREATE TABLE IF NOT EXISTS helius_webhook_logs (
   processing_error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_helius_webhook_logs_pending
-  ON helius_webhook_logs (processed, processing_started_at, received_at);
+CREATE INDEX IF NOT EXISTS idx_rpc_ingestion_logs_pending
+  ON rpc_ingestion_logs (processed, processing_started_at, received_at);
 `

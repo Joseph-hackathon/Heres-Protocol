@@ -1,7 +1,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { ArrowRight, Shield, Smartphone, Sparkles } from 'lucide-react'
-import { getDashboardSnapshot } from '@/lib/dashboard'
+import { LandingHeroStats, LandingSummaryStats } from '@/components/LandingLiveStats'
 
 const partnerLogos = [
   { name: 'Colosseum', src: '/logos/colosseum-logo-white.svg', logoWidth: 122, wordmarkOnly: true },
@@ -96,53 +96,7 @@ function PartnerBadge({
   )
 }
 
-function formatMetricCount(value: number) {
-  return new Intl.NumberFormat('en-US').format(value)
-}
-
-function formatAssetAmount(value: number) {
-  if (value >= 100) return value.toFixed(0)
-  if (value >= 1) return value.toFixed(2)
-  return value.toFixed(4)
-}
-
-function formatSolAmount(lamports: number) {
-  return (lamports / 1_000_000_000).toLocaleString('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: lamports >= 100_000_000_000 ? 0 : 2,
-  })
-}
-
-async function getLandingStats() {
-  try {
-    const snapshot = await getDashboardSnapshot(false, true, false)
-    const assetSummary = Object.entries(snapshot.summary.activeAssetTotals || {})
-      .filter((entry): entry is [string, number] => Number.isFinite(entry[1]) && entry[1] > 0)
-      .sort((a, b) => b[1] - a[1])
-      .map(([symbol, amount]) => `${formatAssetAmount(amount)} ${symbol}`)
-      .join(' · ')
-
-    return {
-      total: snapshot.summary.total,
-      active: snapshot.summary.active,
-      executed: snapshot.summary.executed,
-      totalValueSecuredLamports: snapshot.summary.totalValueSecuredLamports,
-      assetSummary: assetSummary || 'No active locked assets',
-    }
-  } catch {
-    return {
-      total: 0,
-      active: 0,
-      executed: 0,
-      totalValueSecuredLamports: 0,
-      assetSummary: 'Dashboard metrics syncing',
-    }
-  }
-}
-
-export default async function HomePage() {
-  const landingStats = await getLandingStats()
-
+export default function HomePage() {
   return (
     <div className="landing-aurora bg-Heres-navyDeep text-Heres-white">
       <section className="relative overflow-hidden px-4 pt-32 pb-24 sm:px-6 lg:px-8">
@@ -191,24 +145,7 @@ export default async function HomePage() {
           </div>
 
           <div className="landing-float-card landing-interactive-card rounded-[32px] border border-Heres-border/80 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.92))] p-6 shadow-[0_24px_60px_rgba(0,0,0,0.32)]">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="landing-stat-card rounded-[22px] border border-Heres-border/70 bg-black/25 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted">Capsules Created</p>
-                <p className="mt-4 text-4xl font-black tracking-tight text-white">{formatMetricCount(landingStats.total)}</p>
-              </div>
-              <div className="landing-stat-card rounded-[22px] border border-Heres-border/70 bg-black/25 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted">Value Secured</p>
-                <p className="mt-4 text-4xl font-black tracking-tight text-Heres-accent">{formatSolAmount(landingStats.totalValueSecuredLamports)} SOL</p>
-              </div>
-              <div className="landing-stat-card rounded-[22px] border border-Heres-border/70 bg-black/25 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted">Active Capsules</p>
-                <p className="mt-4 text-4xl font-black tracking-tight text-white">{formatMetricCount(landingStats.active)}</p>
-              </div>
-              <div className="landing-stat-card rounded-[22px] border border-Heres-border/70 bg-black/25 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted">Asset Mix</p>
-                <p className="mt-4 text-lg font-semibold leading-7 text-white">{landingStats.assetSummary}</p>
-              </div>
-            </div>
+            <LandingHeroStats />
           </div>
         </div>
       </section>
@@ -380,24 +317,7 @@ export default async function HomePage() {
 
       <section className="landing-section-beam border-y border-Heres-border/60 bg-[linear-gradient(180deg,rgba(13,20,45,0.96),rgba(8,13,30,0.94))] px-4 py-24 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-6xl text-center">
-          <div className="grid gap-10 border-b border-Heres-border/60 pb-12 md:grid-cols-3">
-            <div className="md:border-r md:border-Heres-border/40">
-              <p className="text-5xl font-black uppercase tracking-tight text-white">{formatMetricCount(landingStats.total)}</p>
-              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Capsules Created</p>
-            </div>
-            <div className="md:border-r md:border-Heres-border/40">
-              <p className="text-5xl font-black uppercase tracking-tight text-Heres-accent">{formatSolAmount(landingStats.totalValueSecuredLamports)} SOL</p>
-              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Value Secured</p>
-            </div>
-            <div>
-              <p className="text-5xl font-black uppercase tracking-tight text-white">{formatMetricCount(landingStats.executed)}</p>
-              <p className="mt-3 text-sm uppercase tracking-[0.16em] text-Heres-muted">Executed Capsules</p>
-            </div>
-          </div>
-
-          <p className="mx-auto mt-8 max-w-4xl text-sm font-semibold uppercase tracking-[0.16em] text-Heres-accent">
-            Currently securing {landingStats.assetSummary}
-          </p>
+          <LandingSummaryStats />
           <h2 className="mx-auto mt-6 max-w-5xl text-3xl font-black uppercase leading-tight tracking-[-0.03em] text-white sm:text-5xl">
             Build a recovery layer that can outlast the last login.
           </h2>

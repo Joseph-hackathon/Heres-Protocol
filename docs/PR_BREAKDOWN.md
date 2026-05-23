@@ -16,8 +16,7 @@ This document breaks the requested scope into independent PRs with the current c
 - Goal: freeze scope, dependencies, and verification strategy before feature work.
 - Current state:
   - BTC and ETH already exist in [lib/assets.ts](/Users/yong/snorlax/Heres-Protocol/lib/assets.ts) and [constants/index.ts](/Users/yong/snorlax/Heres-Protocol/constants/index.ts)
-  - Helius is still wired into dashboard, NFT fetch, and webhook paths
-  - Alchemy exists only as branding in the current UI
+  - Alchemy is the preferred RPC provider, with public Solana RPC as fallback
 - Validation:
   - `npm test`
 
@@ -144,18 +143,12 @@ This document breaks the requested scope into independent PRs with the current c
   - existing auth tests
   - workflow smoke tests with mock CRE endpoints
 
-### PR 11. Alchemy integration and Helius removal
+### PR 11. Alchemy integration and legacy provider removal
 
-- Goal: fully replace Helius dependencies with Alchemy.
+- Goal: fully replace legacy provider dependencies with Alchemy.
 - Current state:
-  - Helius is used in:
-    - [lib/helius.ts](/Users/yong/snorlax/Heres-Protocol/lib/helius.ts)
-    - [app/api/helius/nfts/route.ts](/Users/yong/snorlax/Heres-Protocol/app/api/helius/nfts/route.ts)
-    - [app/api/helius/webhook/route.ts](/Users/yong/snorlax/Heres-Protocol/app/api/helius/webhook/route.ts)
-    - [app/dashboard/page.tsx](/Users/yong/snorlax/Heres-Protocol/app/dashboard/page.tsx)
-    - [app/create/page.tsx](/Users/yong/snorlax/Heres-Protocol/app/create/page.tsx)
-    - multiple scripts and docs
-  - Alchemy branding exists, but runtime integration does not
+  - Runtime RPC and NFT lookup use Alchemy when `NEXT_PUBLIC_ALCHEMY_API_KEY` is configured
+  - Generic Solana RPC remains as an explicit/public fallback path
 - Risk:
   - this is a large refactor touching RPC, NFTs, transaction indexing, and webhook architecture
 - Validation:
@@ -187,5 +180,5 @@ This document breaks the requested scope into independent PRs with the current c
 ## Notes
 
 - PR 5, PR 6, PR 8, and PR 11 have external dependency or product-rule ambiguity and should be handled after the smaller hardening PRs.
-- The most dangerous item is Helius removal because it touches live data sourcing, webhook ingestion, and dashboard behavior simultaneously.
+- The most dangerous item is provider removal because it touches live data sourcing, ingestion, and dashboard behavior simultaneously.
 - The most likely hidden backend work is the Stellar integration and beneficiary-visibility rules.

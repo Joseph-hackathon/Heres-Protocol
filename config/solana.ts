@@ -3,22 +3,22 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js'
-import { SOLANA_CONFIG, HELIUS_CONFIG, PER_TEE, MAGICBLOCK_ER } from '@/constants'
+import { SOLANA_CONFIG, SOLANA_RPC_CONFIG, PER_TEE, MAGICBLOCK_ER } from '@/constants'
 
 let cachedConnection: Connection | null = null
 let cachedFallbackConnection: Connection | null = null
 
 /**
  * Get Solana connection with the configured base-layer RPC.
- * Preference order: explicit RPC URL, Alchemy, Helius, public cluster RPC.
+ * Preference order: explicit RPC URL, Alchemy, public cluster RPC.
  */
 export function getSolanaConnection(): Connection {
   if (cachedConnection) return cachedConnection
 
-  const rpcUrl = HELIUS_CONFIG.RPC_URL
+  const rpcUrl = SOLANA_RPC_CONFIG.RPC_URL
   cachedConnection = new Connection(rpcUrl, {
     commitment: 'confirmed',
-    wsEndpoint: HELIUS_CONFIG.RPC_URL.replace('https', 'wss'),
+    wsEndpoint: SOLANA_RPC_CONFIG.RPC_URL.replace('https', 'wss'),
   })
   return cachedConnection
 }
@@ -26,10 +26,10 @@ export function getSolanaConnection(): Connection {
 export function getSolanaFallbackConnection(): Connection {
   if (cachedFallbackConnection) return cachedFallbackConnection
 
-  const rpcUrl = HELIUS_CONFIG.RPC_URL_ALT
+  const rpcUrl = SOLANA_RPC_CONFIG.RPC_URL_ALT
   cachedFallbackConnection = new Connection(rpcUrl, {
     commitment: 'confirmed',
-    wsEndpoint: HELIUS_CONFIG.RPC_URL_ALT.replace('https', 'wss'),
+    wsEndpoint: SOLANA_RPC_CONFIG.RPC_URL_ALT.replace('https', 'wss'),
   })
   return cachedFallbackConnection
 }

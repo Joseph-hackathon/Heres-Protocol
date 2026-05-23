@@ -6,7 +6,7 @@ const urlsToCache = [
   '/favicon.svg',
   '/logos/solana.svg',
   '/logos/phantom.svg',
-  '/logos/helius.svg',
+  '/logos/alchemy-logo.svg',
   '/logos/backpack.png',
   '/logos/magicblock.svg'
 ];

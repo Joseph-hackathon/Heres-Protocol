@@ -1,7 +1,7 @@
 export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { claimPendingWebhookLogs, completeWebhookLog, failWebhookLog, getWebhookBacklogCount, saveSyncCheckpoint } from '@/lib/dashboard-store'
+import { claimPendingIngestionLogs, completeIngestionLog, failIngestionLog, getIngestionBacklogCount, saveSyncCheckpoint } from '@/lib/dashboard-store'
 import { ensureDashboardPrewarmScheduler, triggerDashboardPrewarm } from '@/lib/dashboard'
 
 function isAuthorized(request: NextRequest): boolean {
@@ -13,17 +13,17 @@ function isAuthorized(request: NextRequest): boolean {
   return authHeader === `Bearer ${token}` || headerToken === token
 }
 
-async function processWebhookBatch(limit: number) {
-  const claimed = await claimPendingWebhookLogs(limit)
+async function processIngestionBatch(limit: number) {
+  const claimed = await claimPendingIngestionLogs(limit)
   if (!claimed.length) return { claimed: 0 }
 
   try {
     await triggerDashboardPrewarm(true)
-    await Promise.all(claimed.map((row) => completeWebhookLog(row.id)))
+    await Promise.all(claimed.map((row) => completeIngestionLog(row.id)))
     return { claimed: claimed.length }
   } catch (error: any) {
     await Promise.all(
-      claimed.map((row) => failWebhookLog(row.id, error?.message || 'Worker refresh failed'))
+      claimed.map((row) => failIngestionLog(row.id, error?.message || 'Worker refresh failed'))
     )
     throw error
   }
@@ -38,14 +38,14 @@ async function handleRequest(request: NextRequest) {
 
   const limit = Math.max(1, Math.min(100, Number(request.nextUrl.searchParams.get('limit') || '25')))
   const force = request.nextUrl.searchParams.get('force') === '1'
-  const backlogBefore = await getWebhookBacklogCount()
-  const batch = await processWebhookBatch(limit)
+  const backlogBefore = await getIngestionBacklogCount()
+  const batch = await processIngestionBatch(limit)
 
   if (force && batch.claimed === 0) {
     await triggerDashboardPrewarm(true)
   }
 
-  const backlogAfter = await getWebhookBacklogCount()
+  const backlogAfter = await getIngestionBacklogCount()
   await saveSyncCheckpoint('dashboard:indexer:last-run', {
     ranAt: Date.now(),
     forced: force,
@@ -85,4 +85,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-

@@ -1462,7 +1462,7 @@
     {
       "name": "update_activity",
       "docs": [
-        "Update last activity timestamp (called by Helius webhook or user)"
+        "Update last activity timestamp (called by indexer, crank, or user)"
       ],
       "discriminator": [
         137,

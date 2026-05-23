@@ -3,7 +3,10 @@ import { Program, AnchorProvider, Wallet, BN } from "@coral-xyz/anchor"
 import * as fs from "fs"
 import idl from "../idl/HeresProgram.json"
 
-const RPC_URL = process.env.SOLANA_RPC_URL || "https://devnet.helius-rpc.com/?api-key=a393269c-0295-485d-ba5f-0c8ffc828d0d"
+const RPC_URL = process.env.SOLANA_RPC_URL ||
+    (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY
+        ? `https://solana-devnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+        : "https://api.devnet.solana.com")
 const TEE_VALIDATOR = "FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA"
 const MAGIC_BLOCK_DELEGATION_PID = "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
 

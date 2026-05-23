@@ -6,8 +6,6 @@ declare namespace NodeJS {
     NEXT_PUBLIC_SOLANA_NETWORK?: string
     NEXT_PUBLIC_ALCHEMY_API_KEY?: string
     NEXT_PUBLIC_SOLANA_RPC_URL?: string
-    NEXT_PUBLIC_SOLANA_RPC_URL?: string
-    NEXT_PUBLIC_HELIUS_API_KEY?: string
     NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL?: string
     SOLANA_RPC_URL?: string
     SOLANA_FALLBACK_RPC_URL?: string
@@ -16,7 +14,6 @@ declare namespace NodeJS {
     APP_BASE_URL?: string
     INDEXER_BASE_URL?: string
     DATABASE_URL?: string
-    HELIUS_WEBHOOK_AUTH_TOKEN?: string
     CHAINLINK_CRE_WEBHOOK_URL?: string
     CHAINLINK_CRE_API_KEY?: string
     CHAINLINK_CRE_SIGNING_SECRET?: string

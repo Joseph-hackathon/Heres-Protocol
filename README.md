@@ -33,7 +33,7 @@ Our design and positioning are informed by published research and ecosystem repo
 ### Solana ecosystem
 
 - **Adoption and infra:** Solana has seen strong developer growth, high DEX share, and institutional interest.
-- **Implication for Heres:** We build on Solana for speed, low fees, and a clear program model; we integrate Helius for RPC and Magicblock for private execution so capsules are both persistent on-chain and privately monitored off-chain.
+- **Implication for Heres:** We build on Solana for speed, low fees, and a clear program model; we integrate Alchemy for RPC and Magicblock for private execution so capsules are both persistent on-chain and privately monitored off-chain.
 
 ---
 

@@ -70,12 +70,14 @@ export function decodeIntentData(data: Uint8Array): IntentData | null {
   }
 }
 
-export function parseIntentPayload(data: Uint8Array): AnyIntentData | null {
+export function parseIntentPayload(data: Uint8Array, options?: { silent?: boolean }): AnyIntentData | null {
   try {
     const json = new TextDecoder().decode(data)
     return JSON.parse(json) as AnyIntentData
   } catch (error) {
-    console.error('Error parsing intent payload:', error)
+    if (!options?.silent) {
+      console.error('Error parsing intent payload:', error)
+    }
     return null
   }
 }

@@ -3,7 +3,7 @@ import type { DashboardCapsuleEvent, DashboardSnapshot } from '@/lib/dashboard'
 import { debugWarn } from '@/lib/log'
 import { ensurePostgresSchema, isPostgresConfigured, pgQuery, safePgQuery } from '@/lib/postgres'
 
-type WebhookRow = {
+type IngestionRow = {
   id: number
   event_hash: string
   payload: unknown
@@ -197,7 +197,7 @@ export async function persistDashboardIndex(snapshot: DashboardSnapshot): Promis
   )
 }
 
-export async function enqueueHeliusWebhook(rawBody: string, headers: Record<string, string>, verified: boolean): Promise<void> {
+export async function enqueueRpcIngestion(rawBody: string, headers: Record<string, string>, verified: boolean): Promise<void> {
   if (!isPostgresConfigured()) return
   await ensurePostgresSchema()
 
@@ -207,20 +207,20 @@ export async function enqueueHeliusWebhook(rawBody: string, headers: Record<stri
   const hashedAuthorization = hashSecret(headers.authorization || null)
 
   await pgQuery(
-    `INSERT INTO helius_webhook_logs (event_hash, verified, authorization_value, payload, headers)
+    `INSERT INTO rpc_ingestion_logs (event_hash, verified, authorization_value, payload, headers)
      VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
      ON CONFLICT (event_hash) DO NOTHING`,
     [eventHash, verified, hashedAuthorization, JSON.stringify(payload), JSON.stringify(sanitizedHeaders)]
   )
 }
 
-export async function claimPendingWebhookLogs(limit = 25): Promise<WebhookRow[]> {
+export async function claimPendingIngestionLogs(limit = 25): Promise<IngestionRow[]> {
   if (!isPostgresConfigured()) return []
   await ensurePostgresSchema()
-  const result = await pgQuery<WebhookRow>(
+  const result = await pgQuery<IngestionRow>(
     `WITH next_batch AS (
       SELECT id
-      FROM helius_webhook_logs
+      FROM rpc_ingestion_logs
       WHERE processed = FALSE
         AND verified = TRUE
         AND processing_started_at IS NULL
@@ -228,7 +228,7 @@ export async function claimPendingWebhookLogs(limit = 25): Promise<WebhookRow[]>
       LIMIT $1
       FOR UPDATE SKIP LOCKED
     )
-    UPDATE helius_webhook_logs logs
+    UPDATE rpc_ingestion_logs logs
     SET processing_started_at = NOW(), processing_error = NULL
     FROM next_batch
     WHERE logs.id = next_batch.id
@@ -238,30 +238,30 @@ export async function claimPendingWebhookLogs(limit = 25): Promise<WebhookRow[]>
   return result.rows
 }
 
-export async function completeWebhookLog(id: number): Promise<void> {
+export async function completeIngestionLog(id: number): Promise<void> {
   if (!isPostgresConfigured()) return
   await pgQuery(
-    `UPDATE helius_webhook_logs
+    `UPDATE rpc_ingestion_logs
      SET processed = TRUE, processed_at = NOW(), processing_error = NULL
      WHERE id = $1`,
     [id]
   )
 }
 
-export async function failWebhookLog(id: number, errorMessage: string): Promise<void> {
+export async function failIngestionLog(id: number, errorMessage: string): Promise<void> {
   if (!isPostgresConfigured()) return
   await pgQuery(
-    `UPDATE helius_webhook_logs
+    `UPDATE rpc_ingestion_logs
      SET processing_started_at = NULL, processing_error = $2
      WHERE id = $1`,
     [id, errorMessage.slice(0, 1000)]
   )
 }
 
-export async function getWebhookBacklogCount(): Promise<number> {
+export async function getIngestionBacklogCount(): Promise<number> {
   if (!isPostgresConfigured()) return 0
   const result = await safePgQuery<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM helius_webhook_logs WHERE processed = FALSE AND verified = TRUE`
+    `SELECT COUNT(*)::text AS count FROM rpc_ingestion_logs WHERE processed = FALSE AND verified = TRUE`
   )
   return Number(result?.rows?.[0]?.count || 0)
 }
@@ -294,6 +294,5 @@ export async function withPostgresSafety<T>(work: () => Promise<T>, fallback: T)
     return fallback
   }
 }
-
 
 

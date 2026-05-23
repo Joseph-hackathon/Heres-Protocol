@@ -439,7 +439,7 @@ export default function DashboardPage() {
     } catch (e: any) {
       const msg = e?.message || String(e)
       if (/already in use|AccountDidNotSerialize|0x0/i.test(msg)) {
-        setInitFeeError('?대? 珥덇린?붾맖 (Fee config already initialized).')
+        setInitFeeError('Fee config is already initialized.')
         setFeeConfigExists(true)
       } else {
         setInitFeeError(msg)

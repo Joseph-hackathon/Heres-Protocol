@@ -353,7 +353,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | **MagicBlock ER/PER** | Private condition monitoring, automatic crank execution | Delegation + ScheduleTask |
 | **Chainlink CRE** | Encrypted intent statement delivery via TEE | Webhook dispatch + callback |
 | **Chainlink CCIP** | Cross-chain asset transfer to EVM beneficiaries | `distribute_assets` instruction |
-| **Helius** | RPC provider, Enhanced Transactions API, DAS (NFT) API | Frontend + Crank |
+| **Alchemy** | Solana RPC provider and NFT asset lookup | Frontend + Crank |
 | **Upstash Redis** | CRE secret storage, delivery ledger | Server-side encrypted store |
 | **Resend** | Transactional email delivery (called from inside CRE TEE) | Email API |
 
@@ -387,7 +387,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | **Frontend** | Next.js 14, React, TypeScript, Tailwind CSS, GSAP |
 | **Smart Contract** | Anchor (Rust), Solana Devnet |
 | **Wallet** | Solana Wallet Adapter (Phantom, Backpack, etc.) |
-| **RPC** | Helius API (Enhanced TX, DAS) |
+| **RPC** | Alchemy Solana RPC with public Solana fallback |
 | **Private Execution** | MagicBlock ER/PER (TEE) |
 | **Intent Delivery** | Chainlink CRE (Confidential Runtime Environment) |
 | **Cross-Chain** | Chainlink CCIP |

@@ -24,9 +24,10 @@ const idlPath = path.join(process.cwd(), 'idl', 'HeresProgram.json')
 const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'))
 
 const PROGRAM_ID = new PublicKey('BiAB1qZpx8kDgS5dJxKFdCJDNMagCn8xfj4afNhRZWms')
-const HELIUS_RPC = env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://devnet.helius-rpc.com/?api-key=${env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : 'https://api.devnet.solana.com'
+const RPC_URL = env.SOLANA_RPC_URL ||
+    (env.NEXT_PUBLIC_ALCHEMY_API_KEY
+        ? `https://solana-devnet.g.alchemy.com/v2/${env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+        : 'https://api.devnet.solana.com')
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
@@ -44,7 +45,7 @@ function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey
 }
 
 async function resetExpiredCapsules() {
-    const connection = new Connection(HELIUS_RPC, 'confirmed')
+    const connection = new Connection(RPC_URL, 'confirmed')
 
     const privateKey = env.CRANK_WALLET_PRIVATE_KEY
     if (!privateKey) {

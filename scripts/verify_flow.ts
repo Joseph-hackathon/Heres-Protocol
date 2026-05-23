@@ -31,16 +31,17 @@ function loadEnv(): Record<string, string> {
 }
 
 const env = loadEnv()
-const HELIUS_RPC = env.NEXT_PUBLIC_HELIUS_API_KEY
-    ? `https://devnet.helius-rpc.com/?api-key=${env.NEXT_PUBLIC_HELIUS_API_KEY}`
-    : 'https://api.devnet.solana.com'
+const RPC_URL = env.SOLANA_RPC_URL ||
+    (env.NEXT_PUBLIC_ALCHEMY_API_KEY
+        ? `https://solana-devnet.g.alchemy.com/v2/${env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+        : 'https://api.devnet.solana.com')
 
 async function main() {
     fs.writeFileSync(LOG_FILE, `Starting Verification at ${new Date().toISOString()}\n`)
-    log("RPC: " + HELIUS_RPC)
+    log("RPC: " + RPC_URL)
     log("Program ID: " + PROGRAM_ID_STR)
 
-    const connection = new Connection(HELIUS_RPC, 'confirmed')
+    const connection = new Connection(RPC_URL, 'confirmed')
 
     // Use Crank Wallet for testing
     const privateKey = env.CRANK_WALLET_PRIVATE_KEY

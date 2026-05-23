@@ -1116,13 +1116,6 @@ export default function CreatePage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => updateBeneficiary(index, 'chain', 'stellar')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'stellar' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
-                              >
-                                Stellar
-                              </button>
-                              <button
-                                type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'evm')}
                                 className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >

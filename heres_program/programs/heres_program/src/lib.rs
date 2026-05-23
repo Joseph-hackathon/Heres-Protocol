@@ -596,7 +596,7 @@ pub mod heres_program {
         Ok(())
     }
 
-    /// Update last activity timestamp (called by Helius webhook or user)
+    /// Update last activity timestamp (called by indexer, crank, or user)
     pub fn update_activity(ctx: Context<UpdateActivity>) -> Result<()> {
         let capsule = &mut ctx.accounts.capsule;
         require!(capsule.owner == ctx.accounts.owner.key(), ErrorCode::Unauthorized);

@@ -31,16 +31,6 @@ function getDefaultSolanaRpcUrl(network: SolanaNetwork): string {
   }
 }
 
-function getDefaultHeliusRpcUrl(network: SolanaNetwork, apiKey: string): string {
-  const subdomain = network === 'mainnet-beta' ? 'mainnet' : network
-  return `https://${subdomain}.helius-rpc.com/?api-key=${apiKey}`
-}
-
-function getDefaultHeliusApiBaseUrl(network: SolanaNetwork): string {
-  const subdomain = network === 'mainnet-beta' ? 'mainnet' : network
-  return `https://api-${subdomain}.helius-rpc.com/v0`
-}
-
 function getDefaultAlchemyRpcUrl(network: SolanaNetwork, apiKey: string): string {
   const subdomain = network === 'mainnet-beta' ? 'mainnet' : network
   return `https://solana-${subdomain}.g.alchemy.com/v2/${apiKey}`
@@ -108,7 +98,6 @@ export const SOLANA_CONFIG = {
   NETWORK: normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK),
   PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW',
   ALCHEMY_API_KEY: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || '',
-  HELIUS_API_KEY: process.env.NEXT_PUBLIC_HELIUS_API_KEY || '',
   RPC_URL: process.env.SOLANA_RPC_URL || '',
   FALLBACK_RPC_URL:
     process.env.SOLANA_FALLBACK_RPC_URL ||
@@ -125,15 +114,12 @@ export const ALCHEMY_CONFIG = {
     : '',
 } as const
 
-// Helius API Configuration
-export const HELIUS_CONFIG = {
-  BASE_URL: getDefaultHeliusApiBaseUrl(SOLANA_CONFIG.NETWORK),
+// Solana RPC configuration. Preference order: explicit RPC, Alchemy, public cluster RPC.
+export const SOLANA_RPC_CONFIG = {
   RPC_URL: SOLANA_CONFIG.RPC_URL
     ? SOLANA_CONFIG.RPC_URL
     : SOLANA_CONFIG.ALCHEMY_API_KEY
       ? getDefaultAlchemyRpcUrl(SOLANA_CONFIG.NETWORK, SOLANA_CONFIG.ALCHEMY_API_KEY)
-    : SOLANA_CONFIG.HELIUS_API_KEY
-      ? getDefaultHeliusRpcUrl(SOLANA_CONFIG.NETWORK, SOLANA_CONFIG.HELIUS_API_KEY)
       : getDefaultSolanaRpcUrl(SOLANA_CONFIG.NETWORK),
   RPC_URL_ALT: SOLANA_CONFIG.FALLBACK_RPC_URL || getDefaultSolanaRpcUrl(SOLANA_CONFIG.NETWORK),
   PUBLIC_RPC_URL: getDefaultSolanaRpcUrl(SOLANA_CONFIG.NETWORK),

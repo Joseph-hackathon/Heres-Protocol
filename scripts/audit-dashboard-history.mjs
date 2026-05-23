@@ -1,12 +1,14 @@
-const apiKey = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+const rpcUrl =
+  process.env.SOLANA_RPC_URL ||
+  (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY
+    ? `https://solana-devnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`
+    : '');
 const programId = process.env.NEXT_PUBLIC_PROGRAM_ID || '26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6';
 
-if (!apiKey) {
-  console.error('NEXT_PUBLIC_HELIUS_API_KEY is required');
+if (!rpcUrl) {
+  console.error('SOLANA_RPC_URL or NEXT_PUBLIC_ALCHEMY_API_KEY is required');
   process.exit(1);
 }
-
-const rpcUrl = `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
