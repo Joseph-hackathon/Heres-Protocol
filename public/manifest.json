@@ -1,6 +1,6 @@
 {
-    "name": "Heres",
-    "short_name": "Heres",
+    "name": "Heresprotocol",
+    "short_name": "Heresprotocol",
     "description": "A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth.",
     "categories": [
         "finance",

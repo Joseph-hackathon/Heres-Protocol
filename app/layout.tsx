@@ -30,12 +30,20 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'Heres - Privacy-Preserving Death Insurance Protocol on Solana',
+  title: 'Heresprotocol - Privacy-Preserving Death Insurance Protocol on Solana',
   description:
     'A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth. Powered by Helius & Phantom.',
   manifest: '/manifest.json',
   icons: {
     icon: [{ url: '/logo-white-icon.png', type: 'image/png' }],
+  },
+  openGraph: {
+    title: 'Heresprotocol - Privacy-Preserving Death Insurance Protocol on Solana',
+    description:
+      'A privacy-preserving capsule protocol on Solana. Assets stay delegated, conditions stay private inside Magicblock ER, execution happens automatically when silence becomes truth. Powered by Helius & Phantom.',
+    siteName: 'Heresprotocol',
+    url: 'https://heresprotocol.com',
+    type: 'website',
   },
 }
 
@@ -50,13 +58,21 @@ export default function RootLayout({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              '@context': 'https://schema.org',
-              '@type': 'Organization',
-              name: 'Heres',
-              url: 'https://heresprotocol.com',
-              logo: 'https://heresprotocol.com/logo-white-icon.png',
-            }),
+            __html: JSON.stringify([
+              {
+                '@context': 'https://schema.org',
+                '@type': 'WebSite',
+                name: 'Heresprotocol',
+                url: 'https://heresprotocol.com',
+              },
+              {
+                '@context': 'https://schema.org',
+                '@type': 'Organization',
+                name: 'Heresprotocol',
+                url: 'https://heresprotocol.com',
+                logo: 'https://heresprotocol.com/logo-white-icon.png',
+              },
+            ]),
           }}
         />
       </head>
