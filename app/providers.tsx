@@ -1,49 +1,33 @@
 'use client'
 
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base'
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react'
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
-import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets'
 import { PrivyProvider } from '@privy-io/react-auth'
+import { createSolanaRpc, createSolanaRpcSubscriptions } from '@solana/kit'
 import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana'
 import { useMemo, ReactNode } from 'react'
 import { SOLANA_CONFIG } from '@/constants'
-import '@solana/wallet-adapter-react-ui/styles.css'
+import { PrivySolanaWalletAutoConnect, PrivySolanaWalletRegistrar } from '@/components/PrivySolanaWalletBridge'
 
 export function Providers({ children }: { children: ReactNode }) {
-  const network = useMemo(() => {
-    switch (SOLANA_CONFIG.NETWORK) {
-      case 'mainnet-beta':
-        return WalletAdapterNetwork.Mainnet
-      case 'testnet':
-        return WalletAdapterNetwork.Testnet
-      case 'devnet':
-      default:
-        return WalletAdapterNetwork.Devnet
-    }
-  }, [])
-
   const endpoint = useMemo(
     () => process.env.NEXT_PUBLIC_SOLANA_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL || 'https://api.devnet.solana.com',
     []
   )
+  const wsEndpoint = useMemo(
+    () => process.env.NEXT_PUBLIC_SOLANA_WS_URL || endpoint.replace(/^http/, 'ws'),
+    [endpoint]
+  )
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID
   const privyClientId = process.env.NEXT_PUBLIC_PRIVY_CLIENT_ID
 
-  const wallets = useMemo(
-    () => [
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter({ network }),
-    ],
-    [network]
-  )
+  const wallets = useMemo(() => [], [])
+  const privySolanaChain = `solana:${SOLANA_CONFIG.NETWORK === 'mainnet-beta' ? 'mainnet' : SOLANA_CONFIG.NETWORK}` as 'solana:mainnet' | 'solana:devnet' | 'solana:testnet'
 
   const app = (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>
-          {children}
-        </WalletModalProvider>
+        {privyAppId && <PrivySolanaWalletAutoConnect />}
+        {children}
       </WalletProvider>
     </ConnectionProvider>
   )
@@ -55,6 +39,14 @@ export function Providers({ children }: { children: ReactNode }) {
       appId={privyAppId}
       clientId={privyClientId}
       config={{
+        solana: {
+          rpcs: {
+            [privySolanaChain]: {
+              rpc: createSolanaRpc(endpoint as `${string}://${string}`),
+              rpcSubscriptions: createSolanaRpcSubscriptions(wsEndpoint as `${string}://${string}`),
+            },
+          } as any,
+        },
         appearance: {
           theme: '#071326',
           accentColor: '#22d3ee',
@@ -74,6 +66,7 @@ export function Providers({ children }: { children: ReactNode }) {
         },
       }}
     >
+      <PrivySolanaWalletRegistrar />
       {app}
     </PrivyProvider>
   )

@@ -2,14 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
-import dynamic from 'next/dynamic'
 import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink } from 'lucide-react'
 
-// Dynamic import to prevent hydration errors
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
 import { createCapsule, getCapsule, delegateCapsule, scheduleExecuteIntent, registerCapsuleOwnerForAutomation } from '@/lib/solana'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
 import { Beneficiary } from '@/types'
@@ -24,6 +18,7 @@ import {
 } from '@/constants'
 import { encodeIntentData, daysToSeconds } from '@/utils/intent'
 import {
+  AssetNetwork,
   getAssetConfig,
   getAssetMintPublicKey,
   getAssetNetworkLabels,
@@ -98,6 +93,7 @@ export default function CreatePage() {
   const [intent, setIntent] = useState('')
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
   const [selectedTokenAsset, setSelectedTokenAsset] = useState<SupportedAssetSymbol>('SOL')
+  const [selectedTokenNetwork, setSelectedTokenNetwork] = useState<AssetNetwork>('solana')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([
     { chain: 'solana', address: '', amount: '', amountType: 'fixed', destinationChainSelector: '' }
   ])
@@ -200,9 +196,20 @@ export default function CreatePage() {
   const tokenAssetConfig = getAssetConfig(selectedTokenAsset)
   const tokenAssetUnit = tokenAssetConfig.symbol
   const tokenAssetReady = isSolanaAssetConfigured(selectedTokenAsset)
-  const tokenAssetSupportsSolana = tokenAssetConfig.networks.includes('solana')
   const tokenAssetSupportsStellar = tokenAssetConfig.networks.includes('stellar')
   const tokenAssetStellarReady = isStellarIssuerConfigured(selectedTokenAsset)
+  const privyConfigured = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)
+  const stellarOriginEnabled = process.env.NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED === 'true'
+  const tokenAssetNetworkReady = selectedTokenNetwork === 'solana'
+    ? tokenAssetReady
+    : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled
+  const selectedTokenNetworkLabel = selectedTokenNetwork === 'solana' ? 'Solana' : 'Stellar'
+
+  useEffect(() => {
+    if (!tokenAssetConfig.networks.includes(selectedTokenNetwork)) {
+      setSelectedTokenNetwork(tokenAssetConfig.networks[0])
+    }
+  }, [selectedTokenNetwork, tokenAssetConfig.networks])
 
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
@@ -307,9 +314,15 @@ export default function CreatePage() {
   }
 
   const validateBeneficiaries = (): boolean => {
-    if (!tokenAssetReady) {
-      if (!tokenAssetSupportsSolana) {
-        alert(`${selectedTokenAsset} is Stellar-only. Stellar custody requires the Privy/Stellar wallet flow before it can be created as a capsule.`)
+    if (!tokenAssetNetworkReady) {
+      if (selectedTokenNetwork === 'stellar') {
+        if (!tokenAssetStellarReady) {
+          alert(`${selectedTokenAsset} Stellar issuer is not configured. Set NEXT_PUBLIC_STELLAR_${selectedTokenAsset}_ISSUER first.`)
+        } else if (!privyConfigured) {
+          alert('Privy is not configured. Set NEXT_PUBLIC_PRIVY_APP_ID before using Stellar-origin capsules.')
+        } else {
+          alert('Stellar-origin capsule creation is not enabled yet. Set NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED=true only after the Stellar custody signer is connected.')
+        }
       } else {
         alert(`${selectedTokenAsset} Solana mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
       }
@@ -402,7 +415,9 @@ export default function CreatePage() {
 
     try {
       const inactivityValueNum = parseInt(inactivityDays, 10)
-      const selectedMint = capsuleType === 'token' ? getAssetMintPublicKey(selectedTokenAsset) : undefined
+      const selectedMint = capsuleType === 'token' && selectedTokenNetwork === 'solana'
+        ? getAssetMintPublicKey(selectedTokenAsset)
+        : undefined
       let intentData: Uint8Array
       let creMeta: {
         enabled: true
@@ -469,6 +484,8 @@ export default function CreatePage() {
           delayDays: parseInt(delayDays),
           assetSymbol: selectedTokenAsset,
           assetMint: tokenAssetConfig.mint,
+          assetNetwork: selectedTokenNetwork,
+          stellarAsset: tokenAssetConfig.stellar,
           cre: creMeta,
         }
         intentData = new TextEncoder().encode(JSON.stringify(payload))
@@ -479,6 +496,8 @@ export default function CreatePage() {
           totalAmount,
           assetSymbol: selectedTokenAsset,
           assetMint: tokenAssetConfig.mint,
+          assetNetwork: selectedTokenNetwork,
+          stellarAsset: tokenAssetConfig.stellar,
           inactivityDays: inactivityUnit === 'days' ? inactivityValueNum : 0,
           inactivityValue: inactivityValueNum,
           inactivityUnit,
@@ -746,7 +765,7 @@ export default function CreatePage() {
 
   const hasAssetSelection = capsuleType !== null && (
     capsuleType === 'token'
-      ? Boolean(totalAmount.trim()) && tokenAssetReady
+      ? Boolean(totalAmount.trim()) && tokenAssetNetworkReady
       : selectedNftMints.length > 0
   )
   const hasBeneficiaryDetails = capsuleType === 'token'
@@ -819,6 +838,12 @@ export default function CreatePage() {
                   <span className="create-status-chip__dot" />
                   {capsuleType === 'token' ? `Asset: ${tokenAssetUnit}` : capsuleType === 'nft' ? `NFTs: ${selectedNftMints.length}` : 'Asset pending'}
                 </span>
+                {capsuleType === 'token' && (
+                  <span className="create-status-chip">
+                    <span className="create-status-chip__dot" />
+                    {selectedTokenNetworkLabel}
+                  </span>
+                )}
                 <span className="create-status-chip">
                   <span className="create-status-chip__dot" />
                   PER (TEE) secured
@@ -831,7 +856,7 @@ export default function CreatePage() {
                 <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
                   <ServiceMetaCard label="Asset" className="bg-Heres-surface/20 shadow-none">
                     <p className="text-[15px] font-semibold text-Heres-white">
-                      {capsuleType === 'token' ? `${tokenAssetUnit} capsule` : capsuleType === 'nft' ? 'NFT capsule' : 'Not selected'}
+                      {capsuleType === 'token' ? `${tokenAssetUnit} on ${selectedTokenNetworkLabel}` : capsuleType === 'nft' ? 'NFT capsule' : 'Not selected'}
                     </p>
                   </ServiceMetaCard>
                   <ServiceMetaCard label="Recipients" className="bg-Heres-surface/20 shadow-none">
@@ -917,11 +942,9 @@ export default function CreatePage() {
               <Shield className="mx-auto mb-5 h-14 w-14 text-Heres-accent" />
               <h2 className="text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
               <p className="mx-auto mt-3 max-w-2xl text-Heres-muted">
-                Connect Phantom or another Solana wallet to unlock capsule creation and NFT/token selection.
-                Use Privy to also link EVM and Stellar-capable account flows for cross-network assets.
+                Connect Privy to unlock capsule creation, Solana signing, EVM accounts, and Stellar-capable settlement flows from one account layer.
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-3">
-                <WalletMultiButton className="!h-11 !rounded-xl !bg-Heres-surface !px-5 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!bg-Heres-card active:scale-95" />
                 <PrivyConnectButton />
               </div>
             </div>
@@ -995,14 +1018,21 @@ export default function CreatePage() {
                           const solanaReady = isSolanaAssetConfigured(asset.symbol)
                           const networkLabel = getAssetNetworkLabels(asset.symbol)
                           const stellarReady = isStellarIssuerConfigured(asset.symbol)
+                          const selected = selectedTokenAsset === asset.symbol
                           return (
                             <button
                               key={asset.symbol}
                               type="button"
-                              onClick={() => configured && setSelectedTokenAsset(asset.symbol)}
+                              onClick={() => {
+                                if (!configured) return
+                                setSelectedTokenAsset(asset.symbol)
+                                if (!asset.networks.includes(selectedTokenNetwork)) {
+                                  setSelectedTokenNetwork(asset.networks[0])
+                                }
+                              }}
                               disabled={!configured}
                               className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                                selectedTokenAsset === asset.symbol
+                                selected
                                   ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
                                   : configured
                                     ? 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
@@ -1014,10 +1044,30 @@ export default function CreatePage() {
                               <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-Heres-muted">
                                 {networkLabel}
                               </p>
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {asset.networks.map((network) => {
+                                  const ready = network === 'solana' ? solanaReady : stellarReady
+                                  return (
+                                    <span
+                                      key={network}
+                                      className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                                        ready
+                                          ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                                          : 'border-amber-300/30 bg-amber-300/10 text-amber-300'
+                                      }`}
+                                    >
+                                      {network === 'solana' ? 'Solana' : 'Stellar'}
+                                    </span>
+                                  )
+                                })}
+                              </div>
                               {asset.networks.includes('stellar') && !stellarReady && (
                                 <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Stellar issuer env required</p>
                               )}
-                              {configured && !solanaReady && (
+                              {configured && asset.networks.includes('solana') && !solanaReady && (
+                                <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Solana mint env required</p>
+                              )}
+                              {configured && !asset.networks.includes('solana') && !stellarOriginEnabled && (
                                 <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Stellar custody flow required</p>
                               )}
                               {!configured && <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Env required</p>}
@@ -1026,15 +1076,75 @@ export default function CreatePage() {
                         })}
                       </div>
                     </div>
-                    {!tokenAssetReady && (
+                    <div>
+                      <label className="mb-2 block text-sm text-Heres-muted">Network</label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {tokenAssetConfig.networks.map((network) => {
+                          const isSelected = selectedTokenNetwork === network
+                          const isReady = network === 'solana'
+                            ? tokenAssetReady
+                            : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled
+                          const isConfigured = network === 'solana' ? tokenAssetReady : tokenAssetStellarReady
+                          const statusText = network === 'solana'
+                            ? (tokenAssetReady ? 'SPL mint configured' : `${getAssetMintEnvKey(selectedTokenAsset)} required`)
+                            : !tokenAssetStellarReady
+                              ? 'Stellar issuer env required'
+                              : !privyConfigured
+                                ? 'Privy app id required'
+                                : !stellarOriginEnabled
+                                  ? 'Custody signer not enabled'
+                                  : 'Stellar custody enabled'
+                          return (
+                            <button
+                              key={network}
+                              type="button"
+                              onClick={() => setSelectedTokenNetwork(network)}
+                              className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                                isSelected
+                                  ? 'border-Heres-accent bg-Heres-accent/10'
+                                  : 'border-Heres-border bg-Heres-card/70 hover:border-Heres-accent/40'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <p className={`text-sm font-semibold ${isSelected ? 'text-Heres-accent' : 'text-Heres-white'}`}>
+                                    {network === 'solana' ? 'Solana' : 'Stellar'}
+                                  </p>
+                                  <p className="mt-1 text-xs text-Heres-muted">
+                                    {network === 'solana'
+                                      ? 'Create through the Solana program and SPL/native vault.'
+                                      : 'Use Stellar issued/native asset custody once the signer flow is enabled.'}
+                                  </p>
+                                </div>
+                                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                                  isReady
+                                    ? 'bg-emerald-400/10 text-emerald-300'
+                                    : isConfigured
+                                      ? 'bg-amber-300/10 text-amber-300'
+                                      : 'bg-red-400/10 text-red-300'
+                                }`}>
+                                  {isReady ? 'Ready' : isConfigured ? 'Blocked' : 'Setup'}
+                                </span>
+                              </div>
+                              <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-Heres-muted">{statusText}</p>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    {!tokenAssetNetworkReady && (
                       <p className="text-xs text-amber-300">
-                        {tokenAssetSupportsSolana
+                        {selectedTokenNetwork === 'solana'
                           ? (
                             <>
                               {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid Solana token mint before this Solana capsule can be created.
                             </>
                           )
-                          : `${selectedTokenAsset} is supported on Stellar only. Add the Privy/Stellar custody flow before enabling capsule creation for this asset.`}
+                          : !tokenAssetStellarReady
+                            ? `${selectedTokenAsset} requires a Stellar issuer env before Stellar can be selected.`
+                            : !privyConfigured
+                              ? 'Privy app credentials are required before Stellar-origin capsules can use linked Stellar wallets.'
+                              : 'Stellar-origin capsules are shown as a supported route, but creation stays disabled until the custody signer is enabled.'}
                       </p>
                     )}
                     {tokenAssetSupportsStellar && (
@@ -1044,7 +1154,7 @@ export default function CreatePage() {
                       </p>
                     )}
                     <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({tokenAssetUnit})</label>
+                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({tokenAssetUnit} on {selectedTokenNetworkLabel})</label>
                       <input
                         type="number"
                         value={totalAmount}
@@ -1069,7 +1179,7 @@ export default function CreatePage() {
                         step="0.001"
                         className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3.5 text-sm text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
                       />
-                      <p className="mt-3 text-sm text-Heres-muted">Amount to be distributed in {tokenAssetUnit}. Percentages are calculated automatically.</p>
+                      <p className="mt-3 text-sm text-Heres-muted">Amount to be distributed in {tokenAssetUnit} on {selectedTokenNetworkLabel}. Percentages are calculated automatically.</p>
                     </div>
                   </div>
                 )}

@@ -98,7 +98,7 @@ export const SOLANA_CONFIG = {
   NETWORK: normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK),
   PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW',
   ALCHEMY_API_KEY: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || '',
-  RPC_URL: process.env.SOLANA_RPC_URL || '',
+  RPC_URL: process.env.SOLANA_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || '',
   FALLBACK_RPC_URL:
     process.env.SOLANA_FALLBACK_RPC_URL ||
     process.env.NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL ||

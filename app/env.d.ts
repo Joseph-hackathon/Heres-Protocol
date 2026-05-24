@@ -6,6 +6,7 @@ declare namespace NodeJS {
     NEXT_PUBLIC_SOLANA_NETWORK?: string
     NEXT_PUBLIC_ALCHEMY_API_KEY?: string
     NEXT_PUBLIC_SOLANA_RPC_URL?: string
+    NEXT_PUBLIC_SOLANA_WS_URL?: string
     NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL?: string
     SOLANA_RPC_URL?: string
     SOLANA_FALLBACK_RPC_URL?: string
@@ -29,6 +30,7 @@ declare namespace NodeJS {
     NEXT_PUBLIC_STELLAR_ETH_ISSUER?: string
     NEXT_PUBLIC_STELLAR_AUDD_CODE?: string
     NEXT_PUBLIC_STELLAR_AUDD_ISSUER?: string
+    NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED?: string
     APP_BASE_URL?: string
     INDEXER_BASE_URL?: string
     DATABASE_URL?: string

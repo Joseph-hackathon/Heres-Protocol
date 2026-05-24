@@ -3,7 +3,7 @@
  */
 
 import { PublicKey } from '@solana/web3.js'
-import { SupportedAssetSymbol } from '@/lib/assets'
+import { AssetNetwork, StellarAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 
 // Beneficiary types
 export interface Beneficiary {
@@ -39,6 +39,8 @@ export interface CreIntentConfig {
 export interface CapsuleAssetMetadata {
   assetSymbol?: SupportedAssetSymbol
   assetMint?: string | null
+  assetNetwork?: AssetNetwork
+  stellarAsset?: StellarAssetConfig
 }
 
 // Wallet Activity types

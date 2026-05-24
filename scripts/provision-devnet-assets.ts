@@ -55,8 +55,11 @@ async function fundStellarTestAccount(publicKey: string) {
 }
 
 async function provisionSolana() {
-  const rpcUrl = process.env.SOLANA_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com'
-  const connection = new Connection(rpcUrl, 'confirmed')
+  const rpcUrl = process.env.SOLANA_DEVNET_PROVISION_RPC_URL || 'https://api.devnet.solana.com'
+  const connection = new Connection(rpcUrl, {
+    commitment: 'confirmed',
+    wsEndpoint: process.env.SOLANA_DEVNET_PROVISION_WS_URL || 'wss://api.devnet.solana.com',
+  })
   const payer = readSolanaKeypair()
   const balance = await connection.getBalance(payer.publicKey)
 

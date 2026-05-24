@@ -23,6 +23,7 @@ Heres supports this product matrix:
 ```bash
 NEXT_PUBLIC_PRIVY_APP_ID=
 NEXT_PUBLIC_PRIVY_CLIENT_ID=
+NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED=false
 
 NEXT_PUBLIC_BTC_MINT=
 NEXT_PUBLIC_ETH_MINT=
@@ -35,12 +36,12 @@ NEXT_PUBLIC_STELLAR_ETH_ISSUER=
 NEXT_PUBLIC_STELLAR_AUDD_CODE=AUDD
 NEXT_PUBLIC_STELLAR_AUDD_ISSUER=
 
-STELLAR_SETTLEMENT_WEBHOOK_URL=
+STELLAR_SETTLEMENT_WEBHOOK_URL=http://127.0.0.1:3000/api/mock/stellar-settlement
 ```
 
 ## Provisioning Notes
 
-- Run `npm run devnet:assets` to create project-owned Solana devnet SPL mints and Stellar testnet issued assets. Use `-- --mode=solana` or `-- --mode=stellar` to provision one side only.
+- Run `npm run devnet:assets` to create project-owned Solana devnet SPL mints and Stellar testnet issued assets. Use `-- --mode=solana` or `-- --mode=stellar` to provision one side only. The Solana provisioning path defaults to public devnet RPC to avoid provider-specific websocket confirmation limits; override with `SOLANA_DEVNET_PROVISION_RPC_URL` and `SOLANA_DEVNET_PROVISION_WS_URL` if needed.
 - Solana devnet SPL assets must be minted by a funded Solana devnet keypair. The Heres program can then custody and distribute those SPL tokens.
 - Stellar issued assets require an issuer account and a distributor account. Recipients must have a trustline for issued BTC, ETH, and AUDD before receiving payments. Native XLM does not require a trustline.
-- Until Stellar XDR signing/submission is implemented, Stellar routes are queued through `/api/stellar/settlement` and can be dispatched to `STELLAR_SETTLEMENT_WEBHOOK_URL`.
+- Until Stellar XDR signing/submission is implemented, Stellar beneficiary routes are queued through `/api/stellar/settlement` and can be dispatched to `STELLAR_SETTLEMENT_WEBHOOK_URL`. For local development, `/api/mock/stellar-settlement` records a successful mock dispatch response.

@@ -5,14 +5,9 @@ import { useRouter } from 'next/navigation'
 import { useWallet } from '@solana/wallet-adapter-react'
 import Link from 'next/link'
 import { Shield, User } from 'lucide-react'
-import dynamic from 'next/dynamic'
 import { getCapsule } from '@/lib/solana'
 import { getCapsulePDA } from '@/lib/program'
-
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
+import { PrivyConnectButton } from '@/components/PrivyConnectButton'
 
 export default function CapsulesEntryPage() {
   const router = useRouter()
@@ -79,11 +74,11 @@ export default function CapsulesEntryPage() {
             <User className="mx-auto mb-6 h-14 w-14 text-Heres-accent" />
             <h2 className="mb-3 text-2xl font-bold text-Heres-white">My Capsule</h2>
             <p className="mb-6 text-Heres-muted">
-              Connect your wallet to view your capsule or create a new one.
+              Connect Privy to view your capsule or create a new one.
             </p>
             <div className="flex flex-col gap-3">
               <div className="wallet-menu-container flex justify-center">
-                <WalletMultiButton />
+                <PrivyConnectButton />
               </div>
               <Link
                 href="/create"

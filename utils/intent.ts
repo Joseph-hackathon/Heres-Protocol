@@ -3,7 +3,7 @@
  */
 
 import { Beneficiary } from '@/types'
-import { SupportedAssetSymbol } from '@/lib/assets'
+import { AssetNetwork, StellarAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 
 export interface CreIntentData {
   enabled: boolean
@@ -21,6 +21,8 @@ export interface IntentData {
   totalAmount?: string
   assetSymbol?: SupportedAssetSymbol
   assetMint?: string | null
+  assetNetwork?: AssetNetwork
+  stellarAsset?: StellarAssetConfig
   inactivityDays: number
   inactivityValue?: number
   inactivityUnit?: 'days' | 'minutes'
@@ -38,6 +40,8 @@ export interface NftIntentData {
   nftAssignments?: Record<string, number>
   assetSymbol?: SupportedAssetSymbol
   assetMint?: string | null
+  assetNetwork?: AssetNetwork
+  stellarAsset?: StellarAssetConfig
   inactivityDays: number
   inactivityValue?: number
   inactivityUnit?: 'days' | 'minutes'
