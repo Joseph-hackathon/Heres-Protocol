@@ -5,6 +5,8 @@ import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { useCreateWallet as useCreateExtendedWallet } from '@privy-io/react-auth/extended-chains'
 
 const privyEnabled = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)
+const STELLAR_PUBLIC_KEY_RE = /^G[A-Z2-7]{55}$/
+const SOLANA_PUBLIC_KEY_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 
 type WalletAddressRow = {
   chain: 'Solana' | 'Stellar'
@@ -24,11 +26,13 @@ function getAddress(input: Record<string, any>) {
   return input.address || input.walletAddress || input.wallet_address || input.publicKey || input.public_key || ''
 }
 
-function getChainLabel(chainType: string): WalletAddressRow['chain'] {
+function getChainLabel(chainType: string, address: string): WalletAddressRow['chain'] | null {
   const normalized = chainType.toLowerCase()
   if (normalized.includes('solana')) return 'Solana'
   if (normalized.includes('stellar')) return 'Stellar'
-  return 'Solana'
+  if (STELLAR_PUBLIC_KEY_RE.test(address)) return 'Stellar'
+  if (SOLANA_PUBLIC_KEY_RE.test(address) && !address.startsWith('0x')) return 'Solana'
+  return null
 }
 
 function PrivyConnectInner({ compact = false }: { compact?: boolean }) {
@@ -50,8 +54,8 @@ function PrivyConnectInner({ compact = false }: { compact?: boolean }) {
     const addRow = (chainType: string, address: string) => {
       const trimmed = address.trim()
       if (!trimmed || seen.has(trimmed)) return
-      const chain = getChainLabel(chainType)
-      if (!chainType.toLowerCase().includes('solana') && !chainType.toLowerCase().includes('stellar')) return
+      const chain = getChainLabel(chainType, trimmed)
+      if (!chain) return
       seen.add(trimmed)
       rows.push({ chain, address: trimmed })
     }
