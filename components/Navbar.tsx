@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { Menu, User, X, ChevronDown } from 'lucide-react'
-import { SOLANA_CONFIG, getNetworkDisplayLabel } from '@/constants'
+import { SOLANA_CONFIG } from '@/constants'
 import { PrivyConnectButton } from '@/components/PrivyConnectButton'
 
 const navLinks = [
@@ -16,9 +16,8 @@ const navLinks = [
 const personalLink = { href: '/capsules', label: 'My Capsule' }
 
 const NETWORKS = [
-  { id: 'devnet', label: 'Solana Devnet' },
-  { id: 'testnet', label: 'Solana Testnet' },
-  { id: 'mainnet-beta', label: 'Solana Mainnet' },
+  { id: 'devnet', label: 'Devnet' },
+  { id: 'mainnet-beta', label: 'Mainnet' },
 ] as const
 
 const isNetworkEnabled = (networkId: (typeof NETWORKS)[number]['id']) => networkId !== 'mainnet-beta'
@@ -108,7 +107,7 @@ export function Navbar() {
               aria-haspopup="listbox"
               aria-label="Select network"
             >
-              <span className="text-Heres-accent">{getNetworkDisplayLabel(selectedNetwork.id)}</span>
+              <span className="text-Heres-accent">{selectedNetwork.label}</span>
               <ChevronDown className={`h-4 w-4 text-Heres-muted transition-transform ${networkOpen ? 'rotate-180' : ''}`} />
             </button>
             {networkOpen && (

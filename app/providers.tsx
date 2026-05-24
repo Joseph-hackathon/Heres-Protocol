@@ -51,8 +51,8 @@ export function Providers({ children }: { children: ReactNode }) {
           theme: '#071326',
           accentColor: '#22d3ee',
           landingHeader: 'Connect to Heres',
-          loginMessage: 'Use one account for Solana, EVM, and Stellar settlement flows.',
-          walletChainType: 'ethereum-and-solana',
+          loginMessage: 'Use one account for Solana and Stellar capsule flows.',
+          walletChainType: 'solana-only',
         },
         loginMethods: ['wallet', 'email', 'google'],
         externalWallets: {
@@ -61,7 +61,6 @@ export function Providers({ children }: { children: ReactNode }) {
           },
         },
         embeddedWallets: {
-          ethereum: { createOnLogin: 'users-without-wallets' },
           solana: { createOnLogin: 'users-without-wallets' },
         },
       }}

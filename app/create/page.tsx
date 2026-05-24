@@ -46,6 +46,7 @@ export type CapsuleAssetType = 'token' | 'nft' | null
 type InactivityUnit = 'days' | 'minutes'
 
 export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?: string }
+type TokenBalanceMap = Record<string, { amount: string; uiAmount: number | null }>
 
 const CREATE_STEPS = [
   { key: 'asset', label: 'Select Asset Type' },
@@ -114,6 +115,8 @@ export default function CreatePage() {
   // NFT flow
   const [nftList, setNftList] = useState<NftItem[]>([])
   const [nftListLoading, setNftListLoading] = useState(false)
+  const [tokenBalances, setTokenBalances] = useState<TokenBalanceMap>({})
+  const [tokenBalancesLoading, setTokenBalancesLoading] = useState(false)
   const [selectedNftMints, setSelectedNftMints] = useState<string[]>([])
   const [nftRecipients, setNftRecipients] = useState<{ address: string }[]>([{ address: '' }])
   const [nftAssignments, setNftAssignments] = useState<Record<string, number>>({})
@@ -150,6 +153,35 @@ export default function CreatePage() {
         if (!cancelled) setNftList([])
       } finally {
         if (!cancelled) setNftListLoading(false)
+      }
+    }
+
+    run()
+    return () => { cancelled = true }
+  }, [capsuleType, publicKey, connected])
+
+  useEffect(() => {
+    if (capsuleType !== 'token' || !publicKey || !connected) {
+      setTokenBalances({})
+      return
+    }
+    let cancelled = false
+    setTokenBalancesLoading(true)
+
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/assets/token-balances?wallet=${encodeURIComponent(publicKey.toBase58())}`, {
+          cache: 'no-store',
+        })
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload) {
+          throw new Error(payload?.error || `Token balance request failed (${res.status})`)
+        }
+        if (!cancelled) setTokenBalances(payload.balances || {})
+      } catch {
+        if (!cancelled) setTokenBalances({})
+      } finally {
+        if (!cancelled) setTokenBalancesLoading(false)
       }
     }
 
@@ -268,7 +300,7 @@ export default function CreatePage() {
   const updateBeneficiary = (
     index: number,
     field: keyof Beneficiary,
-    value: string | 'fixed' | 'percentage' | 'solana' | 'evm' | 'stellar'
+    value: string | 'fixed' | 'percentage' | 'solana' | 'stellar'
   ) => {
     const updated = [...beneficiaries]
     const oldBeneficiary = updated[index]
@@ -330,7 +362,7 @@ export default function CreatePage() {
     }
 
     if (!validateBeneficiaryAddresses(beneficiaries)) {
-      alert('Please enter valid beneficiary addresses (Solana: base58, EVM: 0x..., Stellar: G...).')
+      alert('Please enter valid beneficiary addresses (Solana: base58, Stellar: G...).')
       return false
     }
 
@@ -937,18 +969,15 @@ export default function CreatePage() {
         </header>
 
         <div className="space-y-5">
-          {!connected && (
-            <div className="card-Heres p-8 text-center">
-              <Shield className="mx-auto mb-5 h-14 w-14 text-Heres-accent" />
-              <h2 className="text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
-              <p className="mx-auto mt-3 max-w-2xl text-Heres-muted">
-                Connect Privy to unlock capsule creation, Solana signing, EVM accounts, and Stellar-capable settlement flows from one account layer.
+          <div className="flex flex-col gap-3 rounded-2xl border border-Heres-border bg-Heres-card/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-muted">Connected Wallet</p>
+              <p className="mt-1 text-sm text-Heres-white">
+                {connected ? 'Solana wallet linked. Stellar address appears in the profile when added.' : 'Connect a Solana wallet to create a capsule.'}
               </p>
-              <div className="mt-6 flex flex-wrap justify-center gap-3">
-                <PrivyConnectButton />
-              </div>
             </div>
-          )}
+            <PrivyConnectButton />
+          </div>
 
           {connected && modifyCount >= MAX_CAPSULE_MODIFICATIONS && (
             <div className="card-Heres border-red-500/40 bg-red-500/5 p-6">
@@ -1019,6 +1048,14 @@ export default function CreatePage() {
                           const networkLabel = getAssetNetworkLabels(asset.symbol)
                           const stellarReady = isStellarIssuerConfigured(asset.symbol)
                           const selected = selectedTokenAsset === asset.symbol
+                          const balance = tokenBalances[asset.symbol]
+                          const balanceLabel = tokenBalancesLoading
+                            ? 'Loading balance'
+                            : balance
+                              ? `${balance.uiAmount ?? 0} ${asset.symbol}`
+                              : connected
+                                ? `0 ${asset.symbol}`
+                                : 'Connect wallet'
                           return (
                             <button
                               key={asset.symbol}
@@ -1039,8 +1076,16 @@ export default function CreatePage() {
                                     : 'cursor-not-allowed border-Heres-border/60 bg-Heres-card/40 text-Heres-muted opacity-60'
                               }`}
                             >
-                              <p className="text-sm font-semibold">{asset.symbol}</p>
-                              <p className="text-xs text-Heres-muted">{asset.label}</p>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold">{asset.symbol}</p>
+                                  <p className="text-xs text-Heres-muted">{asset.label}</p>
+                                </div>
+                                <div className="rounded-lg border border-Heres-border/70 bg-black/20 px-2 py-1 text-right">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-Heres-muted">Balance</p>
+                                  <p className="text-xs font-semibold text-Heres-white">{balanceLabel}</p>
+                                </div>
+                              </div>
                               <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-Heres-muted">
                                 {networkLabel}
                               </p>
@@ -1269,13 +1314,6 @@ export default function CreatePage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => updateBeneficiary(index, 'chain', 'evm')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
-                              >
-                                EVM
-                              </button>
-                              <button
-                                type="button"
                                 onClick={() => updateBeneficiary(index, 'chain', 'stellar')}
                                 className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'stellar' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
                               >
@@ -1287,9 +1325,7 @@ export default function CreatePage() {
                               value={beneficiary.address}
                               onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
                               placeholder={
-                                beneficiary.chain === 'evm'
-                                  ? '0xEvmAddress...'
-                                  : beneficiary.chain === 'stellar'
+                                beneficiary.chain === 'stellar'
                                     ? 'G... Stellar public key'
                                     : 'Solana address...'
                               }
@@ -1300,7 +1336,7 @@ export default function CreatePage() {
                                 type="text"
                                 value={beneficiary.destinationChainSelector || ''}
                                 onChange={(e) => updateBeneficiary(index, 'destinationChainSelector', e.target.value.trim())}
-                                placeholder={beneficiary.chain === 'evm' ? 'Destination chain selector (default: Ethereum Sepolia)' : 'Optional Stellar memo or settlement route hint'}
+                                placeholder="Optional Stellar memo or settlement route hint"
                                 className="mt-2 w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-xs text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                               />
                             )}
@@ -1343,9 +1379,7 @@ export default function CreatePage() {
                         </div>
                         {beneficiary.address && !isValidBeneficiaryAddress(beneficiary) && (
                           <p className="text-xs text-red-400">
-                            {beneficiary.chain === 'evm'
-                              ? 'Invalid EVM address (0x...)'
-                              : beneficiary.chain === 'stellar'
+                            {beneficiary.chain === 'stellar'
                                 ? 'Invalid Stellar public key (G...)'
                                 : 'Invalid Solana address'}
                           </p>

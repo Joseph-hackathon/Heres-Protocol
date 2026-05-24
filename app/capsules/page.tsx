@@ -74,7 +74,7 @@ export default function CapsulesEntryPage() {
             <User className="mx-auto mb-6 h-14 w-14 text-Heres-accent" />
             <h2 className="mb-3 text-2xl font-bold text-Heres-white">My Capsule</h2>
             <p className="mb-6 text-Heres-muted">
-              Connect Privy to view your capsule or create a new one.
+              Connect your wallet to view your capsule or create a new one.
             </p>
             <div className="flex flex-col gap-3">
               <div className="wallet-menu-container flex justify-center">
