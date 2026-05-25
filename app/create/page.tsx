@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
+import { usePrivy } from '@privy-io/react-auth'
+import { useSignRawHash } from '@privy-io/react-auth/extended-chains'
 import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink } from 'lucide-react'
 
 import { createCapsule, getCapsule, delegateCapsule, scheduleExecuteIntent, registerCapsuleOwnerForAutomation } from '@/lib/solana'
@@ -47,6 +49,9 @@ type InactivityUnit = 'days' | 'minutes'
 
 export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?: string }
 type TokenBalanceMap = Record<string, { amount: string; uiAmount: number | null }>
+type JsonResponse = Record<string, any>
+
+const STELLAR_PUBLIC_KEY_RE = /^G[A-Z2-7]{55}$/
 
 const CREATE_STEPS = [
   { key: 'asset', label: 'Select Asset Type' },
@@ -83,9 +88,43 @@ const CREATE_FAQS = [
   },
 ] as const
 
+function getPrivyStellarAddress(user: any): string | null {
+  const linkedAccounts = Array.isArray(user?.linkedAccounts) ? user.linkedAccounts as Array<Record<string, any>> : []
+  const stellarAccount = linkedAccounts.find((account) => {
+    const address = String(account.address || account.walletAddress || account.wallet_address || account.publicKey || account.public_key || '')
+    const chainType = String(account.chainType || account.chain_type || account.chain || '').toLowerCase()
+    return STELLAR_PUBLIC_KEY_RE.test(address) || chainType.includes('stellar')
+  })
+  if (!stellarAccount) return null
+  const address = String(
+    stellarAccount.address ||
+    stellarAccount.walletAddress ||
+    stellarAccount.wallet_address ||
+    stellarAccount.publicKey ||
+    stellarAccount.public_key ||
+    ''
+  ).trim()
+  return STELLAR_PUBLIC_KEY_RE.test(address) ? address : null
+}
+
+async function postJson<T extends JsonResponse>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload) {
+    throw new Error(payload?.error || `${url} failed with ${response.status}`)
+  }
+  return payload as T
+}
+
 export default function CreatePage() {
   const wallet = useWallet()
   const { publicKey, connected } = wallet
+  const { user } = usePrivy()
+  const { signRawHash } = useSignRawHash()
   const [completedSections, setCompletedSections] = useState({
     asset: false,
     beneficiaries: false,
@@ -232,9 +271,12 @@ export default function CreatePage() {
   const tokenAssetStellarReady = isStellarIssuerConfigured(selectedTokenAsset)
   const privyConfigured = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)
   const stellarOriginEnabled = process.env.NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED === 'true'
+  const stellarCustodyConfigured = Boolean(process.env.NEXT_PUBLIC_STELLAR_CUSTODY_PUBLIC_KEY)
+  const stellarWalletAddress = getPrivyStellarAddress(user)
+  const isStellarTokenOrigin = capsuleType === 'token' && selectedTokenNetwork === 'stellar'
   const tokenAssetNetworkReady = selectedTokenNetwork === 'solana'
     ? tokenAssetReady
-    : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled
+    : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled && stellarCustodyConfigured
   const selectedTokenNetworkLabel = selectedTokenNetwork === 'solana' ? 'Solana' : 'Stellar'
 
   useEffect(() => {
@@ -352,12 +394,19 @@ export default function CreatePage() {
           alert(`${selectedTokenAsset} Stellar issuer is not configured. Set NEXT_PUBLIC_STELLAR_${selectedTokenAsset}_ISSUER first.`)
         } else if (!privyConfigured) {
           alert('Privy is not configured. Set NEXT_PUBLIC_PRIVY_APP_ID before using Stellar-origin capsules.')
+        } else if (!stellarCustodyConfigured) {
+          alert('Stellar custody is not configured. Set NEXT_PUBLIC_STELLAR_CUSTODY_PUBLIC_KEY first.')
         } else {
-          alert('Stellar-origin capsule creation is not enabled yet. Set NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED=true only after the Stellar custody signer is connected.')
+          alert('Stellar-origin capsule creation is not enabled yet. Set NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED=true.')
         }
       } else {
         alert(`${selectedTokenAsset} Solana mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
       }
+      return false
+    }
+
+    if (selectedTokenNetwork === 'stellar' && !stellarWalletAddress) {
+      alert('Add a Privy Stellar wallet from the wallet profile before creating a Stellar-origin capsule.')
       return false
     }
 
@@ -536,6 +585,93 @@ export default function CreatePage() {
           delayDays: parseInt(delayDays),
           cre: creMeta,
         })
+      }
+
+      if (isStellarTokenOrigin) {
+        if (!stellarWalletAddress) {
+          throw new Error('Privy Stellar wallet is required for Stellar-origin capsules.')
+        }
+
+        setCurrentStep('Preparing Stellar asset...')
+        if (!tokenAssetConfig.stellar?.native) {
+          const trustline = await postJson<{
+            ok: true
+            alreadyTrusted: boolean
+            unsignedXdr: string | null
+            hashHex: string | null
+          }>('/api/stellar/assets/trustline/prepare', {
+            source: stellarWalletAddress,
+            assetSymbol: selectedTokenAsset,
+          })
+          if (!trustline.alreadyTrusted && trustline.unsignedXdr && trustline.hashHex) {
+            const trustlineSignature = await signRawHash({
+              address: stellarWalletAddress,
+              chainType: 'stellar',
+              hash: `0x${trustline.hashHex}` as `0x${string}`,
+            })
+            await postJson('/api/stellar/assets/trustline/submit', {
+              unsignedXdr: trustline.unsignedXdr,
+              signerPublicKey: stellarWalletAddress,
+              signatureHex: trustlineSignature.signature,
+            })
+          }
+
+          setCurrentStep(`Funding Stellar ${selectedTokenAsset}...`)
+          await postJson('/api/stellar/assets/faucet', {
+            destination: stellarWalletAddress,
+            assetSymbol: selectedTokenAsset,
+          })
+        }
+
+        setCurrentStep('Locking Stellar asset...')
+        const prepared = await postJson<{
+          ok: true
+          id: string
+          memo: string
+          custodyAddress: string
+          unsignedXdr: string
+          hashHex: string
+          assetCode: string
+          assetIssuer: string | null
+        }>('/api/stellar/capsules/prepare', {
+          source: stellarWalletAddress,
+          assetSymbol: selectedTokenAsset,
+          amount: totalAmount,
+        })
+        const custodySignature = await signRawHash({
+          address: stellarWalletAddress,
+          chainType: 'stellar',
+          hash: `0x${prepared.hashHex}` as `0x${string}`,
+        })
+        const submitted = await postJson<{ ok: true; hash: string }>('/api/stellar/capsules/submit', {
+          id: prepared.id,
+          owner: publicKey.toBase58(),
+          unsignedXdr: prepared.unsignedXdr,
+          signerPublicKey: stellarWalletAddress,
+          signatureHex: custodySignature.signature,
+          custodyAddress: prepared.custodyAddress,
+          assetSymbol: selectedTokenAsset,
+          assetCode: prepared.assetCode,
+          assetIssuer: prepared.assetIssuer,
+          amount: totalAmount,
+          beneficiaries,
+          inactivityValue: inactivityValueNum,
+          inactivityUnit,
+          delayDays: parseInt(delayDays, 10) || 0,
+          memo: prepared.memo,
+          cre: creMeta,
+        })
+
+        setTxHash(submitted.hash)
+        const newCount = currentCount + 1
+        localStorage.setItem(countKey, String(newCount))
+        setModifyCount(newCount)
+        const intentKey = STORAGE_KEYS.CAPSULE_INTENT(publicKey.toString(), Date.now())
+        localStorage.setItem(intentKey, intent)
+        setCurrentStep(null)
+        alert(`Stellar capsule created and custodied. Transaction: ${submitted.hash}`)
+        window.location.href = '/capsules'
+        return
       }
 
       const inactivityPeriodSeconds = inactivityUnit === 'minutes'
@@ -818,6 +954,7 @@ export default function CreatePage() {
     !isPending &&
     modifyCount < MAX_CAPSULE_MODIFICATIONS &&
     wallet.signMessage &&
+    (!isStellarTokenOrigin || Boolean(stellarWalletAddress)) &&
     isValidEmail(creEmail) &&
     creUnlockCode.trim().length >= 6 &&
     inactivityDays &&
@@ -973,7 +1110,11 @@ export default function CreatePage() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-muted">Connected Wallet</p>
               <p className="mt-1 text-sm text-Heres-white">
-                {connected ? 'Solana wallet linked. Stellar address appears in the profile when added.' : 'Connect a Solana wallet to create a capsule.'}
+                {connected
+                  ? stellarWalletAddress
+                    ? 'Solana and Stellar wallets are linked through Privy.'
+                    : 'Solana wallet linked. Add a Stellar wallet from the profile for Stellar-origin capsules.'
+                  : 'Connect with Privy to create a capsule.'}
               </p>
             </div>
             <PrivyConnectButton />
@@ -1112,7 +1253,7 @@ export default function CreatePage() {
                               {configured && asset.networks.includes('solana') && !solanaReady && (
                                 <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Solana mint env required</p>
                               )}
-                              {configured && !asset.networks.includes('solana') && !stellarOriginEnabled && (
+                              {configured && !asset.networks.includes('solana') && (!stellarOriginEnabled || !stellarCustodyConfigured) && (
                                 <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Stellar custody flow required</p>
                               )}
                               {!configured && <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Env required</p>}
@@ -1128,7 +1269,7 @@ export default function CreatePage() {
                           const isSelected = selectedTokenNetwork === network
                           const isReady = network === 'solana'
                             ? tokenAssetReady
-                            : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled
+                            : tokenAssetStellarReady && privyConfigured && stellarOriginEnabled && stellarCustodyConfigured && Boolean(stellarWalletAddress)
                           const isConfigured = network === 'solana' ? tokenAssetReady : tokenAssetStellarReady
                           const statusText = network === 'solana'
                             ? (tokenAssetReady ? 'SPL mint configured' : `${getAssetMintEnvKey(selectedTokenAsset)} required`)
@@ -1136,9 +1277,13 @@ export default function CreatePage() {
                               ? 'Stellar issuer env required'
                               : !privyConfigured
                                 ? 'Privy app id required'
-                                : !stellarOriginEnabled
-                                  ? 'Custody signer not enabled'
-                                  : 'Stellar custody enabled'
+                                : !stellarCustodyConfigured
+                                  ? 'Custody public key required'
+                                  : !stellarOriginEnabled
+                                    ? 'Stellar origin disabled'
+                                    : stellarWalletAddress
+                                      ? 'Stellar custody enabled'
+                                      : 'Add Stellar wallet'
                           return (
                             <button
                               key={network}
@@ -1185,11 +1330,13 @@ export default function CreatePage() {
                               {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid Solana token mint before this Solana capsule can be created.
                             </>
                           )
-                          : !tokenAssetStellarReady
-                            ? `${selectedTokenAsset} requires a Stellar issuer env before Stellar can be selected.`
+                            : !tokenAssetStellarReady
+                              ? `${selectedTokenAsset} requires a Stellar issuer env before Stellar can be selected.`
                             : !privyConfigured
                               ? 'Privy app credentials are required before Stellar-origin capsules can use linked Stellar wallets.'
-                              : 'Stellar-origin capsules are shown as a supported route, but creation stays disabled until the custody signer is enabled.'}
+                              : !stellarCustodyConfigured
+                                ? 'Stellar custody public key is required before Stellar-origin capsules can be created.'
+                                : 'Stellar-origin capsules are disabled by feature flag. Set NEXT_PUBLIC_STELLAR_CAPSULE_ORIGIN_ENABLED=true.'}
                       </p>
                     )}
                     {tokenAssetSupportsStellar && (
