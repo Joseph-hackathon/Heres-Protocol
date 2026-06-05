@@ -169,21 +169,24 @@ if (erInfo) {
 // Accounts: authority, permissioned_account, permission, magic_program, magic_context, [remaining]
 console.log('\nStep 6: CommitAndUndelegatePermission (capsule)');
 try {
-  // Borsh-serialize u64 discriminator = 5
-  const discBuf = Buffer.alloc(8);
-  discBuf.writeBigUInt64LE(BigInt(5), 0);
+  // Use the Heres program's crank_undelegate (CPI to Magic program) -- the path
+  // lib/solana.ts undelegateCapsule uses. Calling the permission program directly
+  // (discriminator 5) panics in magicblock-permission state v1.rs; crank_undelegate is correct.
+  const crankUndelegateDisc = idl.instructions.find(
+    (i) => i.name === 'crank_undelegate' || i.name === 'crankUndelegate'
+  )?.discriminator;
+  if (!crankUndelegateDisc) throw new Error('crank_undelegate not in IDL');
 
-  // First: commit+undelegate capsule
   const ixCapsule = new TransactionInstruction({
     keys: [
-      { pubkey: ownerKp.publicKey, isSigner: true, isWritable: false },   // authority
-      { pubkey: capsulePDA, isSigner: false, isWritable: true },           // permissioned_account
-      { pubkey: permissionPDA, isSigner: false, isWritable: false },       // permission (read-only on ER)
-      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },    // magic_program
+      { pubkey: ownerKp.publicKey, isSigner: true, isWritable: true },     // payer
+      { pubkey: capsulePDA, isSigner: false, isWritable: true },           // capsule
+      { pubkey: vaultPDA, isSigner: false, isWritable: true },             // vault
       { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },     // magic_context
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },    // magic_program
     ],
-    programId: PERMISSION_PROGRAM_ID,
-    data: discBuf,
+    programId: PROGRAM_ID,
+    data: Buffer.from(crankUndelegateDisc),
   });
 
   // Note: vault doesn't have its own permission PDA, need to handle separately
