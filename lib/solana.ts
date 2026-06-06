@@ -1275,7 +1275,8 @@ export async function processUndelegation(
  * Owner-only. Used to clear stuck capsules or simply close them.
  */
 export async function cancelCapsule(
-  wallet: WalletContextState
+  wallet: WalletContextState,
+  mint?: PublicKey
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
@@ -1284,14 +1285,35 @@ export async function cancelCapsule(
   const [capsulePDA] = getCapsulePDA(wallet.publicKey)
   const [vaultPDA] = getCapsuleVaultPDA(wallet.publicKey)
 
-  const accounts = {
+  // SPL capsules need the token-refund accounts; SOL capsules leave them null.
+  const accounts: {
+    capsule: PublicKey
+    vault: PublicKey
+    owner: PublicKey
+    systemProgram: PublicKey
+    tokenProgram: PublicKey | null
+    mint: PublicKey | null
+    vaultTokenAccount: PublicKey | null
+    ownerTokenAccount: PublicKey | null
+  } = {
     capsule: capsulePDA,
     vault: vaultPDA,
     owner: wallet.publicKey,
     systemProgram: SystemProgram.programId,
+    tokenProgram: null,
+    mint: null,
+    vaultTokenAccount: null,
+    ownerTokenAccount: null,
   }
 
-  debugLog('[cancelCapsule] Cancelling capsule and reclaiming SOL...')
+  if (mint) {
+    accounts.tokenProgram = TOKEN_PROGRAM_ID
+    accounts.mint = mint
+    accounts.vaultTokenAccount = getAssociatedTokenAddress(mint, vaultPDA)
+    accounts.ownerTokenAccount = getAssociatedTokenAddress(mint, wallet.publicKey)
+  }
+
+  debugLog('[cancelCapsule] Cancelling capsule and reclaiming assets...')
 
   const tx = await program.methods
     .cancelCapsule()

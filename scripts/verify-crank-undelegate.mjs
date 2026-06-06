@@ -12,7 +12,7 @@ import bs58 from 'bs58';
 import { readFileSync } from 'fs';
 
 const idl = JSON.parse(readFileSync('./idl/HeresProgram.json', 'utf-8'));
-const PROGRAM_ID = new PublicKey('AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW');
+const PROGRAM_ID = new PublicKey('2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3');
 const DELEGATION_PROGRAM_ID = new PublicKey('DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh');
 const MAGIC_PROGRAM_ID = new PublicKey('Magic11111111111111111111111111111111111111');
 const MAGIC_CONTEXT_ID = new PublicKey('MagicContext1111111111111111111111111111111');

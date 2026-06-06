@@ -12,6 +12,7 @@ use crate::utils::{infer_asset_decimals, parse_amount_to_units};
 #[derive(Accounts)]
 pub struct DistributeAssets<'info> {
     #[account(
+        mut,
         seeds = [b"intent_capsule", capsule.owner.as_ref()],
         bump = capsule.bump
     )]
@@ -48,6 +49,10 @@ pub fn handler<'info>(
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    // Idempotency: distribute_assets is permissionless (it is a crank). Without this guard a
+    // second call re-pays the Solana heirs out of the funds reserved for EVM/CCIP heirs in
+    // mixed intents, starving the EVM heir (audit H1).
+    require!(!capsule.distributed, ErrorCode::AlreadyDistributed);
 
     // Parse intent data
     let intent_data_str = String::from_utf8(capsule.intent_data.clone())
@@ -71,16 +76,21 @@ pub fn handler<'info>(
 
     let vault_bump = capsule.vault_bump;
     let owner_key = capsule.owner;
+    let is_spl = capsule.mint != Pubkey::default();
+    // Drive fee + distributable pool from the REAL locked balance, not the owner-asserted
+    // intent_data.totalAmount (which update_intent can desync). The asserted total stays only as
+    // the proportion denominator for beneficiary weights (audit H4). Falls back to the asserted
+    // total if locked_amount was never recorded (legacy capsules), preserving prior behavior.
+    let pool = if capsule.locked_amount > 0 { capsule.locked_amount } else { total_amount_units };
     let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
     let signer_seeds = &[vault_seeds];
 
     // Platform execution fee
     let fee_config = &ctx.accounts.fee_config;
-    let mut remaining_for_beneficiaries = total_amount_units;
-    let is_spl = capsule.mint != Pubkey::default();
+    let mut remaining_for_beneficiaries = pool;
 
     if fee_config.execution_fee_bps > 0 {
-        let execution_fee = total_amount_units
+        let execution_fee = pool
             .checked_mul(fee_config.execution_fee_bps as u64)
             .and_then(|v| v.checked_div(10_000))
             .ok_or(ErrorCode::InvalidIntentData)?;
@@ -114,7 +124,7 @@ pub fn handler<'info>(
                 **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= execution_fee;
                 **platform_recipient.to_account_info().try_borrow_mut_lamports()? += execution_fee;
             }
-            remaining_for_beneficiaries = total_amount_units.saturating_sub(execution_fee);
+            remaining_for_beneficiaries = pool.saturating_sub(execution_fee);
             msg!("Execution fee {} sent to platform", execution_fee);
         }
     }
@@ -222,6 +232,9 @@ pub fn handler<'info>(
             msg!("Transferred {} to beneficiary: {}", to_send, beneficiary_pubkey);
         }
     }
+
+    // Mark distributed so this permissionless crank cannot be replayed (audit H1).
+    ctx.accounts.capsule.distributed = true;
 
     Ok(())
 }

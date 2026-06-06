@@ -72,7 +72,7 @@ async function handle(request: NextRequest) {
     const program = new Program(idl as any, provider)
 
     // Use low-level getProgramAccounts to fetch all capsule accounts without typed account access
-    const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW')
+    const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3')
     const accounts = await connection.getProgramAccounts(programId) // no filters
 
     const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)

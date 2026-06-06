@@ -36,4 +36,10 @@ pub enum ErrorCode {
     PrivateDistributionNotEnabled,
     #[msg("Private distribution already completed")]
     PrivateDistributionAlreadyDone,
+    #[msg("Assets already distributed for this capsule")]
+    AlreadyDistributed,
+    #[msg("Distributor is not the authorized protocol distributor")]
+    InvalidDistributor,
+    #[msg("Inactivity period must be greater than zero")]
+    InvalidInactivityPeriod,
 }

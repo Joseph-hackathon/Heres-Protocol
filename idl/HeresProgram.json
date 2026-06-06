@@ -1,5 +1,5 @@
 {
-  "address": "AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW",
+  "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3",
   "metadata": {
     "name": "heres_program",
     "version": "0.1.0",
@@ -8,11 +8,206 @@
   },
   "instructions": [
     {
+      "name": "cancel_capsule",
+      "docs": [
+        "Cancel an active capsule (owner-only): refund all locked assets and close the accounts."
+      ],
+      "discriminator": [
+        27,
+        143,
+        220,
+        25,
+        39,
+        186,
+        66,
+        214
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "mint",
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "owner_token_account",
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "configure_distributor",
+      "docs": [
+        "Set or update the protocol relayer/distributor for private distribution (admin only)."
+      ],
+      "discriminator": [
+        167,
+        87,
+        254,
+        85,
+        90,
+        209,
+        20,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "distributor_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  105,
+                  115,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  111,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_config",
+          "docs": [
+            "Fee config singleton; its authority is the admin gate."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "distributor",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "crank_undelegate",
       "docs": [
-        "Commit state from ER and undelegate capsule + vault back to base layer.",
-        "This is a separate instruction from execute_intent to avoid ExternalAccountDataModified.",
-        "Anyone (crank) can call this — no owner signature required."
+        "Commit ER state and undelegate capsule + vault back to the base layer (crank-callable)."
       ],
       "discriminator": [
         48,
@@ -54,8 +249,7 @@
     {
       "name": "create_capsule",
       "docs": [
-        "Initialize a new Intent Capsule (SOL locked in vault; anyone can execute when conditions are met).",
-        "PER: Uses Magicblock Permission Program to restrict intent_data access to TEE validator and Owner only."
+        "Initialize a new Intent Capsule (SOL/SPL locked in vault; anyone can execute when conditions are met)."
       ],
       "discriminator": [
         195,
@@ -291,8 +485,7 @@
     {
       "name": "delegate_capsule",
       "docs": [
-        "Delegate capsule and vault PDAs to Magicblock ER/PER. When no validator is passed, defaults to TEE validator (PER).",
-        "The #[delegate] macro handles this automatically for all fields marked with 'del'."
+        "Delegate capsule + vault PDAs to the MagicBlock ER/PER."
       ],
       "discriminator": [
         127,
@@ -342,38 +535,38 @@
             "program": {
               "kind": "const",
               "value": [
-                145,
-                45,
-                120,
-                49,
-                246,
-                167,
-                185,
-                74,
-                17,
-                186,
-                254,
-                150,
-                181,
-                89,
-                127,
-                31,
-                72,
-                250,
-                35,
-                140,
-                40,
+                24,
+                174,
+                38,
                 240,
-                8,
+                204,
+                200,
+                23,
+                222,
+                200,
+                132,
+                35,
+                156,
+                66,
+                48,
+                212,
+                105,
+                126,
+                89,
+                208,
+                91,
+                145,
+                5,
+                213,
+                169,
+                215,
                 234,
-                152,
-                190,
-                47,
-                230,
-                209,
-                207,
-                131,
-                209
+                212,
+                205,
+                231,
+                252,
+                64,
+                122
               ]
             }
           }
@@ -504,38 +697,38 @@
             "program": {
               "kind": "const",
               "value": [
-                145,
-                45,
-                120,
-                49,
-                246,
-                167,
-                185,
-                74,
-                17,
-                186,
-                254,
-                150,
-                181,
-                89,
-                127,
-                31,
-                72,
-                250,
-                35,
-                140,
-                40,
+                24,
+                174,
+                38,
                 240,
-                8,
+                204,
+                200,
+                23,
+                222,
+                200,
+                132,
+                35,
+                156,
+                66,
+                48,
+                212,
+                105,
+                126,
+                89,
+                208,
+                91,
+                145,
+                5,
+                213,
+                169,
+                215,
                 234,
-                152,
-                190,
-                47,
-                230,
-                209,
-                207,
-                131,
-                209
+                212,
+                205,
+                231,
+                252,
+                64,
+                122
               ]
             }
           }
@@ -653,7 +846,7 @@
         },
         {
           "name": "owner_program",
-          "address": "AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW"
+          "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3"
         }
       ],
       "args": []
@@ -661,7 +854,7 @@
     {
       "name": "distribute_assets",
       "docs": [
-        "Distribute assets from the vault to beneficiaries. Call on base layer after execute_intent."
+        "Distribute assets from the vault to beneficiaries (base layer, after execute_intent)."
       ],
       "discriminator": [
         239,
@@ -676,6 +869,7 @@
       "accounts": [
         {
           "name": "capsule",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -789,9 +983,7 @@
     {
       "name": "execute_intent",
       "docs": [
-        "Execute the intent when inactivity period is met. Anyone can call (no owner signature required).",
-        "This instruction is optimized for ER/TEE: it only updates the capsule state.",
-        "Actual distribution happens on the base layer via distribute_assets."
+        "Execute the intent when the inactivity period is met (permissionless)."
       ],
       "discriminator": [
         53,
@@ -943,7 +1135,7 @@
     {
       "name": "init_fee_config",
       "docs": [
-        "Initialize platform fee config (call once after deploy; only authority can update later)"
+        "Initialize platform fee config (call once after deploy; only authority can update later)."
       ],
       "discriminator": [
         212,
@@ -985,6 +1177,21 @@
           "signer": true
         },
         {
+          "name": "program",
+          "docs": [
+            "This program, used to resolve its ProgramData account."
+          ],
+          "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3"
+        },
+        {
+          "name": "program_data",
+          "docs": [
+            "The program's ProgramData (BPF upgradeable loader). Constrains init to the program's",
+            "upgrade authority (the deployer), so the global fee singleton cannot be front-run on a",
+            "fresh deploy by an attacker setting themselves as fee authority (audit C3)."
+          ]
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -1003,6 +1210,222 @@
           "type": "u16"
         }
       ]
+    },
+    {
+      "name": "prepare_private_distribution",
+      "docs": [
+        "Prepare private distribution: move remaining vault funds to the distributor (crank-driven)."
+      ],
+      "discriminator": [
+        1,
+        79,
+        193,
+        26,
+        249,
+        87,
+        184,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "distributor_config",
+          "docs": [
+            "Pins the relayer the vault funds may move to. Admin-settable via `configure_distributor`,",
+            "decoupled from the fee admin so the hot relayer key can differ and rotate (Option B)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  105,
+                  115,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  111,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "platform_fee_recipient",
+          "docs": [
+            "Platform fee recipient (SPL ATA for SPL, wallet for SOL)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "mint",
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "distributor_token_account",
+          "docs": [
+            "The distributor's token account (SPL) receiving the remaining funds"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "distributor",
+          "docs": [
+            "The protocol distributor relayer (Option B). Funds move here only transiently before the",
+            "off-chain MagicBlock Private Payments leg fans them out privately to each beneficiary.",
+            "Pinned to the admin-configured `distributor_config.distributor` so it CANNOT be an",
+            "arbitrary caller draining the vault (audit C1), while still allowing the relayer to be a",
+            "dedicated, rotatable wallet distinct from the fee admin."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "distribution",
+          "docs": [
+            "Distribution state PDA — created on first private distribution."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  105,
+                  115,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
     },
     {
       "name": "process_undelegation",
@@ -1044,7 +1467,7 @@
     {
       "name": "recreate_capsule",
       "docs": [
-        "Recreate a capsule from executed state (owner locks new SOL in vault)"
+        "Recreate (reuse) an executed capsule with a new intent and freshly locked assets (owner-only)."
       ],
       "discriminator": [
         178,
@@ -1126,6 +1549,51 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "mint",
+          "optional": true
+        },
+        {
+          "name": "source_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "The vault's ATA. Must already exist (created at the original create_capsule). For SPL",
+            "recreate, reuse the same mint so this ATA is present."
+          ],
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
@@ -1142,9 +1610,7 @@
     {
       "name": "restart_timer",
       "docs": [
-        "Reset the inactivity timer (Fail-safe / Auto-restart).",
-        "Allows the owner or the system (via TEE) to restart the 1-year (or set period) countdown.",
-        "This is used if the Crank needs to be rebooted or if the owner proves they are still active."
+        "Reset the inactivity timer (fail-safe / auto-restart)."
       ],
       "discriminator": [
         0,
@@ -1192,7 +1658,7 @@
         {
           "name": "authority",
           "docs": [
-            "Can be the owner or any authorized signer/crank"
+            "Must be the capsule owner. Enforced in the handler against `capsule.owner`."
           ],
           "signer": true
         }
@@ -1202,8 +1668,7 @@
     {
       "name": "sample_price",
       "docs": [
-        "Read and log SOL/USD (or other) price from Pyth Lazer / ephemeral oracle price feed (for gating or monitoring).",
-        "Enable feature \"oracle\" and pass a Pyth Lazer price feed account (e.g. SOL/USD on Magicblock devnet)."
+        "Read a Pyth Lazer / ephemeral oracle price feed (gated behind the `oracle` feature)."
       ],
       "discriminator": [
         15,
@@ -1230,8 +1695,7 @@
     {
       "name": "schedule_execute_intent",
       "docs": [
-        "Schedule crank to run execute_intent at intervals (Magicblock ScheduleTask).",
-        "Anyone can execute when conditions are met; this registers the task for the crank."
+        "Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals."
       ],
       "discriminator": [
         88,
@@ -1348,9 +1812,7 @@
     {
       "name": "send_ccip_from_vault",
       "docs": [
-        "Send a queued EVM beneficiary transfer through CCIP Router from vault PDA custody.",
-        "The message fields (receiver/amount/selector) are derived from intent_data on-chain.",
-        "Caller only provides the router account list in remaining_accounts."
+        "Send a queued EVM beneficiary transfer through the CCIP Router from vault custody."
       ],
       "discriminator": [
         40,
@@ -1449,7 +1911,13 @@
           }
         },
         {
-          "name": "ccip_router"
+          "name": "ccip_router",
+          "docs": [
+            "Chainlink CCIP Router. Pinned by address: the vault PDA is signed into this program,",
+            "so an unconstrained router would let an attacker substitute a malicious program and",
+            "drain the SPL vault (audit C2)."
+          ],
+          "address": "Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C"
         }
       ],
       "args": [
@@ -1462,7 +1930,7 @@
     {
       "name": "update_activity",
       "docs": [
-        "Update last activity timestamp (called by Helius webhook or user)"
+        "Update last activity timestamp (called by Helius webhook or user)."
       ],
       "discriminator": [
         137,
@@ -1516,7 +1984,7 @@
     {
       "name": "update_fee_config",
       "docs": [
-        "Update platform fee config (authority only)"
+        "Update platform fee config (authority only)."
       ],
       "discriminator": [
         104,
@@ -1571,7 +2039,7 @@
     {
       "name": "update_intent",
       "docs": [
-        "Update the intent data of an existing capsule"
+        "Update the intent data of an existing capsule."
       ],
       "discriminator": [
         214,
@@ -1630,6 +2098,19 @@
   ],
   "accounts": [
     {
+      "name": "CapsuleDistribution",
+      "discriminator": [
+        232,
+        187,
+        45,
+        186,
+        154,
+        74,
+        66,
+        221
+      ]
+    },
+    {
       "name": "CapsuleVault",
       "discriminator": [
         225,
@@ -1640,6 +2121,19 @@
         88,
         13,
         247
+      ]
+    },
+    {
+      "name": "DistributorConfig",
+      "discriminator": [
+        1,
+        212,
+        77,
+        40,
+        77,
+        148,
+        78,
+        65
       ]
     },
     {
@@ -1780,13 +2274,58 @@
       "code": 6013,
       "name": "CcipAlreadySent",
       "msg": "CCIP transfer already sent for this beneficiary"
+    },
+    {
+      "code": 6014,
+      "name": "PrivateDistributionNotEnabled",
+      "msg": "Private distribution is not enabled for this capsule"
+    },
+    {
+      "code": 6015,
+      "name": "PrivateDistributionAlreadyDone",
+      "msg": "Private distribution already completed"
+    },
+    {
+      "code": 6016,
+      "name": "AlreadyDistributed",
+      "msg": "Assets already distributed for this capsule"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidDistributor",
+      "msg": "Distributor is not the authorized protocol distributor"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidInactivityPeriod",
+      "msg": "Inactivity period must be greater than zero"
     }
   ],
   "types": [
     {
+      "name": "CapsuleDistribution",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "capsule",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_private_distributed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "CapsuleVault",
       "docs": [
-        "Vault PDA holds SOL locked at capsule creation; anyone can trigger execute when conditions are met."
+        "Vault PDA holds SOL/SPL locked at capsule creation; anyone can trigger execute when conditions are met."
       ],
       "type": {
         "kind": "struct",
@@ -1850,6 +2389,18 @@
           {
             "name": "amount_lamports",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DistributorConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "distributor",
+            "type": "pubkey"
           }
         ]
       }
@@ -1928,6 +2479,18 @@
           {
             "name": "ccip_sent_bitmap",
             "type": "u16"
+          },
+          {
+            "name": "private_distributed",
+            "type": "bool"
+          },
+          {
+            "name": "locked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "distributed",
+            "type": "bool"
           }
         ]
       }

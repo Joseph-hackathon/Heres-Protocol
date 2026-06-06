@@ -12,11 +12,11 @@ import { readFileSync } from 'fs';
 import { serialize } from 'borsh';
 
 const idl = JSON.parse(readFileSync('./idl/HeresProgram.json', 'utf-8'));
-const PROGRAM_ID = new PublicKey('AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW');
+const PROGRAM_ID = new PublicKey('2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3');
 const DELEGATION_PROGRAM_ID = new PublicKey('DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh');
 const MAGIC_PROGRAM_ID = new PublicKey('Magic11111111111111111111111111111111111111');
 // #[delegate] macro derives buffer PDAs using the program's own ID at runtime
-const BUFFER_SEED_PROGRAM_ID = new PublicKey('AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW');
+const BUFFER_SEED_PROGRAM_ID = new PublicKey('2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3');
 const MAGIC_CONTEXT_ID = new PublicKey('MagicContext1111111111111111111111111111111');
 const PERMISSION_PROGRAM_ID = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1');
 const ACTIVE_VALIDATOR = new PublicKey('MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57');
@@ -67,11 +67,11 @@ console.log('Vault:', vaultPDA.toBase58());
 // Step 1: Fund
 console.log('\nStep 1: Fund owner');
 await sendAndConfirmTransaction(conn, new Transaction().add(
-  SystemProgram.transfer({ fromPubkey: crankKp.publicKey, toPubkey: ownerKp.publicKey, lamports: 0.05 * LAMPORTS_PER_SOL })
+  SystemProgram.transfer({ fromPubkey: crankKp.publicKey, toPubkey: ownerKp.publicKey, lamports: 0.1 * LAMPORTS_PER_SOL })
 ), [crankKp]);
 assert(true, 'Owner funded');
 
-// Step 2: Create capsule (0s inactivity)
+// Step 2: Create capsule (1s inactivity; M3 now rejects 0)
 console.log('\nStep 2: Create capsule');
 const ownerProv = new AnchorProvider(conn, new W(ownerKp), { commitment: 'confirmed' });
 idl.address = PROGRAM_ID.toBase58();
@@ -81,7 +81,7 @@ const intent = JSON.stringify({
   beneficiaries: [{ address: crankKp.publicKey.toBase58(), amount: '100', amountType: 'percentage' }],
   totalAmount: '0.003', inactivityDays: 0, delayDays: 0,
 });
-await ownerProg.methods.createCapsule(new BN(0), Buffer.from(intent))
+await ownerProg.methods.createCapsule(new BN(1), Buffer.from(intent))
   .accounts({
     owner: ownerKp.publicKey, capsule: capsulePDA, vault: vaultPDA,
     feeConfig: feeConfigPDA, platformFeeRecipient: PLATFORM_FEE_RECIPIENT,

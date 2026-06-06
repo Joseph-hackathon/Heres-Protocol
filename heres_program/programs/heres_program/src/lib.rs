@@ -11,6 +11,8 @@ pub mod utils;
 // Bring each instruction's Accounts context + Anchor-generated client modules
 // (`__client_accounts_*`) into the crate root so the #[program] dispatcher can resolve
 // them. Private (no re-export) to avoid glob ambiguity with the generated dispatcher.
+use instructions::cancel_capsule::*;
+use instructions::configure_distributor::*;
 use instructions::crank_undelegate::*;
 use instructions::create_capsule::*;
 use instructions::delegate_capsule::*;
@@ -18,6 +20,7 @@ use instructions::distribute_assets::*;
 use instructions::execute_intent::*;
 use instructions::init_fee_config::*;
 use instructions::prepare_private_distribution::*;
+use instructions::recreate_capsule::*;
 use instructions::restart_timer::*;
 use instructions::sample_price::*;
 use instructions::schedule_execute_intent::*;
@@ -26,7 +29,7 @@ use instructions::update_activity::*;
 use instructions::update_fee_config::*;
 use instructions::update_intent::*;
 
-declare_id!("AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW");
+declare_id!("2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3");
 
 #[ephemeral]
 #[program]
@@ -52,6 +55,11 @@ pub mod heres_program {
         instructions::update_fee_config::handler(ctx, creation_fee_lamports, execution_fee_bps)
     }
 
+    /// Set or update the protocol relayer/distributor for private distribution (admin only).
+    pub fn configure_distributor(ctx: Context<ConfigureDistributor>, distributor: Pubkey) -> Result<()> {
+        instructions::configure_distributor::handler(ctx, distributor)
+    }
+
     /// Initialize a new Intent Capsule (SOL/SPL locked in vault; anyone can execute when conditions are met).
     pub fn create_capsule(
         ctx: Context<CreateCapsule>,
@@ -64,6 +72,20 @@ pub mod heres_program {
     /// Update the intent data of an existing capsule.
     pub fn update_intent(ctx: Context<UpdateIntent>, new_intent_data: Vec<u8>) -> Result<()> {
         instructions::update_intent::handler(ctx, new_intent_data)
+    }
+
+    /// Cancel an active capsule (owner-only): refund all locked assets and close the accounts.
+    pub fn cancel_capsule(ctx: Context<CancelCapsule>) -> Result<()> {
+        instructions::cancel_capsule::handler(ctx)
+    }
+
+    /// Recreate (reuse) an executed capsule with a new intent and freshly locked assets (owner-only).
+    pub fn recreate_capsule(
+        ctx: Context<RecreateCapsule>,
+        inactivity_period: i64,
+        intent_data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::recreate_capsule::handler(ctx, inactivity_period, intent_data)
     }
 
     /// Execute the intent when the inactivity period is met (permissionless).

@@ -15,7 +15,7 @@ import bs58 from 'bs58';
 import { readFileSync } from 'fs';
 
 const idl = JSON.parse(readFileSync('./idl/HeresProgram.json', 'utf-8'));
-const PROGRAM_ID = new PublicKey('AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW');
+const PROGRAM_ID = new PublicKey('2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3');
 const PERMISSION_PROGRAM_ID = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1');
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOC_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
@@ -147,7 +147,7 @@ const distributeDiscriminator = Buffer.from([239, 241, 19, 219, 144, 191, 154, 1
 // capsule, vault(mut), system_program, token_program, fee_config, platform_fee_recipient(optional,mut), mint(optional), vault_token_account(optional,mut)
 // + remaining_accounts: beneficiary addresses
 const distributeKeys = [
-  { pubkey: capsulePDA, isSigner: false, isWritable: false },
+  { pubkey: capsulePDA, isSigner: false, isWritable: true },  // mut: H1 sets `distributed` flag (idempotency)
   { pubkey: vaultPDA, isSigner: false, isWritable: true },
   { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },

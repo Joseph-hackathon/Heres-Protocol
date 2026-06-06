@@ -19,6 +19,16 @@ pub struct InitFeeConfig<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    /// This program, used to resolve its ProgramData account.
+    #[account(constraint = program.programdata_address()? == Some(program_data.key()) @ ErrorCode::Unauthorized)]
+    pub program: Program<'info, crate::program::HeresProgram>,
+
+    /// The program's ProgramData (BPF upgradeable loader). Constrains init to the program's
+    /// upgrade authority (the deployer), so the global fee singleton cannot be front-run on a
+    /// fresh deploy by an attacker setting themselves as fee authority (audit C3).
+    #[account(constraint = program_data.upgrade_authority_address == Some(authority.key()) @ ErrorCode::Unauthorized)]
+    pub program_data: Account<'info, ProgramData>,
+
     pub system_program: Program<'info, System>,
 }
 

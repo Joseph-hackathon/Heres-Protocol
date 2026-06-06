@@ -17,6 +17,8 @@ pub struct IntentCapsule {
     pub retry_count: u64,          // Fail-safe: track TEE/execution retries
     pub ccip_sent_bitmap: u16,     // Bitmap tracking which beneficiary indexes have had CCIP sent (max 16)
     pub private_distributed: bool, // true after prepare_private_distribution completes (replay guard)
+    pub locked_amount: u64,        // real base-unit amount locked at creation; distribution math is driven by this, not the owner-asserted intent_data.totalAmount (audit H4)
+    pub distributed: bool,         // true after distribute_assets completes (idempotency guard, audit H1)
 }
 
 impl IntentCapsule {
@@ -31,5 +33,7 @@ impl IntentCapsule {
         32 +                     // mint
         8 +                      // retry_count
         2 +                      // ccip_sent_bitmap
-        1;                       // private_distributed
+        1 +                      // private_distributed
+        8 +                      // locked_amount
+        1;                       // distributed
 }

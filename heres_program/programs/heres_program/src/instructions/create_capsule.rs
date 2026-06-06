@@ -67,6 +67,9 @@ pub fn handler(
     inactivity_period: i64,
     intent_data: Vec<u8>,
 ) -> Result<()> {
+    // A non-positive inactivity period would make the capsule instantly executable by anyone (audit M3).
+    require!(inactivity_period > 0, ErrorCode::InvalidInactivityPeriod);
+
     // Parse totalAmount from intent_data
     let total_amount_units = {
         let intent_data_str = String::from_utf8(intent_data.clone())
@@ -114,6 +117,9 @@ pub fn handler(
     capsule.is_active = true;
     capsule.bump = ctx.bumps.capsule;
     capsule.vault_bump = ctx.bumps.vault;
+    // Record the REAL amount locked into the vault. All later distribution math is driven by this,
+    // not the owner-asserted intent_data.totalAmount which update_intent could desync (audit H4).
+    capsule.locked_amount = total_amount_units;
 
     // Check if SPL Mint is provided
     if let Some(mint) = &ctx.accounts.mint {

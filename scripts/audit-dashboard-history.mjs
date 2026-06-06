@@ -1,5 +1,5 @@
 const apiKey = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
-const programId = process.env.NEXT_PUBLIC_PROGRAM_ID || '26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6';
+const programId = process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3';
 
 if (!apiKey) {
   console.error('NEXT_PUBLIC_HELIUS_API_KEY is required');
