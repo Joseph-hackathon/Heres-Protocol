@@ -382,7 +382,7 @@ pub mod heres_program {
                     let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
                     let cpi_accounts = Transfer {
                         from: vault_ata.to_account_info(),
-                        to: beneficiary_account.to_account_info(), 
+                        to: beneficiary_account.to_account_info(),
                         authority: ctx.accounts.vault.to_account_info(),
                     };
                     let cpi_program = ctx.accounts.token_program.to_account_info();
@@ -649,6 +649,7 @@ pub mod heres_program {
             vec![&capsule_info, &vault_info],
             &magic_context_info,
             &magic_program_info,
+            None, // magic_fee_vault: no commit sponsorship configured
         )?;
 
         msg!("Capsule and Vault commit+undelegate scheduled");
@@ -680,9 +681,9 @@ pub mod heres_program {
         };
 
         let ix_data = bincode::serialize(&MagicBlockInstruction::ScheduleTask(ScheduleTaskArgs {
-            task_id: args.task_id,
-            execution_interval_millis: args.execution_interval_millis,
-            iterations: args.iterations,
+            task_id: args.task_id as i64,
+            execution_interval_millis: args.execution_interval_millis as i64,
+            iterations: args.iterations as i64,
             instructions: vec![execute_ix],
         }))
         .map_err(|e| {
@@ -791,7 +792,7 @@ pub mod heres_program {
             let total_str = intent_json.get("totalAmount")
                 .and_then(|t| t.as_str())
                 .ok_or(ErrorCode::InvalidIntentData)?;
-            let asset_decimals = infer_asset_decimals(&intent_json, Some(capsule.mint.decimals));
+            let asset_decimals = infer_asset_decimals(&intent_json, ctx.accounts.mint.as_ref().map(|m| m.decimals));
             parse_amount_to_units(total_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
         };
 
@@ -819,7 +820,7 @@ pub mod heres_program {
                         to: platform_recipient.to_account_info(),
                         authority: ctx.accounts.vault.to_account_info(),
                     };
-                    let cpi_program = ctx.accounts.token_program.to_account_info();
+                    let cpi_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?.to_account_info();
                     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
                     token::transfer(cpi_ctx, execution_fee)?;
                 } else {
@@ -842,7 +843,7 @@ pub mod heres_program {
                     to: distributor_ata.to_account_info(),
                     authority: ctx.accounts.vault.to_account_info(),
                 };
-                let cpi_program = ctx.accounts.token_program.to_account_info();
+                let cpi_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?.to_account_info();
                 let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
                 token::transfer(cpi_ctx, remaining)?;
                 msg!("Transferred {} SPL tokens from vault to distributor", remaining);
@@ -864,77 +865,6 @@ pub mod heres_program {
 
         Ok(())
     }
-
-    /// Prepare private distribution: transfer remaining vault funds to the distributor's base wallet.
-    /// This instruction is called by the crank/cron after execute_intent when distributionMode="private".
-    /// For SPL tokens, transfers from vault ATA to distributor's ATA.
-    /// For SOL, transfers lamports directly to distributor.
-    pub fn prepare_private_distribution(
-        ctx: Context<PreparePrivateDistribution>,
-    ) -> Result<()> {
-        let capsule = &mut ctx.accounts.capsule;
-        require!(!capsule.is_active, ErrorCode::CapsuleActive);
-        require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
-        require!(!capsule.private_distributed, ErrorCode::PrivateDistributionAlreadyDone);
-
-        let intent_data_str = String::from_utf8(capsule.intent_data.clone())
-            .map_err(|_| ErrorCode::InvalidIntentData)?;
-        let intent_json: serde_json::Value = serde_json::from_str(&intent_data_str)
-            .map_err(|_| ErrorCode::InvalidIntentData)?;
-
-        // Ensure private distribution was requested
-        require!(wants_private_distribution(&intent_json), ErrorCode::PrivateDistributionNotEnabled);
-
-        let vault_bump = capsule.vault_bump;
-        let owner_key = capsule.owner;
-        let vault_seeds: &[&[u8]] = &[
-            b"capsule_vault",
-            owner_key.as_ref(),
-            &[vault_bump],
-        ];
-        let signer_seeds = &[vault_seeds];
-
-        let is_spl = capsule.mint != Pubkey::default();
-
-        if is_spl {
-            // SPL transfer from vault ATA to distributor's ATA
-            let mint = ctx.accounts.mint.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-            let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-            let distributor_ata = ctx.accounts.distributor_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-
-            // Transfer entire remaining balance
-            let balance = vault_ata.amount;
-            if balance > 0 {
-                let cpi_accounts = Transfer {
-                    from: vault_ata.to_account_info(),
-                    to: distributor_ata.to_account_info(),
-                    authority: ctx.accounts.vault.to_account_info(),
-                };
-                let cpi_program = ctx.accounts.token_program.to_account_info();
-                let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-                token::transfer(cpi_ctx, balance)?;
-                msg!("Transferred {} SPL tokens from vault to distributor", balance);
-            }
-        } else {
-            // SOL transfer: vault is a system account, lamports directly transferable
-            let vault_account = ctx.accounts.vault.to_account_info();
-            let distributor_account = ctx.accounts.distributor.to_account_info();
-
-            // Read vault lamports
-            let vault_balance = **vault_account.try_borrow_lamports()?;
-            if vault_balance > 0 {
-                **vault_account.try_borrow_mut_lamports()? -= vault_balance;
-                **distributor_account.try_borrow_mut_lamports()? += vault_balance;
-                msg!("Transferred {} lamports from vault to distributor", vault_balance);
-            }
-        }
-
-        capsule.private_distributed = true;
-        msg!("Capsule {} marked as privately distributed", capsule.key());
-
-        Ok(())
-    }
-}
 
 }
 
@@ -1263,7 +1193,7 @@ pub struct PreparePrivateDistribution<'info> {
     pub mint: Option<Box<Account<'info, Mint>>>,
 
     #[account(mut)]
-    pub vault_token_account: Option<Box<Account<'info, TokenAccount>>,
+    pub vault_token_account: Option<Box<Account<'info, TokenAccount>>>,
 
     // The distributor's token account (SPL) receiving the remaining funds
     #[account(mut)]
@@ -1347,6 +1277,7 @@ pub struct IntentCapsule {
     pub mint: Pubkey,
     pub retry_count: u64, // Fail-safe: track TEE/execution retries
     pub ccip_sent_bitmap: u16, // Bitmap tracking which beneficiary indexes have had CCIP sent (max 16)
+    pub private_distributed: bool, // true after prepare_private_distribution completes (replay guard)
 }
 
 impl IntentCapsule {
@@ -1360,7 +1291,8 @@ impl IntentCapsule {
         1 +                      // vault_bump
         32 +                     // mint
         8 +                      // retry_count
-        2;                       // ccip_sent_bitmap
+        2 +                      // ccip_sent_bitmap
+        1;                       // private_distributed
 }
 
 #[event]
