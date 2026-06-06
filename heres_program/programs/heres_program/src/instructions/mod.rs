@@ -2,6 +2,7 @@
 //! `handler` function. `lib.rs` delegates to `instructions::<module>::handler`.
 
 pub mod cancel_capsule;
+pub mod configure_distributor;
 pub mod crank_undelegate;
 pub mod create_capsule;
 pub mod delegate_capsule;

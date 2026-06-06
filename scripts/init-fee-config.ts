@@ -1,14 +1,19 @@
 import { Connection, Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
-import { Program, AnchorProvider, BN } from '@coral-xyz/anchor'
-import idl from '../idl/HeresProgram.json'
+import anchor from '@coral-xyz/anchor'
 import fs from 'fs'
+const { Program, AnchorProvider, BN } = anchor
 
+const idl = JSON.parse(fs.readFileSync(new URL('../idl/HeresProgram.json', import.meta.url), 'utf8'))
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed')
-const secretKey = JSON.parse(fs.readFileSync(process.env.HOME + '/.config/solana/id.json', 'utf8'))
+// init_fee_config is gated on the program's upgrade authority (audit C3), so this MUST run as the
+// deployer. Point HERES_AUTHORITY_KEYPAIR at the deploy wallet; defaults to the Solana CLI wallet.
+const keypairPath = process.env.HERES_AUTHORITY_KEYPAIR || process.env.HOME + '/.config/solana/id.json'
+const secretKey = JSON.parse(fs.readFileSync(keypairPath, 'utf8'))
 const wallet = Keypair.fromSecretKey(Uint8Array.from(secretKey))
 
 class NodeWallet {
-  constructor(readonly payer: Keypair) {}
+  payer: Keypair
+  constructor(payer: Keypair) { this.payer = payer }
   get publicKey() { return this.payer.publicKey }
   async signTransaction(tx: any) { tx.partialSign(this.payer); return tx }
   async signAllTransactions(txs: any[]) { txs.forEach(tx => tx.partialSign(this.payer)); return txs }

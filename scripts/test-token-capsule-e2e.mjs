@@ -88,7 +88,7 @@ async function getTokenAmount(connection, ata) {
 async function main() {
   loadEnv()
 
-  const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW')
+  const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3')
   const permissionProgramId = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1')
   const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
   const keypairPath = path.join(os.homedir(), '.config', 'solana', 'id.json')

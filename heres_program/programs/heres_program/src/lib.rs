@@ -12,6 +12,7 @@ pub mod utils;
 // (`__client_accounts_*`) into the crate root so the #[program] dispatcher can resolve
 // them. Private (no re-export) to avoid glob ambiguity with the generated dispatcher.
 use instructions::cancel_capsule::*;
+use instructions::configure_distributor::*;
 use instructions::crank_undelegate::*;
 use instructions::create_capsule::*;
 use instructions::delegate_capsule::*;
@@ -28,7 +29,7 @@ use instructions::update_activity::*;
 use instructions::update_fee_config::*;
 use instructions::update_intent::*;
 
-declare_id!("AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW");
+declare_id!("2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3");
 
 #[ephemeral]
 #[program]
@@ -52,6 +53,11 @@ pub mod heres_program {
         execution_fee_bps: u16,
     ) -> Result<()> {
         instructions::update_fee_config::handler(ctx, creation_fee_lamports, execution_fee_bps)
+    }
+
+    /// Set or update the protocol relayer/distributor for private distribution (admin only).
+    pub fn configure_distributor(ctx: Context<ConfigureDistributor>, distributor: Pubkey) -> Result<()> {
+        instructions::configure_distributor::handler(ctx, distributor)
     }
 
     /// Initialize a new Intent Capsule (SOL/SPL locked in vault; anyone can execute when conditions are met).

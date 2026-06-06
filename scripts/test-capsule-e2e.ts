@@ -17,7 +17,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 // ─── Config ────────────────────────────────────────────────────────
-const PROGRAM_ID = new PublicKey('26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6')
+const PROGRAM_ID = new PublicKey('2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3')
 const RPC_URL = 'https://api.devnet.solana.com'
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const PERMISSION_PROGRAM_ID = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1')

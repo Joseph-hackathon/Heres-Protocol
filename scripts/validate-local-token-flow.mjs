@@ -110,7 +110,7 @@ async function tokenAmount(connection, ata) {
 async function main() {
   loadEnv()
 
-  const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || 'AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW')
+  const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3')
   const permissionProgramId = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1')
   const connection = new Connection('http://127.0.0.1:8899', 'confirmed')
   const authority = keypairFromFile(path.join(os.homedir(), '.config/solana/id.json'))
