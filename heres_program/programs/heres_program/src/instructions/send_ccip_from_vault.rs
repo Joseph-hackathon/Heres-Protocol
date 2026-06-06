@@ -6,7 +6,7 @@ use anchor_lang::solana_program::{
     program::invoke_signed,
 };
 
-use crate::constants::LINK_TOKEN_MINT;
+use crate::constants::{CCIP_ROUTER_ID, LINK_TOKEN_MINT};
 use crate::error::ErrorCode;
 use crate::events::CcipTransferSent;
 use crate::state::{CapsuleVault, FeeConfig, IntentCapsule};
@@ -56,7 +56,11 @@ pub struct SendCcipFromVault<'info> {
     #[account(seeds = [b"fee_config"], bump)]
     pub fee_config: Box<Account<'info, FeeConfig>>,
 
-    /// CHECK: external CCIP router program account
+    /// Chainlink CCIP Router. Pinned by address: the vault PDA is signed into this program,
+    /// so an unconstrained router would let an attacker substitute a malicious program and
+    /// drain the SPL vault (audit C2).
+    /// CHECK: validated by address against CCIP_ROUTER_ID.
+    #[account(address = CCIP_ROUTER_ID @ ErrorCode::InvalidCcipAccounts)]
     pub ccip_router: AccountInfo<'info>,
 }
 
@@ -105,7 +109,9 @@ pub fn handler<'info>(
         .parse::<u64>()
         .map_err(|_| ErrorCode::InvalidIntentData)?;
 
-    // Recompute amount for target beneficiary using same ratio logic as distribute_assets
+    // Recompute amount for target beneficiary using same ratio logic as distribute_assets.
+    // The asserted total is the proportion denominator only; the actual pool is the real
+    // locked balance so this stays consistent with distribute_assets (audit H4).
     let total_amount_str = intent_json
         .get("totalAmount")
         .and_then(|t| t.as_str())
@@ -114,13 +120,14 @@ pub fn handler<'info>(
     let total_amount_units = parse_amount_to_units(total_amount_str, asset_decimals)
         .map_err(|_| ErrorCode::InvalidIntentData)?;
 
-    let mut remaining_for_beneficiaries = total_amount_units;
+    let pool = capsule.locked_amount;
+    let mut remaining_for_beneficiaries = pool;
     if ctx.accounts.fee_config.execution_fee_bps > 0 {
-        let execution_fee = total_amount_units
+        let execution_fee = pool
             .checked_mul(ctx.accounts.fee_config.execution_fee_bps as u64)
             .and_then(|v| v.checked_div(10_000))
             .ok_or(ErrorCode::InvalidIntentData)?;
-        remaining_for_beneficiaries = total_amount_units.saturating_sub(execution_fee);
+        remaining_for_beneficiaries = pool.saturating_sub(execution_fee);
     }
 
     let total_for_ratio = total_amount_units;

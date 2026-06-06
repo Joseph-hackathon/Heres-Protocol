@@ -22,9 +22,17 @@ async function main() {
     [Buffer.from('fee_config')],
     program.programId
   )
+  // ProgramData (BPF upgradeable loader) holds the upgrade authority. init_fee_config is now
+  // gated on it so only the deployer can initialize the global fee config (audit C3).
+  const BPF_LOADER_UPGRADEABLE = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
+  const [programData] = PublicKey.findProgramAddressSync(
+    [program.programId.toBuffer()],
+    BPF_LOADER_UPGRADEABLE
+  )
   console.log('Program ID:', program.programId.toBase58())
   console.log('Fee Config PDA:', feeConfigPDA.toBase58())
-  console.log('Authority:', wallet.publicKey.toBase58())
+  console.log('Program Data:', programData.toBase58())
+  console.log('Authority (must be program upgrade authority):', wallet.publicKey.toBase58())
 
   const existing = await connection.getAccountInfo(feeConfigPDA)
   if (existing) {
@@ -42,6 +50,8 @@ async function main() {
     .accounts({
       feeConfig: feeConfigPDA,
       authority: wallet.publicKey,
+      program: program.programId,
+      programData,
       systemProgram: SystemProgram.programId,
     })
     .rpc()
