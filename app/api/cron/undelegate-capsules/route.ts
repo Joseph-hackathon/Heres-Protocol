@@ -1,12 +1,16 @@
+/**
+ * Cron endpoint: undelegate executed capsules from the ER back to the base layer.
+ *
+ * Option B: undelegation is now one step of the unified crank pipeline (lib/crank.ts).
+ * This route is retained for backward-compat with any external scheduler still calling it -
+ * it simply runs the same pipeline, so whichever cron fires advances every capsule's state.
+ * The execute-intent cron runs the identical pipeline; the two schedules can be collapsed to one.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
-import { Keypair, PublicKey } from '@solana/web3.js'
+import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { getSolanaConnection } from '@/config/solana'
-import { MAGICBLOCK_ER } from '@/constants'
-import { fetchCapsuleStateByAddress } from '@/lib/cre/solana'
-import { getCapsuleVaultPDA } from '@/lib/program'
-import { Program, AnchorProvider, Wallet } from '@coral-xyz/anchor'
-import idl from '@/idl/HeresProgram.json'
+import { runCrankPipeline } from '@/lib/crank'
 
 function getCrankKeypair(): Keypair | null {
   const raw = process.env.CRANK_WALLET_PRIVATE_KEY
@@ -24,22 +28,6 @@ function getCrankKeypair(): Keypair | null {
   } catch {
     return null
   }
-}
-
-function makeWallet(keypair: Keypair): Wallet {
-  return {
-    publicKey: keypair.publicKey,
-    signTransaction: async (tx) => {
-      tx.sign([keypair] as any)
-      return tx
-    },
-    signAllTransactions: async (txs) => {
-      return txs.map((tx) => {
-        tx.sign([keypair] as any)
-        return tx
-      })
-    },
-  } as Wallet
 }
 
 export async function GET(request: NextRequest) {
@@ -66,86 +54,8 @@ async function handle(request: NextRequest) {
   }
 
   try {
-    const connection = getSolanaConnection()
-    const wallet = makeWallet(keypair)
-    const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' })
-    const program = new Program(idl as any, provider)
-
-    // Use low-level getProgramAccounts to fetch all capsule accounts without typed account access
-    const programId = new PublicKey(process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3')
-    const accounts = await connection.getProgramAccounts(programId) // no filters
-
-    const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
-    const undelegated: string[] = []
-    const skipped: string[] = []
-    const errors: string[] = []
-
-    for (const acct of accounts) {
-      const pubkey = acct.pubkey
-      const accountInfo = acct.account
-
-      // Check if delegated to ER (owner is delegation program)
-      if (!accountInfo.owner.equals(delegationProgramId)) {
-        skipped.push(pubkey.toBase58())
-        continue
-      }
-
-      // Check if executed
-      try {
-        const decoded = await fetchCapsuleStateByAddress(pubkey)
-        if (!decoded) {
-          skipped.push(pubkey.toBase58())
-          continue
-        }
-        if (decoded.executedAt === null) {
-          skipped.push(pubkey.toBase58() + ' (not executed)')
-          continue
-        }
-      } catch (e) {
-        skipped.push(pubkey.toBase58() + ' (decode error)')
-        continue
-      }
-
-      // Call crank_undelegate via program
-      try {
-        // Need to get owner from account data to derive vault PDA
-        const decoded = await fetchCapsuleStateByAddress(pubkey)
-        if (!decoded) {
-          errors.push(`${pubkey.toBase58()}: could not decode`)
-          continue
-        }
-        const ownerPubkey = decoded.owner
-        const [vaultPDA] = getCapsuleVaultPDA(ownerPubkey)
-        const magicProgramId = new PublicKey(MAGICBLOCK_ER.MAGIC_PROGRAM_ID)
-        const magicContextId = new PublicKey(MAGICBLOCK_ER.MAGIC_CONTEXT)
-
-        const tx = await program.methods
-          .crankUndelegate()
-          .accounts({
-            payer: keypair.publicKey,
-            capsule: pubkey,
-            vault: vaultPDA,
-            magicContext: magicContextId,
-            magicProgram: magicProgramId,
-          })
-          .rpc()
-
-        undelegated.push(`${pubkey.toBase58()} (sig: ${tx})`)
-      } catch (error: any) {
-        errors.push(`${pubkey.toBase58()}: ${error.message}`)
-      }
-    }
-
-    return NextResponse.json({
-      ok: true,
-      total: accounts.length,
-      undelegated: undelegated.length,
-      skipped: skipped.length,
-      errors: errors.length,
-      undelegatedList: undelegated,
-      skippedList: skipped,
-      errorList: errors,
-    })
+    const result = await runCrankPipeline(keypair)
+    return NextResponse.json(result, { status: result.ok ? 200 : 500 })
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

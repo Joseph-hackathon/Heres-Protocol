@@ -1,6 +1,7 @@
 /**
- * Cron endpoint: run crank to execute all eligible capsules (conditions met).
- * Call this at intervals (e.g. every 5??5 min) via Vercel Cron or external cron.
+ * Cron endpoint: run the unified dead-man's-switch crank pipeline over all registered capsules.
+ * Each tick advances every capsule one step: execute (base or ER) -> undelegate -> distribute.
+ * Call at intervals (e.g. every 1-5 min) via Vercel Cron or external cron.
  * Set CRANK_WALLET_PRIVATE_KEY (base58, base64, or JSON array of 64 bytes) and optionally
  * CRON_SECRET for auth.
  */
@@ -8,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { runCrank } from '@/lib/crank'
+import { runCrankPipeline } from '@/lib/crank'
 import { reconcileCreDeliveries } from '@/lib/cre/service'
 
 function getCrankKeypair(): Keypair | null {
@@ -57,7 +58,7 @@ async function handleCron(request: NextRequest) {
 
   try {
     const [crankResult, creResult] = await Promise.allSettled([
-      runCrank(keypair),
+      runCrankPipeline(keypair),
       reconcileCreDeliveries(),
     ])
 

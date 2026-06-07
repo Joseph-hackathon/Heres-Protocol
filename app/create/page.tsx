@@ -629,7 +629,15 @@ export default function CreatePage() {
         }
       }
 
+      // ER delegation + ScheduleTask are opt-in. Model A default is base-only: the capsule stays
+      // on the base layer and the off-chain crank drives the full execute -> distribute lifecycle.
+      // Set NEXT_PUBLIC_DELEGATE_ON_CREATE=true to also use the MagicBlock ScheduleTask firing path.
+      const DELEGATE_ON_CREATE = process.env.NEXT_PUBLIC_DELEGATE_ON_CREATE === 'true'
       let delegatedToEr = false
+
+      if (!DELEGATE_ON_CREATE) {
+        console.log('[Automation] Base-only mode (Model A): off-chain crank will execute + distribute this capsule.')
+      } else {
 
       // ===== Step 2: Delegate to ER =====
       setCurrentStep('Delegating to ER...')
@@ -690,6 +698,8 @@ export default function CreatePage() {
           automationIssues.push('ER crank scheduling')
         }
       }
+
+      } // end DELEGATE_ON_CREATE gate
 
       setCurrentStep(null)
 

@@ -18,6 +18,8 @@ export interface DecodedCapsuleState {
   retryCount: number
   ccipSentBitmap: number
   privateDistributed: boolean
+  lockedAmount: number
+  distributed: boolean
   vaultBump: number
 }
 
@@ -89,6 +91,18 @@ function decodeCapsuleAccountData(capsuleAddress: PublicKey, accountOwner: Publi
   // private_distributed: bool (u8)
   const privateDistributed = data[offset] === 1
   offset += 1
+  // locked_amount: u64 (audit H4) then distributed: bool (audit H1).
+  // Guard offsets: delegated stubs / legacy capsules may be shorter than the full layout.
+  let lockedAmount = 0
+  let distributed = false
+  if (offset + 8 <= data.length) {
+    lockedAmount = Number(readU64(data, offset))
+    offset += 8
+    if (offset < data.length) {
+      distributed = data[offset] === 1
+      offset += 1
+    }
+  }
 
   return {
     capsuleAddress: capsuleAddress.toBase58(),
@@ -103,6 +117,8 @@ function decodeCapsuleAccountData(capsuleAddress: PublicKey, accountOwner: Publi
     retryCount,
     ccipSentBitmap,
     privateDistributed,
+    lockedAmount,
+    distributed,
     vaultBump,
   }
 }

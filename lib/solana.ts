@@ -712,7 +712,8 @@ export async function distributeAssets(
   // distribute_assets discriminator: sha256("global:distribute_assets")[0..8]
   const discriminator = Buffer.from([239, 241, 19, 219, 144, 191, 154, 18])
   const keys = [
-    { pubkey: capsulePDA, isSigner: false, isWritable: false },
+    // capsule MUST be writable: distribute_assets sets capsule.distributed = true (audit H1).
+    { pubkey: capsulePDA, isSigner: false, isWritable: true },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
