@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS capsule_owner_registry (
   registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- M2 due-time index: epoch seconds at which the capsule may first fire
+-- (last_activity + inactivity_period). NULL = always due (unknown / pre-M2).
+ALTER TABLE capsule_owner_registry ADD COLUMN IF NOT EXISTS due_at BIGINT;
+CREATE INDEX IF NOT EXISTS idx_capsule_owner_registry_due ON capsule_owner_registry (due_at);
+
 CREATE TABLE IF NOT EXISTS helius_webhook_logs (
   id BIGSERIAL PRIMARY KEY,
   event_hash TEXT NOT NULL UNIQUE,

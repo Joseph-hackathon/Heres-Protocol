@@ -12,8 +12,8 @@ import { Program, AnchorProvider, BorshAccountsCoder, type Wallet } from '@coral
 import idl from '../idl/HeresProgram.json'
 import { getSolanaConnection, getProgramId } from '@/config/solana'
 import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA, getPermissionPDA } from './program'
-import { fetchCapsuleStateByAddress, type DecodedCapsuleState } from './cre/solana'
-import { getRegisteredOwners, unregisterCapsuleOwner } from './capsule-registry'
+import { fetchCapsuleStatesBatched, type DecodedCapsuleState } from './cre/solana'
+import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
 import { MAGICBLOCK_ER, SOLANA_CONFIG } from '@/constants'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -234,6 +234,8 @@ export type CapsuleAction = 'executed-base' | 'executed-er' | 'undelegated' | 'd
 
 export type PipelineResult = {
   ok: boolean
+  dueSelected: number
+  fullScan: boolean
   scanned: number
   executedBase: number
   executedEr: number
@@ -243,28 +245,57 @@ export type PipelineResult = {
 }
 
 /**
- * Unified dead-man's-switch crank. One state-machine pass over every registered capsule:
+ * Owners the crank should look at this tick. M2 hot path: the due-time index
+ * returns only capsules whose fire-time has passed, so armed-but-not-due capsules
+ * are never fetched. If the index read fails, fall back to a full scan over the
+ * flat registry (correct, just more RPC) so a backend hiccup never strands a fire.
+ */
+async function selectDueOwners(now: number): Promise<{ owners: string[]; fullScan: boolean }> {
+  try {
+    return { owners: await getDueOwners(now), fullScan: false }
+  } catch {
+    return { owners: await getRegisteredOwners(), fullScan: true }
+  }
+}
+
+/**
+ * Unified dead-man's-switch crank. Selects only the due capsules (M2 due-time
+ * index, full-scan fallback), batch-fetches their state in one RPC per 100, and
+ * runs one state-machine step per capsule:
  *
- *   delegated  + active   + elapsed   -> execute on ER (flip state; ScheduleTask backstop)
- *   delegated  + executed             -> undelegate (commit + return ownership to base)
- *   !delegated + active   + elapsed   -> execute on base (flip state)
+ *   delegated  + active   + elapsed      -> execute on ER (flip state; ScheduleTask backstop)
+ *   delegated  + executed                -> undelegate (commit + return ownership to base)
+ *   !delegated + active   + elapsed      -> execute on base (flip state)
  *   !delegated + executed + !distributed -> distribute (pay out, then unregister)
+ *   active     + !elapsed                -> self-heal due-time, skip until actually due
  *
  * Each capsule advances one step per tick; on-chain guards (H1) make every step idempotent.
  */
 export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineResult> {
   const connection = getSolanaConnection()
-  const owners = await getRegisteredOwners()
   const now = Math.floor(Date.now() / 1000)
+  const { owners, fullScan } = await selectDueOwners(now)
 
   const result: PipelineResult = {
     ok: true,
+    dueSelected: owners.length,
+    fullScan,
     scanned: 0,
     executedBase: 0,
     executedEr: 0,
     undelegated: 0,
     distributed: 0,
     errors: [],
+  }
+
+  // One batched RPC round-trip per 100 due owners (M2) instead of one per owner.
+  let states: Map<string, DecodedCapsuleState | null>
+  try {
+    states = await fetchCapsuleStatesBatched(owners)
+  } catch (e) {
+    result.ok = false
+    result.errors.push(`batch fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    return result
   }
 
   for (const ownerStr of owners) {
@@ -275,20 +306,14 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
       continue
     }
 
-    const [capsulePDA] = getCapsulePDA(ownerPubkey)
-    let state: DecodedCapsuleState | null
-    try {
-      state = await fetchCapsuleStateByAddress(capsulePDA)
-    } catch (e) {
-      result.errors.push(`${ownerStr}: state fetch failed: ${e instanceof Error ? e.message : String(e)}`)
-      continue
-    }
+    const state = states.get(ownerStr)
     if (!state) continue
     result.scanned += 1
 
     const delegated = state.accountOwner.equals(DELEGATION_PROGRAM_ID)
     const executed = state.executedAt != null
-    const elapsed = now >= state.lastActivity + state.inactivityPeriod
+    const dueAt = state.lastActivity + state.inactivityPeriod
+    const elapsed = now >= dueAt
 
     try {
       if (delegated && state.isActive && elapsed) {
@@ -318,6 +343,13 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
       } else if (!delegated && executed && state.distributed) {
         // Fully settled: drop from the registry so future ticks skip it.
         await unregisterCapsuleOwner(ownerStr)
+      } else if (state.isActive && !elapsed) {
+        // Not due yet (a freshly seeded entry, clock skew, or an owner heartbeat
+        // that extended the deadline). Self-heal: record the true fire-time so the
+        // due index excludes this capsule until then. Once a capsule crosses its
+        // due-time its score stays in the past, so it remains selected every tick
+        // until it is fully settled and unregistered above. (M2 scale invariant.)
+        await setCapsuleDue(ownerStr, dueAt)
       }
     } catch (e) {
       result.ok = false
