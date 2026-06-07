@@ -16,6 +16,7 @@
  */
 import { Connection, PublicKey } from '@solana/web3.js'
 import { readFileSync, existsSync } from 'fs'
+import pg from 'pg'
 import { createTestCapsule } from './e2e-create-test-capsule.mjs'
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000'
@@ -34,12 +35,29 @@ function assert(cond, label) {
   console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`)
   if (!cond) failures++
 }
-function readRegistry() {
+// Backend-aware registry read: Postgres when DATABASE_URL is set (prod path),
+// otherwise the local file map. Returns { owner: dueAt | null } either way.
+let _pg = null
+async function pgClient() {
+  if (_pg) return _pg
+  _pg = new pg.Client({ connectionString: process.env.DATABASE_URL })
+  await _pg.connect()
+  return _pg
+}
+async function readRegistry() {
+  if (process.env.DATABASE_URL) {
+    const cl = await pgClient()
+    const { rows } = await cl.query('SELECT owner_address, due_at FROM capsule_owner_registry')
+    const m = {}
+    for (const r of rows) m[r.owner_address] = r.due_at == null ? null : Number(r.due_at)
+    return m
+  }
   if (!existsSync(REGISTRY)) return {}
   const parsed = JSON.parse(readFileSync(REGISTRY, 'utf8'))
   if (Array.isArray(parsed)) return Object.fromEntries(parsed.map((o) => [o, 0]))
   return parsed
 }
+const seededDue = (v) => v === 0 || v === null  // "always due": file seeds 0, Postgres seeds NULL
 async function register(owner) {
   const r = await fetch(`${BASE}/api/capsule-registry`, {
     method: 'POST',
@@ -56,7 +74,7 @@ async function tick() {
   return { status: r.status, body }
 }
 
-console.log('=== M2 due-index e2e ===\n')
+console.log(`=== M2 due-index e2e (backend: ${process.env.DATABASE_URL ? 'POSTGRES' : 'file'}) ===\n`)
 
 console.log('[1] creating capsules (2 fast @10s, 1 cold @75s)...')
 const fast1 = await createTestCapsule({ inactivity: 10, totalAmountSol: '0.003' })
@@ -67,10 +85,11 @@ console.log(`    fast1=${fast1.owner}\n    fast2=${fast2.owner}\n    cold =${col
 
 console.log('[2] registering all 3 for automation...')
 for (const o of [fast1.owner, fast2.owner, cold.owner]) await register(o)
-const reg0 = readRegistry()
+const reg0 = await readRegistry()
 console.log('    registry after register:', JSON.stringify(reg0))
 assert(Object.keys(reg0).length === 3, 'registry has 3 owners')
-assert([fast1, fast2, cold].every((x) => reg0[x.owner] === 0), 'all seeded at due=0 (DUE_UNKNOWN)')
+assert([fast1, fast2, cold].every((x) => x.owner in reg0 && seededDue(reg0[x.owner])),
+  'all seeded as always-due (0 / NULL)')
 
 const crankBal0 = await c.getBalance(CRANK)
 console.log(`    crank balance: ${sol(crankBal0)} SOL\n`)
@@ -86,7 +105,7 @@ assert(t1.body.fullScan === false, 'tick1 used the due index (not full scan)')
 assert(t1.body.executedBase === 2, 'tick1 executed 2 on base')
 assert(t1.body.distributed === 2, 'tick1 distributed 2')
 
-const reg1 = readRegistry()
+const reg1 = await readRegistry()
 console.log('    registry after tick1:', JSON.stringify(reg1))
 assert(Object.keys(reg1).length === 1 && cold.owner in reg1, 'only cold remains registered')
 assert(typeof reg1[cold.owner] === 'number' && reg1[cold.owner] > Math.floor(Date.now() / 1000),
@@ -106,7 +125,7 @@ console.log('    tick2 result:', JSON.stringify(t2.body))
 assert(t2.status === 200, 'tick2 HTTP 200')
 assert(t2.body.dueSelected === 0, 'tick2 dueSelected = 0  <-- index EXCLUDES the cold capsule')
 assert(t2.body.scanned === 0, 'tick2 fetched 0 accounts (no wasted RPC on cold capsule)')
-const reg2 = readRegistry()
+const reg2 = await readRegistry()
 assert(Object.keys(reg2).length === 1 && cold.owner in reg2, 'cold still registered, just not selected\n')
 
 console.log('[5] waiting for cold to elapse (75s), then TICK 3...')
@@ -117,9 +136,10 @@ console.log('    tick3 result:', JSON.stringify(t3.body))
 assert(t3.status === 200, 'tick3 HTTP 200')
 assert(t3.body.dueSelected === 1, 'tick3 dueSelected = 1  <-- cold RE-ADMITTED now that it is due')
 assert(t3.body.executedBase === 1 && t3.body.distributed === 1, 'tick3 fired + paid the cold capsule')
-const reg3 = readRegistry()
+const reg3 = await readRegistry()
 console.log('    registry after tick3:', JSON.stringify(reg3))
 assert(Object.keys(reg3).length === 0, 'registry empty: all capsules fully settled')
 
+if (_pg) await _pg.end()
 console.log(`\n=== ${failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'} ===`)
 process.exit(failures === 0 ? 0 : 1)
