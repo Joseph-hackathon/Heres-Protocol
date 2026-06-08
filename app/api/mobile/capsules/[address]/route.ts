@@ -5,10 +5,10 @@ import { computeCapsuleStatus } from '@/lib/mobile'
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { address: string } }
+  { params }: { params: Promise<{ address: string }> }
 ) {
   try {
-    const capsuleAddress = params.address
+    const { address: capsuleAddress } = await params
     let capsulePda: PublicKey
     try {
       capsulePda = new PublicKey(capsuleAddress)
