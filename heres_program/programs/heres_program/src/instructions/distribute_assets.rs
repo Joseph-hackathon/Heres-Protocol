@@ -7,7 +7,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use crate::error::ErrorCode;
 use crate::events::CcipTransferRequested;
 use crate::state::{CapsuleVault, FeeConfig, IntentCapsule};
-use crate::utils::{infer_asset_decimals, parse_amount_to_units};
+use crate::utils::{apply_percentage, infer_asset_decimals, parse_amount_to_units};
 
 #[derive(Accounts)]
 pub struct DistributeAssets<'info> {
@@ -156,10 +156,9 @@ pub fn handler<'info>(
             .unwrap_or("fixed");
 
         let amount_units = if amount_type == "percentage" {
-            let percentage = amount_str.parse::<f64>().map_err(|_| ErrorCode::InvalidIntentData)?;
-            (total_amount_units as f64 * percentage / 100.0) as u64
+            apply_percentage(total_amount_units, amount_str)?
         } else {
-            parse_amount_to_units(amount_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
+            parse_amount_to_units(amount_str, asset_decimals)?
         };
 
         let to_send = if total_for_ratio == 0 {

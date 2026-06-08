@@ -10,7 +10,7 @@ use crate::constants::{CCIP_ROUTER_ID, LINK_TOKEN_MINT};
 use crate::error::ErrorCode;
 use crate::events::CcipTransferSent;
 use crate::state::{CapsuleVault, FeeConfig, IntentCapsule};
-use crate::utils::{infer_asset_decimals, parse_amount_to_units};
+use crate::utils::{apply_percentage, infer_asset_decimals, parse_amount_to_units};
 
 /// Discriminator for the CCIP Router `ccip_send` instruction.
 const CCIP_SEND_DISCRIMINATOR: [u8; 8] = [108, 216, 134, 191, 249, 234, 33, 84];
@@ -145,10 +145,9 @@ pub fn handler<'info>(
             .and_then(|t| t.as_str())
             .unwrap_or("fixed");
         let amount_units = if amount_type == "percentage" {
-            let percentage = amount_str.parse::<f64>().map_err(|_| ErrorCode::InvalidIntentData)?;
-            (total_amount_units as f64 * percentage / 100.0) as u64
+            apply_percentage(total_amount_units, amount_str)?
         } else {
-            parse_amount_to_units(amount_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
+            parse_amount_to_units(amount_str, asset_decimals)?
         };
 
         let to_send = if total_for_ratio == 0 {
