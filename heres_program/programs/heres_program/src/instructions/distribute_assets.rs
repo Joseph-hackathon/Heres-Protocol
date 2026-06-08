@@ -77,6 +77,26 @@ pub fn handler<'info>(
     let vault_bump = capsule.vault_bump;
     let owner_key = capsule.owner;
     let is_spl = capsule.mint != Pubkey::default();
+
+    // Defense-in-depth (audit M4): for SPL capsules, bind the passed mint to the capsule's locked
+    // mint and confirm vault_token_account is the vault's own ATA. ATA-derivation from known
+    // pubkeys already prevents redirect today, but these explicit constraints keep a future edit
+    // from opening a hole (e.g. paying out a different token the vault happens to hold).
+    if is_spl {
+        let mint = ctx.accounts.mint.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        require!(mint.key() == capsule.mint, ErrorCode::InvalidTokenAccount);
+        let vault_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        require!(
+            vault_ata.key()
+                == get_associated_token_address(&ctx.accounts.vault.key(), &mint.key()),
+            ErrorCode::InvalidTokenAccount
+        );
+    }
+
     // Drive fee + distributable pool from the REAL locked balance, not the owner-asserted
     // intent_data.totalAmount (which update_intent can desync). The asserted total stays only as
     // the proportion denominator for beneficiary weights (audit H4). Falls back to the asserted
