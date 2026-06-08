@@ -740,8 +740,8 @@ export async function distributeAssets(
 /**
  * Initialize platform fee config (call once after program deploy; authority can update later via updateFeeConfig).
  * 湲곕낯 ?섏닔猷? ?앹꽦 0.05 SOL, ?ㅽ뻾 3% ??PLATFORM_FEE.CREATION_FEE_LAMPORTS, PLATFORM_FEE.EXECUTION_FEE_BPS ?ъ슜.
- * @param creationFeeLamports - SOL lamports charged per capsule creation (0 to disable)
- * @param executionFeeBps - Execution fee in basis points (10000 = 100%; 300 = 3%)
+ * @param creationFeeLamports - SOL lamports charged per capsule creation (0 to disable; on-chain cap 1 SOL)
+ * @param executionFeeBps - Execution fee in basis points (on-chain cap 1000 = 10%; 300 = 3%) (audit M2)
  */
 export async function initFeeConfig(
   wallet: WalletContextState,
@@ -771,7 +771,9 @@ export async function updateFeeConfig(
   creationFeeLamports: number,
   executionFeeBps: number
 ): Promise<string> {
-  if (executionFeeBps > 10000) throw new Error('executionFeeBps must be <= 10000')
+  // Mirror the on-chain caps (audit M2) so the client rejects before the program does.
+  if (executionFeeBps > 1000) throw new Error('executionFeeBps must be <= 1000 (10%)')
+  if (creationFeeLamports > 1_000_000_000) throw new Error('creationFeeLamports must be <= 1 SOL')
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
   const [feeConfigPDA] = getFeeConfigPDA()

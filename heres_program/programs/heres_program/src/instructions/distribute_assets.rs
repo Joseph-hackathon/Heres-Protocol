@@ -7,7 +7,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use crate::error::ErrorCode;
 use crate::events::CcipTransferRequested;
 use crate::state::{CapsuleVault, FeeConfig, IntentCapsule};
-use crate::utils::{infer_asset_decimals, parse_amount_to_units};
+use crate::utils::{apply_percentage, infer_asset_decimals, parse_amount_to_units};
 
 #[derive(Accounts)]
 pub struct DistributeAssets<'info> {
@@ -77,6 +77,26 @@ pub fn handler<'info>(
     let vault_bump = capsule.vault_bump;
     let owner_key = capsule.owner;
     let is_spl = capsule.mint != Pubkey::default();
+
+    // Defense-in-depth (audit M4): for SPL capsules, bind the passed mint to the capsule's locked
+    // mint and confirm vault_token_account is the vault's own ATA. ATA-derivation from known
+    // pubkeys already prevents redirect today, but these explicit constraints keep a future edit
+    // from opening a hole (e.g. paying out a different token the vault happens to hold).
+    if is_spl {
+        let mint = ctx.accounts.mint.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        require!(mint.key() == capsule.mint, ErrorCode::InvalidTokenAccount);
+        let vault_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        require!(
+            vault_ata.key()
+                == get_associated_token_address(&ctx.accounts.vault.key(), &mint.key()),
+            ErrorCode::InvalidTokenAccount
+        );
+    }
+
     // Drive fee + distributable pool from the REAL locked balance, not the owner-asserted
     // intent_data.totalAmount (which update_intent can desync). The asserted total stays only as
     // the proportion denominator for beneficiary weights (audit H4). Falls back to the asserted
@@ -156,10 +176,9 @@ pub fn handler<'info>(
             .unwrap_or("fixed");
 
         let amount_units = if amount_type == "percentage" {
-            let percentage = amount_str.parse::<f64>().map_err(|_| ErrorCode::InvalidIntentData)?;
-            (total_amount_units as f64 * percentage / 100.0) as u64
+            apply_percentage(total_amount_units, amount_str)?
         } else {
-            parse_amount_to_units(amount_str, asset_decimals).map_err(|_| ErrorCode::InvalidIntentData)?
+            parse_amount_to_units(amount_str, asset_decimals)?
         };
 
         let to_send = if total_for_ratio == 0 {
