@@ -3,12 +3,13 @@ import { ensureDashboardPrewarmScheduler, getCapsuleDetail } from '@/lib/dashboa
 
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     ensureDashboardPrewarmScheduler()
     const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1'
-    const id = decodeURIComponent(context.params.id)
+    const { id: rawId } = await context.params
+    const id = decodeURIComponent(rawId)
     const payload = await getCapsuleDetail(id, forceRefresh)
 
     if (!payload) {
