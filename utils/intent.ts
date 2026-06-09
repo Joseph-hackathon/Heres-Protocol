@@ -4,6 +4,7 @@
 
 import { Beneficiary } from '@/types'
 import { SupportedAssetSymbol } from '@/lib/assets'
+import { debugWarn } from '@/lib/log'
 
 export interface CreIntentData {
   enabled: boolean
@@ -65,7 +66,9 @@ export function decodeIntentData(data: Uint8Array): IntentData | null {
     const json = new TextDecoder().decode(data)
     return JSON.parse(json) as IntentData
   } catch (error) {
-    console.error('Error decoding intent data:', error)
+    // Expected for encrypted (private-payments) or legacy binary payloads, which are
+    // not plaintext JSON. Callers handle null. Dev-gated debug log, not an error.
+    debugWarn('[intent] intent data is not plaintext JSON (likely encrypted), skipping:', error)
     return null
   }
 }
@@ -75,7 +78,9 @@ export function parseIntentPayload(data: Uint8Array): AnyIntentData | null {
     const json = new TextDecoder().decode(data)
     return JSON.parse(json) as AnyIntentData
   } catch (error) {
-    console.error('Error parsing intent payload:', error)
+    // Expected for encrypted (private-payments) or legacy binary payloads, which are
+    // not plaintext JSON. Callers handle null. Dev-gated debug log, not an error.
+    debugWarn('[intent] payload is not plaintext JSON (likely encrypted), skipping:', error)
     return null
   }
 }

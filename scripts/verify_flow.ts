@@ -52,7 +52,7 @@ async function main() {
     const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' })
 
     // Load IDL
-    const idlPath = path.join(process.cwd(), 'idl', 'HeresProgram.json')
+    const idlPath = path.join(process.cwd(), 'idl', 'heres_program.json')
     if (!fs.existsSync(idlPath)) {
         throw new Error(`IDL not found at ${idlPath}`)
     }

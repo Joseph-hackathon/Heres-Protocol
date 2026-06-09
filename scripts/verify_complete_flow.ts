@@ -1,7 +1,7 @@
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js"
 import { Program, AnchorProvider, Wallet, BN } from "@coral-xyz/anchor"
 import * as fs from "fs"
-import idl from "../idl/HeresProgram.json"
+import idl from "../idl/heres_program.json"
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://devnet.helius-rpc.com/?api-key=a393269c-0295-485d-ba5f-0c8ffc828d0d"
 const TEE_VALIDATOR = "FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA"

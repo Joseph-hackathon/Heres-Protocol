@@ -20,7 +20,7 @@ function loadEnv(): Record<string, string> {
 
 const env = loadEnv()
 
-const idlPath = path.join(process.cwd(), 'idl', 'HeresProgram.json')
+const idlPath = path.join(process.cwd(), 'idl', 'heres_program.json')
 const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'))
 
 const PROGRAM_ID = new PublicKey('BiAB1qZpx8kDgS5dJxKFdCJDNMagCn8xfj4afNhRZWms')

@@ -66,6 +66,28 @@ export const SUPPORTED_TOKEN_ASSETS = (Object.keys(ASSET_REGISTRY) as SupportedA
   (symbol) => ASSET_REGISTRY[symbol]
 )
 
+// CONTRACT COUPLING (audit follow-up): on-chain distribute_assets / send_ccip_from_vault infer an
+// asset's decimals from assetSymbol via infer_asset_decimals (programs/heres_program/src/utils.rs),
+// NOT from the mint account. ASSET_REGISTRY decimals MUST equal that on-chain guess, or every payout
+// for the asset is scaled by 10^(delta). This tripwire fails loudly at module load if they drift so
+// a new asset cannot silently corrupt distributions. The proper fix is to make the program read
+// mint.decimals (needs redeploy + re-audit); until then keep both sides in sync.
+const ON_CHAIN_ASSUMED_DECIMALS: Record<SupportedAssetSymbol, number> = {
+  SOL: 9,
+  BTC: 8,
+  ETH: 8,
+  MSOL: 9,
+}
+
+for (const symbol of Object.keys(ASSET_REGISTRY) as SupportedAssetSymbol[]) {
+  if (ASSET_REGISTRY[symbol].decimals !== ON_CHAIN_ASSUMED_DECIMALS[symbol]) {
+    throw new Error(
+      `Asset ${symbol} decimals (${ASSET_REGISTRY[symbol].decimals}) disagree with on-chain ` +
+        `infer_asset_decimals (${ON_CHAIN_ASSUMED_DECIMALS[symbol]}). Update the contract or the registry.`
+    )
+  }
+}
+
 export function getAssetConfig(symbol: SupportedAssetSymbol): AssetConfig {
   return ASSET_REGISTRY[symbol]
 }
@@ -108,6 +130,16 @@ export function getAssetDecimals(input?: AssetAmountInput | null, fallbackMint?:
   return inferAssetConfig(input, fallbackMint).decimals
 }
 
+// Strict amount-string validator. Mirrors the on-chain parser exactly
+// (programs/heres_program/src/utils.rs::parse_amount_to_units, audit M1): digits with at most one
+// '.', no sign, no exponent, no whitespace. Use before encodeIntentData so the client rejects what
+// the program will reject, instead of failing on-chain after a wallet signature.
+const AMOUNT_RE = /^\d+(\.\d+)?$/
+
+export function isValidAmountString(amount: string): boolean {
+  return AMOUNT_RE.test(amount.trim())
+}
+
 export function toAtomicAmount(
   amount: string | number,
   input?: AssetAmountInput | null,
@@ -115,7 +147,7 @@ export function toAtomicAmount(
 ): bigint {
   const raw = typeof amount === 'number' ? String(amount) : amount.trim()
   if (!raw) throw new Error('Amount is required')
-  if (!/^\d+(\.\d+)?$/.test(raw)) throw new Error(`Invalid amount: ${amount}`)
+  if (!AMOUNT_RE.test(raw)) throw new Error(`Invalid amount: ${amount}`)
 
   const decimals = getAssetDecimals(input, fallbackMint)
   const [wholePart, fractionalPart = ''] = raw.split('.')

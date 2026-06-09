@@ -37,7 +37,7 @@ async function main() {
     const wallet = new Wallet(keypair)
     const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' })
 
-    const idlPath = path.join(process.cwd(), 'idl', 'HeresProgram.json')
+    const idlPath = path.join(process.cwd(), 'idl', 'heres_program.json')
     const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'))
     const program = new Program(idl as any, provider)
 
