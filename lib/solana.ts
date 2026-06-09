@@ -325,33 +325,11 @@ export async function executeIntent(
   const permissionProgramId = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
   const [permissionPDA] = getPermissionPDA(capsulePDA, permissionProgramId)
 
-  const accounts: any = {
-    capsule: capsulePDA,
-    vault: vaultPDA,
-    permissionProgram: permissionProgramId,
-    permission: permissionPDA,
-  }
+  // execute_intent is state-only (4 accounts; it flips is_active / executed_at and moves no funds),
+  // so the beneficiaries and mint params are unused here. Distribution accounts are built in
+  // distributeAssets, which runs on the base layer after this.
 
-  const remainingAccounts = beneficiaries
-    ?.filter((b) => (b.chain ?? 'solana') === 'solana')
-    .map((b) => {
-    const beneficiaryOwner = new PublicKey(b.address)
-    if (mint && !mint.equals(PublicKey.default)) {
-      const beneficiaryAta = getAssociatedTokenAddress(mint, beneficiaryOwner)
-      return {
-        pubkey: beneficiaryAta,
-        isSigner: false,
-        isWritable: true,
-      }
-    }
-    return {
-      pubkey: beneficiaryOwner,
-      isSigner: false,
-      isWritable: true,
-    }
-  }) || []
-
-  // Check if capsule is delegated — if so, route through ER RPC (Asia devnet)
+  // Check if capsule is delegated; if so, route through ER RPC (Asia devnet)
   const baseConnection = getSolanaConnection()
   const accountInfo = await baseConnection.getAccountInfo(capsulePDA)
   const delegationProgramId = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
@@ -359,8 +337,8 @@ export async function executeIntent(
 
   if (isDelegated) {
     debugLog('[executeIntent] Capsule is delegated, routing through ER RPC')
-    // Use raw instruction with 4 required accounts (deployed binary accepts 4-7 accounts;
-    // optional accounts default to None when not provided)
+    // execute_intent takes exactly 4 accounts (capsule, vault, permission_program, permission);
+    // matches both the IDL and the deployed binary.
     const programId = getProgramId()
     const discriminator = Buffer.from([53, 130, 47, 154, 227, 220, 122, 212]) // execute_intent
     const keys = [
@@ -384,8 +362,9 @@ export async function executeIntent(
     return txSignature
   }
 
-  // Not delegated — send to base layer using manual instruction
-  // Deployed program's execute_intent only needs 4 accounts (IDL shows 10 but binary differs)
+  // Not delegated; send to base layer using a manual instruction (raw discriminator + accounts).
+  // execute_intent takes exactly 4 accounts (capsule, vault, permission_program, permission);
+  // matches both the IDL and the deployed binary.
 
   const programId = getProgramId()
   const discriminator = Buffer.from([53, 130, 47, 154, 227, 220, 122, 212]) // execute_intent
@@ -624,17 +603,6 @@ export async function distributeAssets(
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : null
 
-  const accounts: any = {
-    capsule: capsulePDA,
-    vault: vaultPDA,
-    systemProgram: SystemProgram.programId,
-    tokenProgram: TOKEN_PROGRAM_ID,
-    feeConfig: feeConfigPDA,
-    platformFeeRecipient: platformFeeRecipient || null,
-    mint: mint || null,
-    vaultTokenAccount: mint ? getAssociatedTokenAddress(mint, vaultPDA) : null,
-  }
-
   const remainingAccounts = beneficiaries
     ?.filter((b) => (b.chain ?? 'solana') === 'solana')
     .map((b) => {
@@ -668,8 +636,8 @@ export async function distributeAssets(
     throw new Error('Capsule is still delegated to ER. Please undelegate first before distributing assets.')
   }
 
-  // Not delegated — send to base layer using manual instruction
-  // distribute_assets is in the deployed binary but NOT in the IDL
+  // Not delegated; send to base layer using a manual instruction (raw discriminator + accounts).
+  // distribute_assets is present in both the IDL and the deployed binary.
 
   const programId = getProgramId()
   const isSpl = mint && !mint.equals(PublicKey.default)
@@ -739,7 +707,7 @@ export async function distributeAssets(
 
 /**
  * Initialize platform fee config (call once after program deploy; authority can update later via updateFeeConfig).
- * 湲곕낯 ?섏닔猷? ?앹꽦 0.05 SOL, ?ㅽ뻾 3% ??PLATFORM_FEE.CREATION_FEE_LAMPORTS, PLATFORM_FEE.EXECUTION_FEE_BPS ?ъ슜.
+ * Defaults: creation fee 0.05 SOL, execution fee 3%, sourced from PLATFORM_FEE.CREATION_FEE_LAMPORTS and PLATFORM_FEE.EXECUTION_FEE_BPS.
  * @param creationFeeLamports - SOL lamports charged per capsule creation (0 to disable; on-chain cap 1 SOL)
  * @param executionFeeBps - Execution fee in basis points (on-chain cap 1000 = 10%; 300 = 3%) (audit M2)
  */
@@ -749,6 +717,9 @@ export async function initFeeConfig(
   creationFeeLamports: number = PLATFORM_FEE.CREATION_FEE_LAMPORTS,
   executionFeeBps: number = PLATFORM_FEE.EXECUTION_FEE_BPS
 ): Promise<string> {
+  // Mirror the on-chain caps (audit M2) so the client rejects before the program does.
+  if (executionFeeBps > 1000) throw new Error('executionFeeBps must be <= 1000 (10%)')
+  if (creationFeeLamports > 1_000_000_000) throw new Error('creationFeeLamports must be <= 1 SOL')
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
   const [feeConfigPDA] = getFeeConfigPDA()
