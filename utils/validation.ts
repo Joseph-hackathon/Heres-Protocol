@@ -5,6 +5,7 @@
 import { Beneficiary } from '@/types'
 import { isValidSolanaAddress } from '@/config/solana'
 import { CreIntentData } from '@/utils/intent'
+import { isValidAmountString } from '@/lib/assets'
 
 /**
  * Validate beneficiary addresses
@@ -24,8 +25,11 @@ export function isValidBeneficiaryAddress(beneficiary: Beneficiary): boolean {
  */
 export function validateBeneficiaryAmounts(beneficiaries: Beneficiary[]): boolean {
   return beneficiaries.every(b => {
-    const amount = parseFloat(b.amount || '0')
-    return amount > 0
+    const raw = (b.amount || '').trim()
+    // Strict format parity with the on-chain parser (audit M1): rejects "1e3", signs, blanks
+    // that parseFloat would otherwise accept and the deployed-with-M1 program would reject.
+    if (!isValidAmountString(raw)) return false
+    return parseFloat(raw) > 0
   })
 }
 

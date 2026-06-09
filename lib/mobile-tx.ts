@@ -5,6 +5,7 @@ import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG } from '@/constants'
 import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { encodeIntentData, daysToSeconds } from '@/utils/intent'
+import { isValidAmountString } from '@/lib/assets'
 import type { Beneficiary } from '@/types'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -57,14 +58,18 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
   const owner = new PublicKey(input.owner)
   const beneficiaryAddress = new PublicKey(input.beneficiaryAddress)
 
-  const totalSolNum = Number.parseFloat(input.totalSol)
-  const beneficiaryAmountNum = Number.parseFloat(input.beneficiaryAmountSol)
+  // Keep the exact user-typed strings; String(Number) can emit scientific notation (e.g. "1e-7")
+  // that the on-chain parser rejects (audit M1). Validate the raw strings, not round-tripped numbers.
+  const totalSolStr = input.totalSol.trim()
+  const beneficiaryAmountStr = input.beneficiaryAmountSol.trim()
+  const totalSolNum = Number.parseFloat(totalSolStr)
+  const beneficiaryAmountNum = Number.parseFloat(beneficiaryAmountStr)
   const inactivitySeconds = daysToSeconds(input.inactivityDays)
 
-  if (!Number.isFinite(totalSolNum) || totalSolNum <= 0) {
+  if (!isValidAmountString(totalSolStr) || !Number.isFinite(totalSolNum) || totalSolNum <= 0) {
     throw new Error('Invalid totalSol')
   }
-  if (!Number.isFinite(beneficiaryAmountNum) || beneficiaryAmountNum <= 0) {
+  if (!isValidAmountString(beneficiaryAmountStr) || !Number.isFinite(beneficiaryAmountNum) || beneficiaryAmountNum <= 0) {
     throw new Error('Invalid beneficiaryAmountSol')
   }
   if (!Number.isFinite(inactivitySeconds) || inactivitySeconds <= 0) {
@@ -75,7 +80,7 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     {
       chain: 'solana',
       address: beneficiaryAddress.toBase58(),
-      amount: String(beneficiaryAmountNum),
+      amount: beneficiaryAmountStr,
       amountType: 'fixed',
     },
   ]
@@ -83,7 +88,7 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
   const intentData = encodeIntentData({
     intent: input.intent || 'Mobile capsule',
     beneficiaries,
-    totalAmount: String(totalSolNum),
+    totalAmount: totalSolStr,
     inactivityDays: input.inactivityDays,
     delayDays: 0,
   })

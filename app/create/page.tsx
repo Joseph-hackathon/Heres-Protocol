@@ -23,7 +23,7 @@ import {
   getAssetMintEnvKey,
 } from '@/constants'
 import { encodeIntentData, daysToSeconds } from '@/utils/intent'
-import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
+import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, isValidAmountString, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
 import {
@@ -328,6 +328,12 @@ export default function CreatePage() {
   const validateBeneficiaries = (): boolean => {
     if (!tokenAssetReady) {
       alert(`${selectedTokenAsset} mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
+      return false
+    }
+
+    // Format parity with the on-chain parser (audit M1): totalAmount is parsed by the program.
+    if (!isValidAmountString(totalAmount)) {
+      alert('Please enter a valid total amount (digits only, e.g. 1.5).')
       return false
     }
 
