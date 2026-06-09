@@ -3,7 +3,7 @@ import anchor from '@coral-xyz/anchor'
 import fs from 'fs'
 const { Program, AnchorProvider, BN } = anchor
 
-const idl = JSON.parse(fs.readFileSync(new URL('../idl/HeresProgram.json', import.meta.url), 'utf8'))
+const idl = JSON.parse(fs.readFileSync(new URL('../idl/heres_program.json', import.meta.url), 'utf8'))
 const connection = new Connection('https://api.devnet.solana.com', 'confirmed')
 // init_fee_config is gated on the program's upgrade authority (audit C3), so this MUST run as the
 // deployer. Point HERES_AUTHORITY_KEYPAIR at the deploy wallet; defaults to the Solana CLI wallet.

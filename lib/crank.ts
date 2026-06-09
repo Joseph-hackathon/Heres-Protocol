@@ -9,7 +9,7 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js'
 import { Program, AnchorProvider, BorshAccountsCoder, type Wallet } from '@coral-xyz/anchor'
-import idl from '../idl/HeresProgram.json'
+import idl from '../idl/heres_program.json'
 import { getSolanaConnection, getProgramId } from '@/config/solana'
 import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA, getPermissionPDA } from './program'
 import { fetchCapsuleStatesBatched, type DecodedCapsuleState } from './cre/solana'
