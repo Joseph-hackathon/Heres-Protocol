@@ -26,7 +26,7 @@ use instructions::update_intent::*;
 
 use state::Beneficiary;
 
-declare_id!("2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3");
+declare_id!("sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz");
 
 #[ephemeral]
 #[program]
