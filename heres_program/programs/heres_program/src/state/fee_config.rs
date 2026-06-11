@@ -1,4 +1,5 @@
 //! Global platform fee configuration (singleton PDA, seeds = ["fee_config"]).
+//! Lean model: creation fee only - the per-distribution execution-bps skim was dropped (redesign D3).
 
 use anchor_lang::prelude::*;
 
@@ -7,9 +8,8 @@ pub struct FeeConfig {
     pub authority: Pubkey,
     pub fee_recipient: Pubkey,
     pub creation_fee_lamports: u64,
-    pub execution_fee_bps: u16, // basis points, 10000 = 100%
 }
 
 impl FeeConfig {
-    pub const LEN: usize = 32 + 32 + 8 + 2;
+    pub const LEN: usize = 32 + 32 + 8;
 }

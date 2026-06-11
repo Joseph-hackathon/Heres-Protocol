@@ -10,19 +10,10 @@ pub struct IntentExecuted {
 }
 
 #[event]
-pub struct CcipTransferRequested {
+pub struct AssetsDistributed {
     pub capsule: Pubkey,
-    pub beneficiary_index: u16,
-    pub evm_address: String,
-    pub destination_chain_selector: String,
-    pub amount_lamports: u64,
-}
-
-#[event]
-pub struct CcipTransferSent {
-    pub capsule: Pubkey,
-    pub beneficiary_index: u16,
-    pub evm_address: String,
-    pub destination_chain_selector: String,
-    pub amount_lamports: u64,
+    pub owner: Pubkey,
+    /// `Pubkey::default()` for native SOL, otherwise the SPL mint distributed in this call.
+    pub mint: Pubkey,
+    pub total: u64,
 }

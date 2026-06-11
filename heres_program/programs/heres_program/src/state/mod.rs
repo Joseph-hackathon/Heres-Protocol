@@ -1,13 +1,9 @@
-//! On-chain account state.
+//! On-chain account state. Lean model: 3 accounts (Switch + Vault + FeeConfig).
 
-pub mod capsule_distribution;
 pub mod capsule_vault;
-pub mod distributor_config;
 pub mod fee_config;
 pub mod intent_capsule;
 
-pub use capsule_distribution::*;
 pub use capsule_vault::*;
-pub use distributor_config::*;
 pub use fee_config::*;
 pub use intent_capsule::*;
