@@ -1,8 +1,9 @@
-//! Owner-initiated cancel: reclaim locked assets and close the capsule while still alive (audit H2).
+//! Owner escape hatch: pull one asset out of the Vault while the capsule is still active, WITHOUT
+//! touching the Switch.
 //!
-//! Refunds the native SOL (via `close = owner` on the vault) plus, optionally, one SPL asset passed
-//! explicitly. For a multi-mint vault, recover the extra mints via `recover_vault` first, then
-//! cancel to close the SOL + accounts (closing the vault while it still owns ATAs would strand them).
+//! Covers the case where the Switch is stuck delegated to a dead validator: the Vault is always on
+//! the base layer (never delegated), so funds stay recoverable even when the gating Switch is
+//! frozen. Owner-only, pre-fire. Call once per asset (None mint = native SOL).
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address;
@@ -12,10 +13,8 @@ use crate::error::ErrorCode;
 use crate::state::{CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
-pub struct CancelCapsule<'info> {
+pub struct RecoverVault<'info> {
     #[account(
-        mut,
-        close = owner,
         seeds = [b"intent_capsule", owner.key().as_ref()],
         bump = capsule.bump,
         constraint = capsule.owner == owner.key() @ ErrorCode::Unauthorized,
@@ -24,9 +23,8 @@ pub struct CancelCapsule<'info> {
 
     #[account(
         mut,
-        close = owner,
         seeds = [b"capsule_vault", owner.key().as_ref()],
-        bump = capsule.vault_bump,
+        bump = capsule.vault_bump
     )]
     pub vault: Box<Account<'info, CapsuleVault>>,
 
@@ -35,38 +33,37 @@ pub struct CancelCapsule<'info> {
 
     pub system_program: Program<'info, System>,
 
-    // Optional SPL refund leg (omit for a SOL-only vault).
+    // SPL leg (omit for native SOL).
     pub token_program: Option<Program<'info, Token>>,
     pub mint: Option<Box<Account<'info, Mint>>>,
     #[account(mut)]
     pub vault_token_account: Option<Box<Account<'info, TokenAccount>>>,
-    /// CHECK: owner's ATA receiving the refunded tokens; validated as owner+mint ATA in handler.
+    /// CHECK: owner's ATA receiving the recovered tokens; validated as owner+mint ATA in handler.
     #[account(mut)]
     pub owner_token_account: Option<AccountInfo<'info>>,
 }
 
-/// Cancel an active (not-yet-fired) capsule: refund assets to the owner and close the accounts.
-pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
-    // Only a living owner can reclaim, and only before the switch fires.
+/// Recover one Vault asset to the owner. Pre-fire only; after firing, funds follow distribution.
+pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
     require!(ctx.accounts.capsule.is_active, ErrorCode::CapsuleInactive);
 
+    let owner_key = ctx.accounts.owner.key();
+    let vault_bump = ctx.accounts.capsule.vault_bump;
+    let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
+    let signer_seeds = &[vault_seeds];
+
     if let Some(mint) = &ctx.accounts.mint {
+        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
         let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
         let owner_ata = ctx.accounts.owner_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
         require!(
             vault_ata.key() == get_associated_token_address(&ctx.accounts.vault.key(), &mint.key()),
             ErrorCode::InvalidTokenAccount
         );
         require!(
-            owner_ata.key() == get_associated_token_address(&ctx.accounts.owner.key(), &mint.key()),
+            owner_ata.key() == get_associated_token_address(&owner_key, &mint.key()),
             ErrorCode::InvalidTokenAccount
         );
-
-        let owner_key = ctx.accounts.owner.key();
-        let vault_bump = ctx.accounts.capsule.vault_bump;
-        let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
-        let signer_seeds = &[vault_seeds];
 
         let amount = vault_ata.amount;
         if amount > 0 {
@@ -80,6 +77,7 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
                 amount,
             )?;
         }
+        // Reclaim the ATA rent back to the owner and remove it from the vault's manifest.
         let close_accounts = CloseAccount {
             account: vault_ata.to_account_info(),
             destination: ctx.accounts.owner.to_account_info(),
@@ -90,10 +88,15 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
             close_accounts,
             signer_seeds,
         ))?;
-        msg!("Refunded {} SPL tokens to owner on cancel", amount);
+        msg!("Recovered {} SPL tokens of mint {:?} to owner", amount, mint.key());
+    } else {
+        let vault_ai = ctx.accounts.vault.to_account_info();
+        let rent_floor = Rent::get()?.minimum_balance(vault_ai.data_len());
+        let available = vault_ai.lamports().saturating_sub(rent_floor);
+        require!(available > 0, ErrorCode::NothingToDistribute);
+        **vault_ai.try_borrow_mut_lamports()? -= available;
+        **ctx.accounts.owner.to_account_info().try_borrow_mut_lamports()? += available;
+        msg!("Recovered {} lamports to owner", available);
     }
-
-    // `close = owner` on capsule + vault refunds their rent and, for SOL, the locked lamports.
-    msg!("Capsule cancelled and assets reclaimed for owner: {:?}", ctx.accounts.owner.key());
     Ok(())
 }

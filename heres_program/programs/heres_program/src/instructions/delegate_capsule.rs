@@ -1,4 +1,8 @@
-//! Delegate the capsule + vault PDAs to the MagicBlock ER/PER.
+//! Delegate the Switch (capsule PDA) to the MagicBlock ER/PER.
+//!
+//! Only the Switch is delegated; the Vault stays on the base layer the whole time. That keeps funds
+//! base-recoverable via recover_vault even if the validator dies, and makes multi-asset orthogonal
+//! to delegation (token accounts are never delegated).
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::delegate;
@@ -12,24 +16,19 @@ pub struct DelegateCapsuleInput<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
     pub owner: Signer<'info>,
-    /// CHECK: Checked by the delegation program
+    /// CHECK: checked by the delegation program.
     pub validator: Option<AccountInfo<'info>>,
-    /// CHECK: PDA to delegate (capsule); seeds: [b"intent_capsule", owner]
+    /// CHECK: the Switch PDA to delegate; seeds [b"intent_capsule", owner].
     #[account(mut, del, seeds = [b"intent_capsule", owner.key().as_ref()], bump)]
     pub pda: AccountInfo<'info>,
-    /// CHECK: PDA to delegate (vault); seeds: [b"capsule_vault", owner]
-    #[account(mut, del, seeds = [b"capsule_vault", owner.key().as_ref()], bump)]
-    pub vault: AccountInfo<'info>,
-    /// CHECK: Magic program
+    /// CHECK: Magic program.
     pub magic_program: AccountInfo<'info>,
-    /// CHECK: Delegation program
+    /// CHECK: Delegation program.
     pub delegation_program: AccountInfo<'info>,
-    /// CHECK: System program
     pub system_program: Program<'info, System>,
 }
 
-/// Delegate capsule and vault PDAs to Magicblock ER/PER. When no validator is passed, defaults to TEE validator (PER).
-/// The #[delegate] macro handles this automatically for all fields marked with 'del'.
+/// Delegate the Switch to MagicBlock ER/PER. Defaults to the TEE validator (PER) when none passed.
 pub fn handler(ctx: Context<DelegateCapsuleInput>) -> Result<()> {
     let validator_key = ctx
         .accounts
@@ -37,11 +36,9 @@ pub fn handler(ctx: Context<DelegateCapsuleInput>) -> Result<()> {
         .as_ref()
         .map(|v| v.key())
         .unwrap_or(TEE_VALIDATOR);
-
-    msg!("Delegating capsule and vault to Ephemeral Rollup");
     let owner_key = ctx.accounts.owner.key();
 
-    // Delegate Capsule PDA
+    msg!("Delegating Switch to Ephemeral Rollup (validator {:?})", validator_key);
     ctx.accounts.delegate_pda(
         &ctx.accounts.payer,
         &[b"intent_capsule", owner_key.as_ref()],
@@ -50,17 +47,6 @@ pub fn handler(ctx: Context<DelegateCapsuleInput>) -> Result<()> {
             validator: Some(validator_key),
         },
     )?;
-
-    // Delegate Vault PDA
-    ctx.accounts.delegate_vault(
-        &ctx.accounts.payer,
-        &[b"capsule_vault", owner_key.as_ref()],
-        DelegateConfig {
-            commit_frequency_ms: 0,
-            validator: Some(validator_key),
-        },
-    )?;
-
-    msg!("Capsule and Vault delegated to Ephemeral Rollup");
+    msg!("Switch delegated to Ephemeral Rollup");
     Ok(())
 }
