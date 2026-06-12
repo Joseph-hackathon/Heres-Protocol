@@ -8,7 +8,8 @@
 ## Getting Started
 
 * [Quickstart](getting-started/quickstart.md)
-* [Wallets and Networks](getting-started/wallets-and-networks.md)
+* [Capsule Creation Details](getting-started/wallets-and-networks.md)
+* [Supported Networks & Assets](getting-started/supported-networks-and-assets.md)
 
 ## User Guide
 

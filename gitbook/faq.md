@@ -1,53 +1,61 @@
 # FAQ
 
-## What is Heres Protocol ?
+### What is Heres Protocol ?&#xD;
 
-Heres Protocol is the world’s first autonomous 'Death Insurance Protocol' built on the Solana ecosystem.
+Heres Protocol is the world’s first autonomous 'Asset Protection and Inheritance Protocol' built on the Solana ecosystem.
 
-By monitoring a user’s '**Autonomous Presence Signals**' on-chain, the protocol solves the '**Digital Graveyard**' problem. It autonomously transfers assets secured within TEE (Trusted Execution Environments) to designated heirs in the event of the owner’s absence, ensuring that digital wealth is never lost.
+By monitoring a user’s 'Autonomous Presence Signals' on-chain, the protocol solves the 'Digital Graveyard' problem. It autonomously transfers assets secured within our encrypted vaults to designated heirs in the event of the owner’s absence, ensuring that your digital wealth is never lost.
 
-## Is Heres Protocol a wallet?
+### Is Heres Protocol a wallet?&#xD;
 
-No. Heres connects to existing Solana wallets. Users keep control of their wallet keys.
+No. Heres connects to existing Web3 wallets. You always keep full control of your wallet keys.
 
-## Does Heres custody my private keys?
+### Does Heres custody my private keys?&#xD;
 
-No. Heres should never ask for a seed phrase or private key. Users sign transactions with their own wallet.
+No. Heres Protocol will never ask for your seed phrase or private key. You sign all transactions safely using your own wallet.
 
-## What happens if I become active again?
+### What happens if I become active again?
 
-The owner can refresh activity before execution. This resets the inactivity timer.
+The owner can refresh their activity simply by making a normal on-chain transaction before the capsule executes. This automatically resets the inactivity timer (Silence Limit).
 
-## Can anyone execute my capsule?
+### Can anyone execute my capsule?&#xD;
 
-After the inactivity period is met, execution is permissionless by design. The program still enforces the capsule rules.
+After your designated inactivity period is met, the execution process becomes permissionless by design to guarantee delivery. However, the smart contract strictly enforces your original capsule rules, meaning assets can only ever be sent to the exact beneficiaries you pre-approved.
 
-## Can beneficiaries change the capsule?
+### Can beneficiaries change the capsule?&#xD;
 
-No. Beneficiaries do not control the capsule unless they are also the owner wallet.
+No. Beneficiaries have absolutely no control over the capsule and cannot modify its rules unless they also hold the keys to the owner's wallet.
 
-## What is Capsule rule?
+### What is the Capsule rule?
 
-* You can create up to 3 capsules per wallet.
-* Currently, you can create a new capsule after one capsule has been executed. (Update coming soon)
-* Once a capsule is created and delegated to on-chain delegation, it is currently not possible to modify or cancel it. (Update coming soon)
+*  You can only create 1 capsule per wallet.
+* Currently, you can create a new capsule only after an existing one has been fully executed. (Update coming soon)
+* Once a capsule is created and activated on-chain, it cannot be modified or canceled to ensure maximum tamper-proof security. (Update for flexible modifications is coming soon)
 
-## Can I use Heres Protocol on mainnet?
+### &#xD;What is the Intent Statement?
 
-This repository defaults to Devnet. Mainnet use requires a production deployment, audited program, production automation, and correct environment configuration.
+It is an encrypted, private final message or instruction that is securely delivered to your designated heir only after the capsule is successfully executed.
 
-## What is the Intent Statement?
+### What if delivery fails?
 
-It is an encrypted private message delivered to a representative after capsule execution.
+Asset delivery status is strictly monitored on-chain. If network congestion or an error causes a failure, the protocol's automated reconciliation engine will safely retry the transaction to ensure your heirs receive the assets without fail.
 
-## Is Heres legal estate planning?
+### Can I use Heres Protocol on Mainnet?
 
-No. Heres is software. Users should consult qualified legal and tax professionals for estate planning.
+Heres Protocol is currently operating on Devnet/Testnet for rigorous stability testing. A full Mainnet release will be launched shortly after completing comprehensive security audits to guarantee the highest level of safety for your assets.
 
-## What if delivery fails?
+### What fees apply?&#xD;
 
-CRE delivery status is tracked. Reconciliation jobs can retry or operators can review failed attempts depending on deployment configuration.
+Creating a Capsule requires a small one-time setup fee to cover the smart contract deployment, plus a minimal network transaction fee (gas fee) on the Solana network to power the monitoring oracle. Heres Protocol does not charge any percentage-based AUM (Assets Under Management) fees on the total value of the assets you lock.
 
-## What fees apply?
+### Do my beneficiaries need to sign up for Heres in advance?
 
-The default repository configuration includes a $5 subscribe fee and a 1.5% execution fee. Always check the live app before signing.
+No. Your beneficiaries do not need to know about Heres Protocol or create an account beforehand. As long as you provide their valid wallet addresses during setup, the smart contract will automatically push the assets to their wallets when the trigger conditions are met.
+
+### Will my staked assets continue to earn yield while locked in the Capsule?
+
+Yes. If you deposit Yield-bearing assets like Liquid Staking Tokens (e.g., JitoSOL, mSOL), they will continue to accrue staking rewards naturally while sitting securely in your Vault. Heres does not interfere with the underlying yield generation.
+
+### Is Heres legal estate planning?
+
+No. Heres is a decentralized software infrastructure, not a law firm. While it mathematically guarantees the transfer of digital assets, users should always consult qualified legal and tax professionals for formal estate planning.

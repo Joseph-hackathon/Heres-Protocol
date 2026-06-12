@@ -1,37 +1,23 @@
-# Wallets and Networks
+---
+description: Detailed Guide to Capsule Parameters
+---
 
-## Supported Wallets
+# Capsule Creation Details
 
-Heres uses Solana wallet adapter support in the web app. The best user experience is with wallets that support standard Solana transaction signing in the browser.
+The information you input during Capsule creation is the most critical data that dictates the future of your assets. Here are the exact definitions of each parameter:
 
-Common options:
 
-- Phantom
-- Backpack
-- Solflare
-- Other wallet-adapter compatible Solana wallets
 
-For Android, the native mobile MVP uses Solana Mobile Wallet Adapter through the wallet integration in `mobile-android`.
+* **Beneficiaries:** The final destination addresses that will receive the assets. You can designate one or multiple beneficiaries. This information undergoes strong encryption before being stored on-chain. No third party (not even the development team) can view who the beneficiaries are until the Capsule is actually triggered.
 
-## Network
 
-The project is configured for Solana Devnet by default.
 
-| Environment | Purpose |
-| --- | --- |
-| Devnet | Testing, demos, and development. |
-| Testnet | Optional staging network if configured. |
-| Mainnet Beta | Production only after deployment and security review. |
+* **Distribution Weight:** If you designate multiple beneficiaries, you set how the total deposited assets will be divided out of 100% (e.g., Spouse 70%, Child 30%). The protocol will split and transfer the transactions with pinpoint accuracy according to these ratios, down to the decimal.
 
-## Getting Devnet SOL
 
-For testing, use a Solana faucet to fund your wallet with Devnet SOL. You need Devnet SOL to pay transaction fees and to lock funds in the test capsule vault.
 
-## Explorer Links
+* **Silence Limit:** The waiting period from the moment your wallet's outgoing transactions cease until the protocol officially recognizes your 'absence'. You can freely set this from a minimum of 1 month up to several years to fit your lifestyle. Security experts generally recommend setting a limit between 6 months and 1 year.
 
-The app builds Solana Explorer links for addresses and transactions. On Devnet, links include the `cluster=devnet` query parameter.
 
-## Important Network Warning
 
-A capsule created on one Solana cluster is not visible on another cluster. Make sure your wallet, app configuration, program ID, RPC URL, and explorer cluster all point to the same network.
-
+* **Grace Window:** Even if the Silence Limit is exceeded and the Capsule enters a 'Triggered' state, the assets are not transferred immediately. The Grace Window is a brief waiting period acting as a secondary fail-safe, just in case you forgot to use your wallet or were on an extended vacation.

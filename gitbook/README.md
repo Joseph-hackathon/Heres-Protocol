@@ -1,15 +1,20 @@
+---
+description: The New Standard for Trustless Asset Protection and Inheritance
+---
+
 # Welcome to Heres
 
-Heres is the world’s first **Autonomous Death Insurance Protocol** built on Solana. We specialize in **Decoupling Death from Value Loss**, ensuring your digital legacy is securely transferred to the next generation.
+One of the greatest innovations of the blockchain and crypto ecosystem is absolute **self-custody**. Individuals can fully own and control their assets without permission from banks or centralized authorities.&#x20;
 
-### Key Features
+However, this powerful security creates a fatal paradox: if you lose your private keys or unexpectedly lose access to your wallet, your assets are frozen on the network forever.&#x20;
 
-* **Autonomous Legal Layer**: Acts as a "Code-as-Law" engine, executing a user’s final intent instantly and autonomously without the friction of traditional probate processes.
-* **Enclave-level Privacy**: Leverages Magicblock’s TEE to provide an **Isolated Privacy** environment (Secure Enclave), ensuring that even the protocol cannot access user intents or confidential data.
-* **Multi-Asset & Cross-chain Support**: Manages not only Solana native assets but also cross-chain assets like BTC and ETH within a single Intent Capsule, powered by Chainlink CCIP.
-* **Confidential Messaging (Emotional Legacy)**: Beyond asset transfer, it securely delivers encrypted final messages to heirs, preserving the emotional essence of one's legacy.
-* **Stepped-up Basis Tax Plan**: Provides economic optimization by capturing the "Stepped-up Basis" timing through instant execution, significantly minimizing capital gains tax for beneficiaries.
-* **Intelligent Liveness Guard**: A multi-layered monitoring system utilizing Alchemy infrastructure for precise detection of on-chain activity, ensuring fail-safe execution.
+Traditional financial systems solve this through centralized intermediaries, but relying on them undermines the core reason we joined the decentralized ecosystem.
+
+**Heres Protocol** is a trustless 'dead-man's switch' designed to solve this dilemma.&#x20;
+
+We have built an infrastructure that safely transfers your assets to designated beneficiaries in the event of your absence, without ever handing custody to a third party.&#x20;
+
+Every step is executed deterministically by 100% on-chain smart contracts without corporate intervention, while keeping your beneficiary information and distribution conditions encrypted in complete privacy.
 
 ### Quick Start <a href="#user-content-quick-start-1" id="user-content-quick-start-1"></a>
 
