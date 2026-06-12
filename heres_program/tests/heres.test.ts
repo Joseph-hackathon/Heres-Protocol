@@ -636,6 +636,21 @@ describe("heres: update_activity", () => {
     );
   });
 
+  it("heartbeat authority CANNOT revive a fired capsule (owner-only revive)", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const heartbeat = await fundedKeypair(env, 5);
+    const owner = await freshCapsule(env, 100, heartbeat.publicKey);
+    await fire(env, owner, 100);
+    await warp(env, 60); // still well inside the 48h grace
+    const res = await send(
+      env,
+      heartbeat,
+      updateActivityIx(env, owner.publicKey, heartbeat.publicKey),
+      [heartbeat]
+    );
+    assertErr(res, "Unauthorized");
+  });
+
   it("rejects a stranger", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, DAY);

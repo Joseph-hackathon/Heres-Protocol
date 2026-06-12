@@ -209,6 +209,26 @@ async function sendER(ixs, signers, feePayer, conn = erConn) {
   }, 3, 2000);
 }
 
+// One-shot ER send that EXPECTS the tx to fail (for adversarial checks). Returns the error string if
+// the tx was rejected/failed (good - the on-chain gate blocked it) or null if it unexpectedly landed.
+async function sendERExpectFail(ixs, signers, feePayer, conn) {
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+  const tx = new Transaction({ feePayer: feePayer.publicKey, blockhash, lastValidBlockHeight });
+  ixs.forEach(ix => tx.add(ix));
+  tx.sign(...signers);
+  let sig;
+  try { sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true }); }
+  catch (e) { return e.message ?? 'send rejected'; } // rejected at submit = blocked
+  for (let i = 0; i < 20; i++) {
+    await sleep(1000);
+    const s = (await conn.getSignatureStatuses([sig]))?.value?.[0];
+    if (!s) continue;
+    if (s.err) return JSON.stringify(s.err);                                   // failed on-chain = blocked
+    if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus)) return null; // landed = bad
+  }
+  return null; // never resolved -> treat as not-blocked (inconclusive)
+}
+
 const results = [];
 const check = (name, ok, detail = '') => {
   results.push({ name, ok });
@@ -366,6 +386,42 @@ try {
     check('TEE: unauthorized observer CANNOT read beneficiaries on ER (filtered)', !obsSees,
       obsRaw ? `observer saw ${obsRaw.data?.length ?? 0} bytes` : 'observer read returned null');
   }
+
+  // ---- 6a. PRIVACY GATE: a non-owner crank must NOT be able to undelegate (which would commit the
+  //          private beneficiaries to the public base layer) BEFORE the switch fires. The SAME crank
+  //          wallet succeeds post-fire (step 9) - the only difference is the fired state, proving the
+  //          fix is the gate (audit: crank_undelegate was permissionless with no fired-check). ----
+  const undEarlyIx = await program.methods
+    .crankUndelegate()
+    .accountsPartial({
+      payer: crankKp.publicKey, owner: ownerKp.publicKey, capsule, permission,
+      permissionProgram: PERMISSION_PROGRAM_ID, magicContext: MAGIC_CONTEXT_ID, magicProgram: MAGIC_PROGRAM_ID,
+    })
+    .instruction();
+  const earlyFail = await sendERExpectFail([undEarlyIx], [crankKp], crankKp, TEE ? await teeConnFor(crankKp) : erConn);
+  check('privacy gate: non-owner crank_undelegate BEFORE fire is REJECTED', earlyFail !== null,
+    earlyFail ? `blocked: ${earlyFail.slice(0, 64)}` : 'NOT blocked - undelegate landed pre-fire (LEAK)');
+
+  // ---- 6b. ESCAPE HATCH: the owner can pull funds from the Vault while the Switch is DELEGATED (the
+  //          stuck/dead-validator case). The Vault is never delegated and recover_vault no longer
+  //          depends on the (delegated) Switch account, so this works even though the Switch is owned
+  //          by the delegation program here (audit item 4: the hatch was inoperable when delegated). ----
+  const vbBefore = await retry(() => baseConn.getBalance(vault));
+  const recIx = await program.methods
+    .recoverVault()
+    .accountsPartial({
+      capsule, vault, owner: ownerKp.publicKey, systemProgram: SystemProgram.programId,
+      tokenProgram: null, mint: null, vaultTokenAccount: null, ownerTokenAccount: null,
+    })
+    .instruction();
+  let recovered = false, rDetail = '';
+  try {
+    await sendBase([recIx], [ownerKp]);
+    const vbAfter = await retry(() => baseConn.getBalance(vault));
+    recovered = (vbBefore - vbAfter) >= Math.floor(DEPOSIT_SOL * LAMPORTS_PER_SOL) * 0.9;
+    rDetail = `vault ${sol(vbBefore)} -> ${sol(vbAfter)} SOL (Switch delegated)`;
+  } catch (e) { rDetail = 'recover err: ' + (e.message?.slice(0, 90) ?? ''); }
+  check('escape hatch: owner recover_vault while Switch DELEGATED returns funds', recovered, rDetail);
 
   // ---- 7. wait out the inactivity window, then schedule the autonomous crank ----
   await sleep((INACTIVITY + 3) * 1000);

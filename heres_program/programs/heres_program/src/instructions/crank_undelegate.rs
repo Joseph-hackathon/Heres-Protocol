@@ -13,6 +13,8 @@ use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::access_control::instructions::CommitAndUndelegatePermissionCpiBuilder;
 
 use crate::constants::PERMISSION_PROGRAM_ID;
+use crate::error::ErrorCode;
+use crate::state::IntentCapsule;
 
 #[derive(Accounts)]
 pub struct CrankUndelegateInput<'info> {
@@ -42,6 +44,19 @@ pub fn handler(ctx: Context<CrankUndelegateInput>) -> Result<()> {
     let owner_key = ctx.accounts.owner.key();
     let capsule_bump = ctx.bumps.capsule;
     let capsule_seeds: &[&[u8]] = &[b"intent_capsule", owner_key.as_ref(), &[capsule_bump]];
+
+    // Undelegation COMMITS the Switch - including the private beneficiary list - back to the public
+    // base layer. Permit it only when EITHER the owner is undelegating their own Switch, OR the
+    // switch has already fired. This stops any third party from force-committing a live owner's
+    // private beneficiaries to base (Tier-1 privacy: private while alive, public at payout). This
+    // runs on the ER, where the Switch is program-owned and therefore readable.
+    {
+        let data = ctx.accounts.capsule.try_borrow_data()?;
+        let cap = IntentCapsule::try_deserialize(&mut &data[..])?;
+        let owner_undelegating = ctx.accounts.payer.key() == cap.owner;
+        let fired = !cap.is_active && cap.executed_at.is_some();
+        require!(owner_undelegating || fired, ErrorCode::CapsuleActive);
+    }
 
     msg!("Crank undelegating Switch + PER permission from ER");
 

@@ -14,17 +14,18 @@ use crate::state::{CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct RecoverVault<'info> {
-    #[account(
-        seeds = [b"intent_capsule", owner.key().as_ref()],
-        bump = capsule.bump,
-        constraint = capsule.owner == owner.key() @ ErrorCode::Unauthorized,
-    )]
-    pub capsule: Box<Account<'info, IntentCapsule>>,
+    /// CHECK: the Switch PDA, validated by seeds. Read as a raw AccountInfo (NOT
+    /// Account<IntentCapsule>) on purpose: while the Switch is delegated its owner is the delegation
+    /// program, so an Account<IntentCapsule> would fail Anchor's owner check - and the stuck-delegated
+    /// (dead validator) case is exactly what this escape hatch exists for. Authorization is the owner
+    /// signer + the owner-seeded vault, not this account.
+    #[account(seeds = [b"intent_capsule", owner.key().as_ref()], bump)]
+    pub capsule: AccountInfo<'info>,
 
     #[account(
         mut,
         seeds = [b"capsule_vault", owner.key().as_ref()],
-        bump = capsule.vault_bump
+        bump
     )]
     pub vault: Box<Account<'info, CapsuleVault>>,
 
@@ -45,10 +46,20 @@ pub struct RecoverVault<'info> {
 
 /// Recover one Vault asset to the owner. Pre-fire only; after firing, funds follow distribution.
 pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
-    require!(ctx.accounts.capsule.is_active, ErrorCode::CapsuleInactive);
+    // The Switch may be delegated to the ER/TEE - possibly to a dead validator. The Vault is always
+    // on the base layer, so the owner can still pull funds out here. We only consult the Switch state
+    // when it is on the base layer (program-owned): there we keep the pre-fire-only policy so a live,
+    // base-layer capsule still routes to beneficiaries after it fires. When the Switch is delegated
+    // we cannot (and need not) read it - the owner signer + owner-seeded vault authorize the escape.
+    let cap_ai = &ctx.accounts.capsule;
+    if cap_ai.owner == &crate::ID {
+        let data = cap_ai.try_borrow_data()?;
+        let cap = IntentCapsule::try_deserialize(&mut &data[..])?;
+        require!(cap.is_active, ErrorCode::CapsuleInactive);
+    }
 
     let owner_key = ctx.accounts.owner.key();
-    let vault_bump = ctx.accounts.capsule.vault_bump;
+    let vault_bump = ctx.bumps.vault;
     let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
     let signer_seeds = &[vault_seeds];
 
