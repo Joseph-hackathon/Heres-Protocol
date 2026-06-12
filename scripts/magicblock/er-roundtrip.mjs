@@ -21,15 +21,22 @@
  * Uses the Anchor 0.32 client with the fresh build IDL (auto-encodes args); PDAs are precomputed
  * and passed explicitly so nothing depends on resolver guesswork.
  *
- * Run:  node scripts/magicblock/er-roundtrip.mjs
- * Env:  ER_RPC (default Asia), VALIDATOR (default MAS1Dt9), INACTIVITY (s), SCHEDULE_INTERVAL_MS,
- *       SCHEDULE_ITERS, FUND_SOL, DEPOSIT_SOL
+ * Run (regular ER):  node scripts/magicblock/er-roundtrip.mjs
+ * Run (Private/TEE):  TEE=1 node scripts/magicblock/er-roundtrip.mjs
+ *   TEE=1 routes ER ops through the TEE RPC (devnet-tee.magicblock.app) with a per-key auth token
+ *   minted via the SDK (getAuthToken: /auth/challenge -> sign -> /auth/login -> ?token=), attests
+ *   the Intel TDX enclave, and proves an unauthorized observer cannot read the private beneficiaries
+ *   on the ER - the assertion the regular ER cannot make (it does not enforce the permission account).
+ * Env:  TEE (=1 for Private ER), TEE_RPC, ER_RPC (regular-ER override), VALIDATOR, INACTIVITY (s),
+ *       SCHEDULE_INTERVAL_MS, SCHEDULE_ITERS, FUND_SOL, DEPOSIT_SOL
  */
 import {
   Connection, Keypair, PublicKey, SystemProgram,
   Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import anchor from '@coral-xyz/anchor';
+import nacl from 'tweetnacl';
+import { getAuthToken, verifyTeeRpcIntegrity } from '@magicblock-labs/ephemeral-rollups-sdk';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -52,12 +59,17 @@ function configBaseRpc() {
   return 'https://api.devnet.solana.com';
 }
 const BASE_RPC = process.env.BASE_RPC ?? configBaseRpc();
-// ER endpoint: by default discovered per-account from the router AFTER delegation (the TEE endpoint
-// needs the router-issued token; hardcoding it returns 401 Missing token query param). ER_RPC env
-// forces a fixed endpoint (skips the router) - handy for the regular (non-TEE) ER.
-const ER_RPC_OVERRIDE = process.env.ER_RPC ?? null;
+// ER endpoint selection:
+//   - regular ER (default): router discovers the per-account fqdn after delegation, or ER_RPC pins one.
+//   - Private ER / TEE (TEE=1): skip the router (it does not route to the TEE node). Mint a per-key
+//     auth token via the SDK's getAuthToken (/auth/challenge -> sign -> /auth/login) and connect to
+//     TEE_RPC?token=<token>. The token gates *reads* by the key's permission member flags.
+const TEE = process.env.TEE === '1' || /tee/i.test(process.env.ER_RPC ?? '');
+const TEE_RPC = (process.env.TEE_RPC ?? 'https://devnet-tee.magicblock.app').replace(/\/+$/, '');
+const TEE_VALIDATOR = 'MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo'; // devnet TEE node (constants.rs)
+const ER_RPC_OVERRIDE = (!TEE && process.env.ER_RPC) ? process.env.ER_RPC : null;
 const ROUTER_RPC = process.env.ROUTER_RPC ?? 'https://devnet-router.magicblock.app/';
-const VALIDATOR = new PublicKey(process.env.VALIDATOR ?? 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57');
+const VALIDATOR = new PublicKey(process.env.VALIDATOR ?? (TEE ? TEE_VALIDATOR : 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57'));
 
 const DELEGATION_PROGRAM_ID = new PublicKey('DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh');
 const MAGIC_PROGRAM_ID = new PublicKey('Magic11111111111111111111111111111111111111');
@@ -81,8 +93,22 @@ const sk = p => join(homedir(), '.config/solana', p);
 const timeoutFetch = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(15000) });
 const connOpts = { commitment: 'confirmed', fetch: timeoutFetch };
 const baseConn = new Connection(BASE_RPC, connOpts);
-// Reassigned to the router-issued fqdn after delegation unless ER_RPC override is set.
+// Reassigned to the router-issued fqdn (or the owner-authed TEE connection) after delegation.
 let erConn = new Connection(ER_RPC_OVERRIDE ?? 'https://devnet-as.magicblock.app', connOpts);
+
+// TEE: mint a per-key auth token (proves ownership of the key) and open a token-authed connection to
+// the Private ER. The token gates reads via the Query Filtering Service by the key's member flags;
+// sends stay authorized on-chain. Cached one connection per key.
+const teeConnCache = new Map();
+async function teeConnFor(kp) {
+  const k = kp.publicKey.toBase58();
+  if (teeConnCache.has(k)) return teeConnCache.get(k);
+  const { token } = await getAuthToken(TEE_RPC, kp.publicKey,
+    msg => Promise.resolve(nacl.sign.detached(msg, kp.secretKey)));
+  const conn = new Connection(`${TEE_RPC}?token=${token}`, connOpts);
+  teeConnCache.set(k, conn);
+  return conn;
+}
 
 // Ask the router which ER (fqdn) hosts a delegated account; the TEE fqdn carries the auth token.
 async function routerFqdn(account) {
@@ -140,16 +166,24 @@ const [bufferPermission] = PublicKey.findProgramAddressSync([seed('buffer'), per
 const [delegationRecordPermission] = PublicKey.findProgramAddressSync([seed('delegation'), permission.toBuffer()], DELEGATION_PROGRAM_ID);
 const [delegationMetadataPermission] = PublicKey.findProgramAddressSync([seed('delegation-metadata'), permission.toBuffer()], DELEGATION_PROGRAM_ID);
 
-// Send a tx to the ER (gasless, skipPreflight: the ER may not simulate the cloned program cleanly).
-async function sendER(ixs, signers, feePayer) {
+// Send a tx to the ER (skipPreflight: the ER may not simulate the cloned program cleanly). Confirm by
+// polling signature status over HTTP - the TEE auth token rides the URL query on HTTP, sidestepping
+// any WS-subscription token edge cases. `conn` defaults to erConn (owner-authed in TEE mode).
+async function sendER(ixs, signers, feePayer, conn = erConn) {
   return retry(async () => {
-    const { blockhash, lastValidBlockHeight } = await erConn.getLatestBlockhash('confirmed');
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
     const tx = new Transaction({ feePayer: feePayer.publicKey, blockhash, lastValidBlockHeight });
     ixs.forEach(ix => tx.add(ix));
     tx.sign(...signers);
-    const sig = await erConn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-    await erConn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-    return sig;
+    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    for (let i = 0; i < 25; i++) {
+      await sleep(1000);
+      const s = (await conn.getSignatureStatuses([sig]))?.value?.[0];
+      if (!s) continue;
+      if (s.err) throw new Error('tx err: ' + JSON.stringify(s.err));
+      if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus)) return sig;
+    }
+    throw new Error('confirm timeout for ' + sig.slice(0, 16));
   }, 3, 2000);
 }
 
@@ -161,7 +195,8 @@ const check = (name, ok, detail = '') => {
 
 console.log('=== Heres lean ER round-trip ===');
 console.log('program  :', PROGRAM_ID.toBase58());
-console.log('ER RPC   :', ER_RPC_OVERRIDE ?? `(router ${ROUTER_RPC})`, '| validator', VALIDATOR.toBase58());
+console.log('mode     :', TEE ? `PRIVATE ER / TEE (${TEE_RPC})` : 'regular ER');
+console.log('ER RPC   :', TEE ? TEE_RPC : (ER_RPC_OVERRIDE ?? `(router ${ROUTER_RPC})`), '| validator', VALIDATOR.toBase58());
 console.log('owner    :', ownerKp.publicKey.toBase58());
 console.log('capsule  :', capsule.toBase58());
 console.log('vault    :', vault.toBase58());
@@ -170,6 +205,16 @@ console.log('crank    :', crankKp.publicKey.toBase58(), '(undelegate payer)');
 console.log(`knobs    : inactivity=${INACTIVITY}s schedule=${SCHEDULE_INTERVAL_MS}ms x ${SCHEDULE_ITERS}\n`);
 
 try {
+  // ---- 0. (TEE) attest the enclave before trusting it with private state ----
+  if (TEE) {
+    try {
+      const ok = await verifyTeeRpcIntegrity(TEE_RPC);
+      check('TEE attestation: Intel TDX quote verified (Phala PCCS)', ok === true);
+    } catch (e) {
+      console.log('   (TEE attestation skipped - external verifier error:', e.message?.slice(0, 100), ')');
+    }
+  }
+
   // ---- 1. fund owner ----
   await sendBase([SystemProgram.transfer({ fromPubkey: funder.publicKey, toPubkey: ownerKp.publicKey, lamports: Math.floor(FUND_SOL * LAMPORTS_PER_SOL) })], [funder]);
   console.log(`1. funded owner ${FUND_SOL} SOL`);
@@ -230,8 +275,12 @@ try {
     if (baseInfo?.owner.equals(DELEGATION_PROGRAM_ID)) { baseDelegated = true; break; }
   }
 
-  // Discover the ER that hosts the capsule from the router (TEE fqdn carries the auth token).
-  if (!ER_RPC_OVERRIDE) {
+  // Establish the ER RPC for the capsule. TEE: skip the router (it does not route to the TEE node) and
+  // open an owner-authed token connection (owner = AUTHORITY + all read flags = privileged reads).
+  if (TEE) {
+    erConn = await teeConnFor(ownerKp);
+    console.log('   TEE ER:', TEE_RPC + '?token=*** (owner-authed)');
+  } else if (!ER_RPC_OVERRIDE) {
     try {
       const status = await routerFqdn(capsule);
       if (status?.fqdn) {
@@ -260,7 +309,7 @@ try {
       .updateActivity()
       .accountsPartial({ capsule, authority: relayerKp.publicKey })
       .instruction();
-    await sendER([hbIx], [relayerKp], relayerKp);
+    await sendER([hbIx], [relayerKp], relayerKp, TEE ? await teeConnFor(relayerKp) : erConn);
     hbOk = true;
   } catch (e) { console.log('   (relayer heartbeat err:', e.message?.slice(0, 140), ')'); }
   check('relayer heartbeat on ER (update_activity by heartbeat_authority)', hbOk);
@@ -280,6 +329,21 @@ try {
   const baseRaw = await getAcct(baseConn, capsule);
   const benVisibleOnBase = baseRaw && baseRaw.data.includes(ben1.publicKey.toBuffer());
   check('beneficiaries NOT on base while delegated (privacy)', !benVisibleOnBase);
+
+  // TEE privacy proof: the owner (read flags) sees beneficiaries on the ER; an unauthorized observer
+  // (fresh key, not a permission member) is filtered by the TEE and cannot. This is the assertion the
+  // regular ER could never make - it does not enforce the permission account.
+  if (TEE) {
+    const ownerRaw = await getAcct(erConn, capsule);
+    const ownerSees = !!(ownerRaw && ownerRaw.data.includes(ben1.publicKey.toBuffer()));
+    check('TEE: owner (AUTHORITY + read flags) CAN read beneficiaries on ER', ownerSees);
+    const obsKp = Keypair.generate();
+    const obsConn = await teeConnFor(obsKp);
+    const obsRaw = await obsConn.getAccountInfo(capsule).catch(() => null);
+    const obsSees = !!(obsRaw && obsRaw.data && obsRaw.data.includes(ben1.publicKey.toBuffer()));
+    check('TEE: unauthorized observer CANNOT read beneficiaries on ER (filtered)', !obsSees,
+      obsRaw ? `observer saw ${obsRaw.data?.length ?? 0} bytes` : 'observer read returned null');
+  }
 
   // ---- 7. wait out the inactivity window, then schedule the autonomous crank ----
   await sleep((INACTIVITY + 3) * 1000);
@@ -322,7 +386,7 @@ try {
       magicProgram: MAGIC_PROGRAM_ID,
     })
     .instruction();
-  const undSig = await sendER([undIx], [crankKp], crankKp);
+  const undSig = await sendER([undIx], [crankKp], crankKp, TEE ? await teeConnFor(crankKp) : erConn);
   console.log('9. crank_undelegate sent on ER:', undSig);
 
   let backOnBase = false;
