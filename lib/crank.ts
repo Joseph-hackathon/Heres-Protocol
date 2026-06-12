@@ -10,25 +10,35 @@ import {
 } from '@solana/web3.js'
 import { Program, AnchorProvider, BorshAccountsCoder, type Wallet } from '@coral-xyz/anchor'
 import idl from '../idl/heres_program.json'
-import { getSolanaConnection, getProgramId } from '@/config/solana'
-import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA, getPermissionPDA } from './program'
-import { fetchCapsuleStatesBatched, type DecodedCapsuleState } from './cre/solana'
+import { getSolanaConnection } from '@/config/solana'
+import { getCapsulePDA, getCapsuleVaultPDA } from './program'
 import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
-import { MAGICBLOCK_ER, SOLANA_CONFIG } from '@/constants'
+import { MAGICBLOCK_ER } from '@/constants'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 
-// Instruction discriminators (deployed binary). execute_intent + distribute_assets are sent as
-// raw instructions because the base binary accepts the optional accounts as sentinels.
-const EXECUTE_INTENT_DISC = Buffer.from([53, 130, 47, 154, 227, 220, 122, 212])
-const DISTRIBUTE_ASSETS_DISC = Buffer.from([239, 241, 19, 219, 144, 191, 154, 18])
-
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
-const FALLBACK_FEE_RECIPIENT = new PublicKey(
-  SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT || 'Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb'
-)
+const MAGIC_CONTEXT_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_CONTEXT)
+const MAGIC_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_PROGRAM_ID)
+
+// distribute_assets is gated on-chain by this post-fire grace window (constants.rs GRACE_PERIOD).
+const GRACE_PERIOD = 48 * 60 * 60
+
+// The ER endpoint the crank submits crank_undelegate to. Defaults to the regular ER. For the
+// Private/TEE ER this must be a token-authed URL (mint a crank auth token out of band and set it
+// here, e.g. https://devnet-tee.magicblock.app?token=...). TODO: in-crank per-key token minting.
+const CRANK_ER_RPC_URL = process.env.CRANK_ER_RPC_URL || MAGICBLOCK_ER.ER_RPC_URL
+
+const accountsCoder = new BorshAccountsCoder(idl as any)
+
+// SDK permission seed is "permission:" (with the colon - Permission::find_pda). The shared
+// getPermissionPDA in lib/program.ts uses the colon-less "permission" seed, which is wrong for the
+// lean program; derive locally so the crank is correct. (lib/program.ts fix = frontend phase.)
+function permissionPda(capsule: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('permission:'), capsule.toBuffer()], PERMISSION_PROGRAM_ID)[0]
+}
 
 function ata(mint: PublicKey, owner: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
@@ -67,25 +77,12 @@ function makeWallet(keypair: Keypair): Wallet {
   } as unknown as Wallet
 }
 
-type SolanaBeneficiary = { address: string }
-
-/** Beneficiary wallets on Solana (EVM heirs are settled via the CcipTransferRequested event). */
-function parseSolanaBeneficiaries(intentData: Uint8Array): SolanaBeneficiary[] {
-  try {
-    const json = new TextDecoder().decode(intentData)
-    const data = JSON.parse(json) as {
-      beneficiaries?: Array<{ address?: string; chain?: string }>
-    }
-    const list = data?.beneficiaries
-    if (!Array.isArray(list)) return []
-    return list
-      .filter((b) => b?.address && (b.chain ?? 'solana') === 'solana')
-      .map((b) => ({ address: b.address! }))
-  } catch {
-    return []
-  }
+function crankProgram(connection: Connection, keypair: Keypair): Program {
+  const provider = new AnchorProvider(connection, makeWallet(keypair), { commitment: 'confirmed' })
+  return new Program(idl as any, provider)
 }
 
+/** Build, sign, and confirm a base-layer transaction (skipPreflight - the lean binary is fine). */
 async function sendRaw(
   connection: Connection,
   keypair: Keypair,
@@ -100,137 +97,213 @@ async function sendRaw(
   return sig
 }
 
-/** execute_intent (4 accounts). Flips capsule state; no funds move. */
-function buildExecuteIntentIx(owner: PublicKey): TransactionInstruction {
-  const programId = getProgramId()
-  const [capsulePDA] = getCapsulePDA(owner)
-  const [vaultPDA] = getCapsuleVaultPDA(owner)
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
-  return new TransactionInstruction({
-    programId,
-    keys: [
-      { pubkey: capsulePDA, isSigner: false, isWritable: true },
-      { pubkey: vaultPDA, isSigner: false, isWritable: true },
-      { pubkey: PERMISSION_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: permissionPDA, isSigner: false, isWritable: false },
-    ],
-    data: EXECUTE_INTENT_DISC,
-  })
-}
-
-async function executeOnBase(connection: Connection, keypair: Keypair, owner: PublicKey): Promise<string> {
-  return sendRaw(connection, keypair, [buildExecuteIntentIx(owner)])
-}
-
-async function executeOnEr(keypair: Keypair, owner: PublicKey): Promise<string> {
-  const erConnection = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-  return sendRaw(erConnection, keypair, [buildExecuteIntentIx(owner)])
-}
-
-/** crank_undelegate: commits ER state and returns capsule ownership to the base layer. */
-async function undelegate(connection: Connection, keypair: Keypair, owner: PublicKey): Promise<string> {
-  const provider = new AnchorProvider(connection, makeWallet(keypair), { commitment: 'confirmed' })
-  const program = new Program(idl as any, provider)
-  const [capsulePDA] = getCapsulePDA(owner)
-  const [vaultPDA] = getCapsuleVaultPDA(owner)
-  // @ts-ignore - method resolved from IDL
-  return program.methods
-    .crankUndelegate()
-    .accounts({
-      payer: keypair.publicKey,
-      capsule: capsulePDA,
-      vault: vaultPDA,
-      magicContext: new PublicKey(MAGICBLOCK_ER.MAGIC_CONTEXT),
-      magicProgram: new PublicKey(MAGICBLOCK_ER.MAGIC_PROGRAM_ID),
-    })
-    .rpc()
-}
-
-async function resolveFeeRecipient(connection: Connection): Promise<PublicKey> {
-  try {
-    const [feeConfigPDA] = getFeeConfigPDA()
-    const info = await connection.getAccountInfo(feeConfigPDA)
-    if (info) {
-      const coder = new BorshAccountsCoder(idl as any)
-      const fee = coder.decode('FeeConfig', info.data) as any
-      const recipient = fee.fee_recipient ?? fee.feeRecipient
-      if (recipient) return new PublicKey(recipient)
-    }
-  } catch {
-    // fall through to configured default
+/**
+ * Submit a tx to the ER and confirm by polling signature status. The ER may not simulate the cloned
+ * program cleanly, so skipPreflight; HTTP status polling avoids any WS-subscription token edge cases
+ * on a token-authed (TEE) endpoint.
+ */
+async function sendEr(
+  connection: Connection,
+  keypair: Keypair,
+  instructions: TransactionInstruction[]
+): Promise<string> {
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+  const tx = new Transaction({ feePayer: keypair.publicKey, blockhash, lastValidBlockHeight })
+  instructions.forEach((ix) => tx.add(ix))
+  tx.sign(keypair)
+  const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true })
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 1000))
+    const s = (await connection.getSignatureStatuses([sig]))?.value?.[0]
+    if (!s) continue
+    if (s.err) throw new Error('ER tx err: ' + JSON.stringify(s.err))
+    if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus ?? '')) return sig
   }
-  return FALLBACK_FEE_RECIPIENT
+  throw new Error('ER confirm timeout for ' + sig.slice(0, 16))
+}
+
+type LeanBeneficiary = { pubkey: PublicKey; shareBps: number }
+type LeanCapsule = {
+  owner: PublicKey
+  inactivityPeriod: number
+  lastActivity: number
+  isActive: boolean
+  executedAt: number | null
+  vaultBump: number
+  beneficiaries: LeanBeneficiary[]
+}
+
+/** Decode a base-layer (undelegated, program-owned) Switch with the lean IDL layout. */
+function decodeLeanCapsule(data: Buffer): LeanCapsule {
+  const c = accountsCoder.decode('IntentCapsule', data) as any
+  return {
+    owner: c.owner,
+    inactivityPeriod: c.inactivity_period.toNumber(),
+    lastActivity: c.last_activity.toNumber(),
+    isActive: c.is_active,
+    executedAt: c.executed_at == null ? null : c.executed_at.toNumber(),
+    vaultBump: c.vault_bump,
+    beneficiaries: (c.beneficiaries ?? []).map((b: any) => ({ pubkey: b.pubkey, shareBps: b.share_bps })),
+  }
 }
 
 /**
- * distribute_assets: moves SOL/SPL from the vault to beneficiaries on the base layer.
- * Requires the capsule to be undelegated (back on the base layer) and already executed.
- * On-chain H1 guard makes redundant calls safe; this is the permissionless payout crank.
+ * Batch-fetch BASE account infos for many owners (one getMultipleAccountsInfo per 100). The crank
+ * deliberately reads ONLY the base layer: a delegated Switch lives in the Private/TEE ER where the
+ * Query Filtering Service filters the crank's reads, so its liveness is unreadable here. The base
+ * account's owner alone tells us delegated (owner = delegation program) vs settled-on-base.
  */
-async function distribute(
-  connection: Connection,
-  keypair: Keypair,
-  state: DecodedCapsuleState
-): Promise<string> {
-  const owner = state.owner
-  const [capsulePDA] = getCapsulePDA(owner)
-  const [vaultPDA] = getCapsuleVaultPDA(owner)
-  const [feeConfigPDA] = getFeeConfigPDA()
-  const programId = getProgramId()
-  const isSpl = state.mint && !state.mint.equals(PublicKey.default)
+async function fetchBaseInfos(
+  owners: string[]
+): Promise<Map<string, { accountOwner: PublicKey; data: Buffer } | null>> {
+  const out = new Map<string, { accountOwner: PublicKey; data: Buffer } | null>()
+  const connection = getSolanaConnection()
 
-  const beneficiaries = parseSolanaBeneficiaries(state.intentData)
-  if (beneficiaries.length === 0) throw new Error('no Solana beneficiaries in intent data')
-
-  const feeRecipient = await resolveFeeRecipient(connection)
-  const preInstructions: TransactionInstruction[] = []
-
-  // Fee recipient account: ATA for SPL (create if missing), plain pubkey for SOL.
-  let feeRecipientAccount = feeRecipient
-  if (isSpl) {
-    feeRecipientAccount = ata(state.mint, feeRecipient)
-    const exists = await connection.getAccountInfo(feeRecipientAccount)
-    if (!exists) {
-      preInstructions.push(createAtaIx(keypair.publicKey, feeRecipientAccount, feeRecipient, state.mint))
+  const targets: { ownerStr: string; capsulePDA: PublicKey }[] = []
+  for (const ownerStr of owners) {
+    try {
+      const [capsulePDA] = getCapsulePDA(new PublicKey(ownerStr))
+      targets.push({ ownerStr, capsulePDA })
+    } catch {
+      // skip unparseable owner string
     }
   }
 
-  // Beneficiary accounts. SPL beneficiaries need an ATA; create any that are missing so a
-  // crypto-naive heir receives funds without taking any action (the crank pays the rent).
-  const remainingAccounts = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
-  for (const b of beneficiaries) {
-    const beneficiaryOwner = new PublicKey(b.address)
-    if (isSpl) {
-      const beneficiaryAta = ata(state.mint, beneficiaryOwner)
-      const exists = await connection.getAccountInfo(beneficiaryAta)
-      if (!exists) {
-        preInstructions.push(createAtaIx(keypair.publicKey, beneficiaryAta, beneficiaryOwner, state.mint))
-      }
-      remainingAccounts.push({ pubkey: beneficiaryAta, isSigner: false, isWritable: true })
-    } else {
-      remainingAccounts.push({ pubkey: beneficiaryOwner, isSigner: false, isWritable: true })
+  const CHUNK = 100
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const slice = targets.slice(i, i + CHUNK)
+    const infos = await connection.getMultipleAccountsInfo(
+      slice.map((t) => t.capsulePDA),
+      'confirmed'
+    )
+    for (let j = 0; j < slice.length; j++) {
+      const info = infos[j]
+      out.set(slice[j].ownerStr, info ? { accountOwner: info.owner, data: info.data } : null)
     }
   }
-
-  // Optional accounts use the program id as the None sentinel (matches the deployed binary).
-  // capsule MUST be writable: distribute_assets sets capsule.distributed = true (audit H1).
-  const keys = [
-    { pubkey: capsulePDA, isSigner: false, isWritable: true },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: feeConfigPDA, isSigner: false, isWritable: false },
-    { pubkey: feeRecipientAccount, isSigner: false, isWritable: true },
-    { pubkey: isSpl ? state.mint : programId, isSigner: false, isWritable: false },
-    { pubkey: isSpl ? ata(state.mint, vaultPDA) : programId, isSigner: false, isWritable: !!isSpl },
-    ...remainingAccounts,
-  ]
-
-  const ix = new TransactionInstruction({ keys, programId, data: DISTRIBUTE_ASSETS_DISC })
-  return sendRaw(connection, keypair, [...preInstructions, ix])
+  return out
 }
 
-export type CapsuleAction = 'executed-base' | 'executed-er' | 'undelegated' | 'distributed' | 'done' | 'waiting'
+/** execute_intent (lean: capsule, permission_program, permission). State-only fire; no funds move. */
+function executeIntentIx(program: Program, owner: PublicKey): Promise<TransactionInstruction> {
+  const [capsule] = getCapsulePDA(owner)
+  return program.methods
+    .executeIntent()
+    .accountsPartial({
+      capsule,
+      permissionProgram: PERMISSION_PROGRAM_ID,
+      permission: permissionPda(capsule),
+    })
+    .instruction()
+}
+
+/** crank_undelegate (lean accounts). Commits ER state + returns the Switch (and permission) to base. */
+function crankUndelegateIx(program: Program, payer: PublicKey, owner: PublicKey): Promise<TransactionInstruction> {
+  const [capsule] = getCapsulePDA(owner)
+  return program.methods
+    .crankUndelegate()
+    .accountsPartial({
+      payer,
+      owner,
+      capsule,
+      permission: permissionPda(capsule),
+      permissionProgram: PERMISSION_PROGRAM_ID,
+      magicContext: MAGIC_CONTEXT_ID,
+      magicProgram: MAGIC_PROGRAM_ID,
+    })
+    .instruction()
+}
+
+/** True when a failed crank_undelegate was rejected by the fired-gate (not yet fired) rather than a real error. */
+function isNotFiredError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e)
+  // ErrorCode::CapsuleActive = 6002 (anchor custom error base 6000); the gate rejects pre-fire undelegate.
+  return m.includes('6002') || /CapsuleActive/i.test(m)
+}
+
+/**
+ * Pay out every asset the Vault holds to the on-chain beneficiaries, split by share_bps. SPL legs run
+ * first (each closes the vault ATA, returning its rent to the Vault); the SOL leg runs last so it
+ * sweeps the reclaimed rent too. Returns true once the Vault is fully drained (safe to unregister).
+ */
+async function distributeAll(
+  connection: Connection,
+  program: Program,
+  keypair: Keypair,
+  owner: PublicKey,
+  cap: LeanCapsule
+): Promise<boolean> {
+  if (cap.beneficiaries.length === 0) throw new Error('capsule has no beneficiaries')
+  const [capsulePDA] = getCapsulePDA(owner)
+  const [vaultPDA] = getCapsuleVaultPDA(owner)
+  const recipients = cap.beneficiaries
+
+  // 1. SPL legs first.
+  const tokenAccts = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
+  for (const { pubkey: vaultAta, account } of tokenAccts.value) {
+    const tokenInfo = (account.data as any).parsed?.info
+    if (!tokenInfo) continue
+    if (BigInt(tokenInfo.tokenAmount.amount) === 0n) continue
+    const mint = new PublicKey(tokenInfo.mint)
+
+    const preIxs: TransactionInstruction[] = []
+    const remaining = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
+    for (const b of recipients) {
+      const bAta = ata(mint, b.pubkey)
+      const exists = await connection.getAccountInfo(bAta)
+      if (!exists) preIxs.push(createAtaIx(keypair.publicKey, bAta, b.pubkey, mint))
+      remaining.push({ pubkey: bAta, isSigner: false, isWritable: true })
+    }
+
+    const ix = await program.methods
+      .distributeAssets()
+      .accountsPartial({
+        capsule: capsulePDA,
+        vault: vaultPDA,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        mint,
+        vaultTokenAccount: vaultAta,
+      })
+      .remainingAccounts(remaining)
+      .instruction()
+    await sendRaw(connection, keypair, [...preIxs, ix])
+  }
+
+  // 2. SOL leg last (sweeps lamports incl. reclaimed ATA rent).
+  const vaultInfo = await connection.getAccountInfo(vaultPDA)
+  if (vaultInfo) {
+    const rentFloor = await connection.getMinimumBalanceForRentExemption(vaultInfo.data.length)
+    if (vaultInfo.lamports > rentFloor) {
+      const remaining = recipients.map((b) => ({ pubkey: b.pubkey, isSigner: false, isWritable: true }))
+      const ix = await program.methods
+        .distributeAssets()
+        // null optional accounts -> Anchor encodes the program-id None sentinel (proven by recover_vault/deposit).
+        // The generated TS type omits null, so cast; the IDL is already loaded untyped (idl as any).
+        .accountsPartial({
+          capsule: capsulePDA,
+          vault: vaultPDA,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: null,
+          mint: null,
+          vaultTokenAccount: null,
+        } as any)
+        .remainingAccounts(remaining)
+        .instruction()
+      await sendRaw(connection, keypair, [ix])
+    }
+  }
+
+  // 3. Drained?
+  const finalVault = await connection.getAccountInfo(vaultPDA)
+  const finalTokens = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
+  const rentFloor = finalVault ? await connection.getMinimumBalanceForRentExemption(finalVault.data.length) : 0
+  const solDrained = !finalVault || finalVault.lamports <= rentFloor
+  const tokensDrained = finalTokens.value.every(
+    (t) => BigInt((t.account.data as any).parsed.info.tokenAmount.amount) === 0n
+  )
+  return solDrained && tokensDrained
+}
 
 export type PipelineResult = {
   ok: boolean
@@ -245,10 +318,8 @@ export type PipelineResult = {
 }
 
 /**
- * Owners the crank should look at this tick. M2 hot path: the due-time index
- * returns only capsules whose fire-time has passed, so armed-but-not-due capsules
- * are never fetched. If the index read fails, fall back to a full scan over the
- * flat registry (correct, just more RPC) so a backend hiccup never strands a fire.
+ * Owners the crank should look at this tick. M2 hot path: the due-time index returns only capsules
+ * whose fire-time has passed; a backend hiccup falls back to a full scan so a fire is never stranded.
  */
 async function selectDueOwners(now: number): Promise<{ owners: string[]; fullScan: boolean }> {
   try {
@@ -259,17 +330,23 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
 }
 
 /**
- * Unified dead-man's-switch crank. Selects only the due capsules (M2 due-time
- * index, full-scan fallback), batch-fetches their state in one RPC per 100, and
- * runs one state-machine step per capsule:
+ * Unified dead-man's-switch crank for the LEAN program (Model A: delegated Switch + base Vault).
  *
- *   delegated  + active   + elapsed      -> execute on ER (flip state; ScheduleTask backstop)
- *   delegated  + executed                -> undelegate (commit + return ownership to base)
- *   !delegated + active   + elapsed      -> execute on base (flip state)
- *   !delegated + executed + !distributed -> distribute (pay out, then unregister)
- *   active     + !elapsed                -> self-heal due-time, skip until actually due
+ * Reads ONLY the base layer. The Switch is delegated to the Private/TEE ER from creation, where the
+ * crank's reads are filtered, so it cannot see a delegated Switch's liveness - and it does not need
+ * to. Firing a delegated Switch is the autonomous MagicBlock ScheduleTask's job. The crank's state
+ * machine, per due capsule:
  *
- * Each capsule advances one step per tick; on-chain guards (H1) make every step idempotent.
+ *   delegated                      -> optimistically crank_undelegate on the ER. The on-chain
+ *                                     fired-gate makes a pre-fire attempt a safe no-op; once the
+ *                                     ScheduleTask has fired it, this commits the Switch back to base.
+ *   base + active + elapsed        -> execute_intent on base (never-delegated / pre-delegation path).
+ *   base + active + not-elapsed    -> self-heal the due index from the real on-chain fire-time.
+ *   base + fired + grace elapsed   -> distribute every Vault asset, then unregister once drained.
+ *   base + fired + in grace        -> wait; set the due index to the grace end.
+ *
+ * On-chain guards make every step idempotent (structural drain-and-close, not a flag), so a mid-tick
+ * failure is recovered on the next tick.
  */
 export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineResult> {
   const connection = getSolanaConnection()
@@ -288,69 +365,69 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
     errors: [],
   }
 
-  // One batched RPC round-trip per 100 due owners (M2) instead of one per owner.
-  let states: Map<string, DecodedCapsuleState | null>
+  let infos: Map<string, { accountOwner: PublicKey; data: Buffer } | null>
   try {
-    states = await fetchCapsuleStatesBatched(owners)
+    infos = await fetchBaseInfos(owners)
   } catch (e) {
     result.ok = false
-    result.errors.push(`batch fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+    result.errors.push(`base fetch failed: ${e instanceof Error ? e.message : String(e)}`)
     return result
   }
 
+  const baseProgram = crankProgram(connection, crankKeypair)
+  const erConnection = new Connection(CRANK_ER_RPC_URL, { commitment: 'confirmed' })
+  const erProgram = crankProgram(erConnection, crankKeypair)
+
   for (const ownerStr of owners) {
-    let ownerPubkey: PublicKey
+    let owner: PublicKey
     try {
-      ownerPubkey = new PublicKey(ownerStr)
+      owner = new PublicKey(ownerStr)
     } catch {
       continue
     }
 
-    const state = states.get(ownerStr)
-    if (!state) continue
+    const info = infos.get(ownerStr)
+    if (!info) continue // capsule account not found on base yet
     result.scanned += 1
 
-    const delegated = state.accountOwner.equals(DELEGATION_PROGRAM_ID)
-    const executed = state.executedAt != null
-    const dueAt = state.lastActivity + state.inactivityPeriod
-    const elapsed = now >= dueAt
-
     try {
-      if (delegated && state.isActive && elapsed) {
-        await executeOnEr(crankKeypair, ownerPubkey)
-        result.executedEr += 1
-      } else if (delegated && executed) {
-        await undelegate(connection, crankKeypair, ownerPubkey)
-        result.undelegated += 1
-      } else if (!delegated && state.isActive && elapsed) {
-        // Base happy path: fire AND pay out in the same tick. execute_intent is state-only
-        // (flips is_active=false, stamps executed_at); distribute_assets then moves the funds;
-        // unregister drops the capsule. These are separate txs, so a mid-tick failure is
-        // recovered idempotently by the two branches below on the next tick (on-chain H1/state
-        // guards make every step safe to repeat). This keeps fire->payout to ONE tick, which
-        // matters under an infrequent (e.g. daily) cron.
-        await executeOnBase(connection, crankKeypair, ownerPubkey)
-        result.executedBase += 1
-        await distribute(connection, crankKeypair, state)
-        result.distributed += 1
-        await unregisterCapsuleOwner(ownerStr)
-      } else if (!delegated && !state.isActive && executed && !state.distributed) {
-        // Recovery: capsule was executed in a prior tick (or brought back via ER undelegate)
-        // but not yet paid. Pay out and settle in this tick.
-        await distribute(connection, crankKeypair, state)
-        result.distributed += 1
-        await unregisterCapsuleOwner(ownerStr)
-      } else if (!delegated && executed && state.distributed) {
-        // Fully settled: drop from the registry so future ticks skip it.
-        await unregisterCapsuleOwner(ownerStr)
-      } else if (state.isActive && !elapsed) {
-        // Not due yet (a freshly seeded entry, clock skew, or an owner heartbeat
-        // that extended the deadline). Self-heal: record the true fire-time so the
-        // due index excludes this capsule until then. Once a capsule crosses its
-        // due-time its score stays in the past, so it remains selected every tick
-        // until it is fully settled and unregistered above. (M2 scale invariant.)
-        await setCapsuleDue(ownerStr, dueAt)
+      if (info.accountOwner.equals(DELEGATION_PROGRAM_ID)) {
+        // Delegated: liveness is unreadable here. Optimistically undelegate; the fired-gate no-ops
+        // pre-fire. Firing itself is the autonomous ScheduleTask, not the crank.
+        const ix = await crankUndelegateIx(erProgram, crankKeypair.publicKey, owner)
+        try {
+          await sendEr(erConnection, crankKeypair, [ix])
+          result.undelegated += 1
+        } catch (e) {
+          if (!isNotFiredError(e)) throw e
+          // not yet fired -> nothing to do this tick
+        }
+        continue
       }
+
+      // Settled on base (program-owned): state is public, decode it.
+      const cap = decodeLeanCapsule(info.data)
+
+      if (cap.isActive) {
+        const dueAt = cap.lastActivity + cap.inactivityPeriod
+        if (now >= dueAt) {
+          // Never-delegated (or pre-delegation) Switch that is due: fire on base.
+          await sendRaw(connection, crankKeypair, [await executeIntentIx(baseProgram, owner)])
+          result.executedBase += 1
+        } else {
+          await setCapsuleDue(ownerStr, dueAt)
+        }
+      } else if (cap.executedAt != null) {
+        const graceEnd = cap.executedAt + GRACE_PERIOD
+        if (now >= graceEnd) {
+          const drained = await distributeAll(connection, baseProgram, crankKeypair, owner, cap)
+          result.distributed += 1
+          if (drained) await unregisterCapsuleOwner(ownerStr)
+        } else {
+          await setCapsuleDue(ownerStr, graceEnd) // wait out the post-fire grace window
+        }
+      }
+      // else: inactive and never executed -> anomaly, skip.
     } catch (e) {
       result.ok = false
       result.errors.push(`${ownerStr}: ${e instanceof Error ? e.message : String(e)}`)
