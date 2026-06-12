@@ -51,7 +51,7 @@ The Anchor program manages:
 Program ID in the checked-in Rust source:
 
 ```
-AmiL7vEZ2SpAuDXzdxC3sJMyjZqgacvwvvQdT3qosmsW
+sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz
 ```
 
 Production deployments should verify the deployed program ID and IDL before publishing docs.

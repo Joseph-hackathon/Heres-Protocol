@@ -91,7 +91,7 @@ export function getNetworkDisplayLabel(network = SOLANA_CONFIG.NETWORK): string 
 // Solana Configuration
 export const SOLANA_CONFIG = {
   NETWORK: normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK),
-  PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3',
+  PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || 'sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz',
   HELIUS_API_KEY: process.env.NEXT_PUBLIC_HELIUS_API_KEY || '',
     RPC_URL: process.env.SOLANA_RPC_URL || '',
     FALLBACK_RPC_URL:
@@ -138,7 +138,7 @@ export const MAGICBLOCK_ER = {
   BUFFER_SEED_PROGRAM_ID:
     process.env.NEXT_PUBLIC_BUFFER_SEED_PROGRAM_ID ||
     process.env.NEXT_PUBLIC_PROGRAM_ID ||
-    '2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3',
+    'sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz',
   MAGIC_CONTEXT: process.env.NEXT_PUBLIC_MAGIC_CONTEXT || 'MagicContext1111111111111111111111111111111',
   ER_RPC_URL: process.env.NEXT_PUBLIC_ER_RPC_URL || 'https://devnet-as.magicblock.app',
   ER_WS_URL: process.env.NEXT_PUBLIC_ER_WS_URL || 'wss://devnet-as.magicblock.app',

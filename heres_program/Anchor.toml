@@ -9,7 +9,7 @@ skip-lint = false
 heres_program = "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
 
 [programs.localnet]
-heres_program = "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3"
+heres_program = "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
 
 [provider]
 cluster = "devnet"
