@@ -22,7 +22,7 @@ import { getEnhancedTransactions } from '@/lib/helius'
 import { initFeeConfig } from '@/lib/solana'
 import { getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
-import { parseIntentPayload } from '@/utils/intent'
+import { tryDecodeIntentCapsule } from '@/lib/lean-capsule'
 
 type CapsuleEvent = {
   signature: string
@@ -178,64 +178,6 @@ const statusFromInstruction = (instruction: string) => {
       return 'Deactivated'
     default:
       return 'System'
-  }
-}
-
-const decodeCapsuleAccount = (data: Uint8Array) => {
-  if (!data || data.length < 60) return null
-
-  const readI64 = (bytes: Uint8Array, start: number): bigint => {
-    let result = 0n
-    for (let i = 0; i < 8; i += 1) {
-      result |= BigInt(bytes[start + i]) << BigInt(i * 8)
-    }
-    if (result & (1n << 63n)) {
-      result = result - (1n << 64n)
-    }
-    return result
-  }
-
-  const readU32 = (bytes: Uint8Array, start: number): number => {
-    return bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
-  }
-
-  let offset = 8
-  const ownerBytes = data.slice(offset, offset + 32)
-  const owner = new PublicKey(ownerBytes)
-  offset += 32
-  const inactivityPeriod = Number(readI64(data, offset))
-  offset += 8
-  const lastActivity = Number(readI64(data, offset))
-  offset += 8
-  const intentDataLength = readU32(data, offset)
-  offset += 4
-  const intentDataBytes = data.slice(offset, offset + intentDataLength)
-  offset += intentDataLength
-  const isActive = data[offset] === 1
-  offset += 1
-  const hasExecutedAt = data[offset] === 1
-  offset += 1
-  let executedAt: number | null = null
-  if (hasExecutedAt) {
-    executedAt = Number(readI64(data, offset))
-    offset += 8
-  }
-
-  // Skip bump (1) and vault_bump (1)
-  offset += 2
-  let mint: PublicKey | undefined
-  if (offset + 32 <= data.length) {
-    mint = new PublicKey(data.slice(offset, offset + 32))
-  }
-
-  return {
-    owner,
-    inactivityPeriod,
-    lastActivity,
-    intentData: new Uint8Array(intentDataBytes),
-    isActive,
-    executedAt,
-    mint,
   }
 }
 
@@ -470,7 +412,7 @@ export default function DashboardPage() {
     setInitFeeTx(null)
     try {
       const recipient = new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
-      const tx = await initFeeConfig(wallet, recipient, PLATFORM_FEE.CREATION_FEE_LAMPORTS, PLATFORM_FEE.EXECUTION_FEE_BPS)
+      const tx = await initFeeConfig(wallet, recipient, PLATFORM_FEE.CREATION_FEE_LAMPORTS)
       setInitFeeTx(tx)
       setFeeConfigExists(true)
     } catch (e: any) {
@@ -575,17 +517,16 @@ export default function DashboardPage() {
       const decodedCapsules = accounts
           .map((account: any) => {
             try {
-              const decoded = decodeCapsuleAccount(account.account.data)
+              const decoded = tryDecodeIntentCapsule(account.account.data)
               if (!decoded) return null
               return {
                 capsuleAddress: account.pubkey.toBase58(),
                 owner: decoded.owner.toBase58(),
                 inactivityPeriod: decoded.inactivityPeriod,
                 lastActivity: decoded.lastActivity,
-                intentData: decoded.intentData,
+                beneficiaries: decoded.beneficiaries,
                 isActive: decoded.isActive,
                 executedAt: decoded.executedAt,
-                mint: decoded.mint || null,
               }
             } catch {
               return null
@@ -596,10 +537,9 @@ export default function DashboardPage() {
             owner: string
             inactivityPeriod: number
             lastActivity: number
-            intentData: Uint8Array
+            beneficiaries: { pubkey: PublicKey; shareBps: number }[]
             isActive: boolean
             executedAt: number | null
-            mint: PublicKey | null
           }>
 
         const nowSeconds = Math.floor(Date.now() / 1000)
@@ -763,12 +703,7 @@ export default function DashboardPage() {
               (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
             )
             const latestSignature = events[0]?.signature || null
-            const parsedIntent = parseIntentPayload(capsule.intentData)
-            const asset = inferAssetConfig(parsedIntent, capsule.mint)
-            const totalAmount =
-              parsedIntent && 'totalAmount' in parsedIntent && typeof parsedIntent.totalAmount === 'string'
-                ? parsedIntent.totalAmount
-                : null
+            const asset = inferAssetConfig(null, null)
 
             return {
               id: capsule.capsuleAddress,
@@ -779,7 +714,7 @@ export default function DashboardPage() {
               inactivitySeconds: capsule.inactivityPeriod,
               lastActivityMs,
               executedAtMs,
-              payloadSize: capsule.intentData.length,
+              payloadSize: null,
               signature: latestSignature,
               isActive: capsule.isActive,
               events,
@@ -788,7 +723,7 @@ export default function DashboardPage() {
               proofBytes: null,
               assetSymbol: asset.symbol,
               assetLabel: asset.label,
-              totalAmount,
+              totalAmount: null,
             } as CapsuleRow
           })
           .filter((row) => {

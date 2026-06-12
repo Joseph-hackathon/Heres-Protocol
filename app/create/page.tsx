@@ -10,19 +10,18 @@ const WalletMultiButton = dynamic(
   async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
   { ssr: false }
 )
-import { createCapsule, getCapsule, delegateCapsule, scheduleExecuteIntent, registerCapsuleOwnerForAutomation } from '@/lib/solana'
-import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
+import { createDelegatedCapsule, getCapsule, registerCapsuleOwnerForAutomation } from '@/lib/solana'
+import { getCapsulePDA } from '@/lib/program'
 import { Beneficiary } from '@/types'
 import {
   DEFAULT_VALUES,
   STORAGE_KEYS,
   SOLANA_CONFIG,
   PLATFORM_FEE,
-  MAGICBLOCK_ER,
   MAX_CAPSULE_MODIFICATIONS,
   getAssetMintEnvKey,
 } from '@/constants'
-import { encodeIntentData, daysToSeconds } from '@/utils/intent'
+import { daysToSeconds } from '@/utils/intent'
 import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, isValidAmountString, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
@@ -34,7 +33,7 @@ import {
   isValidEmail,
 } from '@/utils/validation'
 import { getSolanaConnection, isValidSolanaAddress } from '@/config/solana'
-import { PublicKey } from '@solana/web3.js'
+import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { SectionEyebrow, ServiceAccordionSection, ServiceMetaCard, ServicePageHeader } from '@/components/ui/service-page'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -91,7 +90,7 @@ export default function CreatePage() {
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
   const [selectedTokenAsset, setSelectedTokenAsset] = useState<SupportedAssetSymbol>('SOL')
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([
-    { chain: 'solana', address: '', amount: '', amountType: 'fixed', destinationChainSelector: '' }
+    { chain: 'solana', address: '', amount: '', amountType: 'percentage', destinationChainSelector: '' }
   ])
   const [totalAmount, setTotalAmount] = useState('')
   const [targetDate, setTargetDate] = useState('')
@@ -215,7 +214,7 @@ export default function CreatePage() {
   }, [connected, publicKey])
 
   const addBeneficiary = () => {
-    setBeneficiaries([...beneficiaries, { chain: 'solana', address: '', amount: '', amountType: 'fixed', destinationChainSelector: '' }])
+    setBeneficiaries([...beneficiaries, { chain: 'solana', address: '', amount: '', amountType: 'percentage', destinationChainSelector: '' }])
   }
 
   const supportsMinuteMode = SOLANA_CONFIG.NETWORK === 'devnet'
@@ -366,6 +365,13 @@ export default function CreatePage() {
       return
     }
 
+    // Lean program: only token (SOL / SPL) capsules with proportional Solana beneficiaries are
+    // supported. NFT (per-recipient) capsules return in a later release.
+    if (capsuleType !== 'token') {
+      alert('Please select the Token asset type. NFT capsules are temporarily unavailable.')
+      return
+    }
+
     // Check modification limit (3 per wallet)
     const countKey = STORAGE_KEYS.CAPSULE_MODIFY_COUNT(publicKey.toBase58())
     const currentCount = parseInt(localStorage.getItem(countKey) || '0', 10)
@@ -374,24 +380,7 @@ export default function CreatePage() {
       return
     }
 
-    if (capsuleType === 'token' && !validateBeneficiaries()) return
-    if (capsuleType === 'nft') {
-      const validRecipients = nftRecipients.filter((r) => r.address.trim())
-      if (selectedNftMints.length === 0) {
-        alert('Please select at least one NFT.')
-        return
-      }
-      if (validRecipients.length === 0) {
-        alert('Please add at least one recipient address.')
-        return
-      }
-      for (const addr of validRecipients) {
-        if (!isValidSolanaAddress(addr.address)) {
-          alert('Please enter a valid Solana address for all recipients.')
-          return
-        }
-      }
-    }
+    if (!validateBeneficiaries()) return
 
     if (!intent.trim()) {
       alert('Please enter an intent statement')
@@ -423,16 +412,10 @@ export default function CreatePage() {
 
     try {
       const inactivityValueNum = parseInt(inactivityDays, 10)
-      const selectedMint = capsuleType === 'token' ? getAssetMintPublicKey(selectedTokenAsset) : undefined
-      let intentData: Uint8Array
-      let creMeta: {
-        enabled: true
-        secretRef: string
-        secretHash: string
-        recipientEmailHash: string
-        deliveryChannel: 'email'
-      }
+      const selectedMint = getAssetMintPublicKey(selectedTokenAsset)
 
+      // ---- Off-chain CRE: encrypt the human intent statement and register it (decoupled from chain).
+      // The lean on-chain capsule never stores the statement; only the beneficiary split lives on-chain.
       const normalizedEmail = creEmail.trim().toLowerCase()
       const encryptedPayload = await encryptPrivateMessage(intent.trim(), creUnlockCode)
       const recipientEmailHash = await sha256Hex(normalizedEmail)
@@ -468,89 +451,60 @@ export default function CreatePage() {
       if (!secretRes.ok) {
         throw new Error(secretJson?.error || 'Failed to register CRE secret')
       }
-      creMeta = {
-        enabled: true,
-        secretRef: secretJson.secretRef,
-        secretHash: secretJson.secretHash,
-        recipientEmailHash: secretJson.recipientEmailHash || recipientEmailHash,
-        deliveryChannel: 'email',
+
+      // ---- Lean beneficiaries: Solana pubkeys + proportional share_bps (must sum to 10000 = 100%) ----
+      const leanBeneficiaries = beneficiaries
+        .filter((b) => b.address.trim() && (b.chain ?? 'solana') !== 'evm')
+        .map((b) => ({
+          pubkey: new PublicKey(b.address.trim()),
+          shareBps: Math.round(parseFloat(b.amount || '0') * 100),
+        }))
+      if (leanBeneficiaries.length === 0) {
+        throw new Error('Add at least one Solana beneficiary.')
+      }
+      const totalBps = leanBeneficiaries.reduce((s, b) => s + b.shareBps, 0)
+      if (totalBps !== 10000) {
+        throw new Error(`Beneficiary shares must total 100% (currently ${(totalBps / 100).toFixed(2)}%).`)
       }
 
-      if (capsuleType === 'nft') {
-        const validRecipients = nftRecipients.filter((r) => r.address.trim()).map((r) => r.address)
-        const payload = {
-          type: 'nft',
-          intent,
-          nftMints: selectedNftMints,
-          nftRecipients: validRecipients,
-          nftAssignments,
-          inactivityDays: inactivityUnit === 'days' ? inactivityValueNum : 0,
-          inactivityValue: inactivityValueNum,
-          inactivityUnit,
-          delayDays: parseInt(delayDays),
-          assetSymbol: selectedTokenAsset,
-          assetMint: tokenAssetConfig.mint,
-          cre: creMeta,
-        }
-        intentData = new TextEncoder().encode(JSON.stringify(payload))
-      } else {
-        intentData = encodeIntentData({
-          intent,
-          beneficiaries,
-          totalAmount,
-          assetSymbol: selectedTokenAsset,
-          assetMint: tokenAssetConfig.mint,
-          inactivityDays: inactivityUnit === 'days' ? inactivityValueNum : 0,
-          inactivityValue: inactivityValueNum,
-          inactivityUnit,
-          delayDays: parseInt(delayDays),
-          cre: creMeta,
-        })
+      // ---- Deposit amount: SOL lamports, or SPL base units ----
+      const totalAmountNum = parseFloat(totalAmount)
+      if (!Number.isFinite(totalAmountNum) || totalAmountNum <= 0) {
+        throw new Error('Enter a valid total amount to fund the capsule.')
       }
+      const depositBaseUnits = selectedMint
+        ? Math.round(totalAmountNum * Math.pow(10, tokenAssetConfig.decimals))
+        : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
 
       const inactivityPeriodSeconds = inactivityUnit === 'minutes'
         ? inactivityValueNum * 60
         : daysToSeconds(inactivityValueNum)
 
-      // Check if there's an existing capsule - if so, recreate it instead of creating new
-      let hash: string
-      if (publicKey) {
-        const existingCapsule = await getCapsule(publicKey)
-
-        if (existingCapsule && !existingCapsule.isActive && existingCapsule.executedAt) {
-          // Executed capsule — recreate it
-          const { recreateCapsule } = await import('@/lib/solana')
-          hash = await recreateCapsule(
-            wallet as any,
-            inactivityPeriodSeconds,
-            intentData,
-            selectedMint
-          )
-        } else if (existingCapsule && existingCapsule.isActive) {
-          // Active capsule exists — cannot create new one (on-chain constraint)
-          throw new Error('You already have an active capsule. It must be executed or cancelled before creating a new one. Visit /capsules to view it.')
-        } else {
-          hash = await createCapsule(
-            wallet as any,
-            inactivityPeriodSeconds,
-            intentData,
-            selectedMint
-          )
-        }
-      } else {
-        hash = await createCapsule(
-          wallet as any,
-          inactivityPeriodSeconds,
-          intentData,
-          selectedMint
-        )
+      // ---- Determine create vs recreate: one capsule per wallet, reuse only after it has fired ----
+      const existingCapsule = await getCapsule(publicKey)
+      if (existingCapsule && existingCapsule.isActive) {
+        throw new Error('You already have an active capsule. It must be executed or cancelled before creating a new one. Visit /capsules to view it.')
       }
+      const recreate = !!(existingCapsule && !existingCapsule.isActive && existingCapsule.executedAt)
 
+      // ---- The single intended flow: create + fund + delegate the Switch to the TEE, then set the
+      // PRIVATE beneficiary list + schedule the autonomous crank INSIDE the TEE. Beneficiaries never
+      // touch the base layer - that is the privacy guarantee. There is no base-only fork. ----
+      const { baseSigs } = await createDelegatedCapsule(wallet as any, {
+        inactivitySeconds: inactivityPeriodSeconds,
+        beneficiaries: leanBeneficiaries,
+        depositBaseUnits,
+        mint: selectedMint ?? null,
+        // heartbeat_authority defaults to the owner (the wallet can send its own liveness heartbeat).
+        heartbeatAuthority: publicKey,
+        recreate,
+        onStep: (label) => setCurrentStep(label),
+      })
+      const hash = baseSigs[0]
       setTxHash(hash)
-      console.log('[Step 1/3] Capsule created. Tx:', hash)
+      console.log('[create] capsule created + delegated to TEE. Base tx:', hash)
 
       const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-      const automationIssues: string[] = []
       const ownerBase58 = publicKey?.toBase58()
 
       // Increment modification count
@@ -631,81 +585,13 @@ export default function CreatePage() {
           }
         }
         if (!ownerRegistered) {
-          automationIssues.push('owner registration for crank discovery')
+          console.warn('[Automation] Owner registration for crank discovery did not succeed; the off-chain crank backstop may take longer to discover this capsule.')
         }
       }
 
-      // ER delegation + ScheduleTask are opt-in. Model A default is base-only: the capsule stays
-      // on the base layer and the off-chain crank drives the full execute -> distribute lifecycle.
-      // Set NEXT_PUBLIC_DELEGATE_ON_CREATE=true to also use the MagicBlock ScheduleTask firing path.
-      const DELEGATE_ON_CREATE = process.env.NEXT_PUBLIC_DELEGATE_ON_CREATE === 'true'
-      let delegatedToEr = false
-
-      if (!DELEGATE_ON_CREATE) {
-        console.log('[Automation] Base-only mode (Model A): off-chain crank will execute + distribute this capsule.')
-      } else {
-
-      // ===== Step 2: Delegate to ER =====
-      setCurrentStep('Delegating to ER...')
-      console.log('[Step 2/3] Delegating capsule to active ER validator...')
-      for (let attempt = 0; attempt < 2 && !delegatedToEr; attempt++) {
-        try {
-          const delegateTx = await delegateCapsule(wallet as any, new PublicKey(MAGICBLOCK_ER.ACTIVE_VALIDATOR))
-          delegatedToEr = true
-          console.log('[Step 2/3] Delegation successful. Tx:', delegateTx)
-        } catch (delegateErr: any) {
-          console.warn(`[Step 2/3] Delegation failed (attempt ${attempt + 1}/2):`, delegateErr?.message)
-          if (attempt < 1) await sleep(2000)
-        }
-      }
-      if (!delegatedToEr) {
-        automationIssues.push('ER delegation')
-      }
-
-      let erSynced = false
-      if (delegatedToEr && publicKey) {
-        setCurrentStep('Waiting for ER sync...')
-        for (let attempt = 0; attempt < 8 && !erSynced; attempt++) {
-          try {
-            const syncedCapsule = await getCapsule(publicKey)
-            const accountOwner = (syncedCapsule as any)?.accountOwner as PublicKey | undefined
-            if (accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID))) {
-              erSynced = true
-              break
-            }
-          } catch {
-            // Retry until timeout.
-          }
-          await sleep(2000)
-        }
-
-        if (!erSynced) {
-          automationIssues.push('ER sync before crank scheduling')
-        }
-      }
-
-      // ===== Step 3: Schedule Crank on ER =====
-      if (delegatedToEr && erSynced && publicKey) {
-        setCurrentStep('Scheduling crank...')
-        console.log('[Step 3/3] Scheduling crank on ER...')
-        let scheduled = false
-        for (let attempt = 0; attempt < 3 && !scheduled; attempt++) {
-          try {
-            const scheduleTx = await scheduleExecuteIntent(wallet as any, publicKey)
-            scheduled = true
-            console.log('[Step 3/3] Crank scheduled. Tx:', scheduleTx)
-          } catch (scheduleErr: any) {
-            console.warn(`[Step 3/3] Crank scheduling failed (attempt ${attempt + 1}/3):`, scheduleErr?.message)
-            if (attempt < 2) await sleep(2500 * (attempt + 1))
-          }
-        }
-
-        if (!scheduled) {
-          automationIssues.push('ER crank scheduling')
-        }
-      }
-
-      } // end DELEGATE_ON_CREATE gate
+      // Delegation to the TEE + the autonomous ScheduleTask crank already ran inside
+      // createDelegatedCapsule above. The off-chain crank (owner registry) stays as the backstop for
+      // inactivity windows that outlast the on-chain task's iteration budget.
 
       setCurrentStep(null)
 
@@ -996,17 +882,13 @@ export default function CreatePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setCapsuleType('nft')
-                      setCompletedSections((prev) => ({ ...prev, asset: false, beneficiaries: false, intent: false }))
-                    }}
-                    className={`inline-flex items-center gap-3 rounded-xl border px-5 py-3 text-sm font-medium transition-colors ${capsuleType === 'nft'
-                      ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
-                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'}`}
+                    disabled
+                    title="NFT capsules return in a later release (the lean program distributes fungible assets by proportional share)."
+                    className="inline-flex cursor-not-allowed items-center gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-5 py-3 text-sm font-medium text-Heres-muted opacity-50"
                   >
                     <ImageIcon className="h-5 w-5 shrink-0" />
                     NFT
-                    <ExternalLink className="h-4 w-4 shrink-0 opacity-70" />
+                    <span className="rounded bg-Heres-surface/80 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
                   </button>
                 </div>
 
@@ -1160,8 +1042,9 @@ export default function CreatePage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => updateBeneficiary(index, 'chain', 'evm')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.chain === 'evm' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                disabled
+                                title="EVM / cross-chain beneficiaries return in a later release. The lean program settles to Solana pubkeys."
+                                className="h-full cursor-not-allowed px-3 text-xs font-semibold text-Heres-muted opacity-50"
                               >
                                 EVM
                               </button>
@@ -1195,8 +1078,9 @@ export default function CreatePage() {
                             <div className="flex h-[46px] overflow-hidden rounded-xl border border-Heres-border bg-Heres-surface/80">
                               <button
                                 type="button"
-                                onClick={() => updateBeneficiary(index, 'amountType', 'fixed')}
-                                className={`h-full px-3 text-xs font-semibold transition-colors ${beneficiary.amountType === 'fixed' ? 'bg-Heres-accent text-Heres-bg' : 'text-Heres-muted hover:text-Heres-white'}`}
+                                disabled
+                                title="Fixed amounts return in a later release. The lean program splits the vault by proportional share (%)."
+                                className="h-full cursor-not-allowed px-3 text-xs font-semibold text-Heres-muted opacity-50"
                               >
                                 {tokenAssetUnit}
                               </button>
