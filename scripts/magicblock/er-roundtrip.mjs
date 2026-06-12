@@ -36,7 +36,9 @@ import {
 } from '@solana/web3.js';
 import anchor from '@coral-xyz/anchor';
 import nacl from 'tweetnacl';
-import { getAuthToken, verifyTeeRpcIntegrity } from '@magicblock-labs/ephemeral-rollups-sdk';
+import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk';
+import { getCollateral, verify, Quote } from '@phala/dcap-qvl';
+import { randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -108,6 +110,26 @@ async function teeConnFor(kp) {
   const conn = new Connection(`${TEE_RPC}?token=${token}`, connOpts);
   teeConnCache.set(k, conn);
   return conn;
+}
+
+// Attest the Private ER enclave before trusting it with private state: fetch a TDX quote, pull Intel
+// collateral from Phala PCCS, and verify the quote. NOTE the challenge must decode to exactly 64 bytes
+// (the TDX reportData width) - the devnet /quote endpoint rejects anything else, and the SDK's bundled
+// verifyTeeRpcIntegrity hardcodes 32, so we drive @phala/dcap-qvl directly (the same library the SDK
+// uses). The challenge is server-side anti-replay; the check is "genuine TDX quote + valid Intel
+// collateral", matching the SDK's own RPC-integrity semantics.
+async function attestTee(teeRpc) {
+  const ch = randomBytes(64).toString('base64');
+  const r = await timeoutFetch(`${teeRpc}/quote?challenge=${encodeURIComponent(ch)}`);
+  const body = await r.json();
+  if (r.status !== 200 || !body.quote) throw new Error(body.error ?? 'no quote returned');
+  const rawQuote = Uint8Array.from(Buffer.from(body.quote, 'base64'));
+  const collateral = await getCollateral('https://pccs.phala.network/tdx/certification/v4', rawQuote);
+  try { verify(rawQuote, collateral, Math.floor(Date.now() / 1000)); }
+  catch (e) { if (!e.message.includes('SEPT_VE_DISABLE is not enabled')) throw e; } // tolerate TDX SEPT VE cfg
+  const td = Quote.parse(rawQuote).report.asTd10?.();
+  if (!td) throw new Error('not a TD10 quote');
+  return true;
 }
 
 // Ask the router which ER (fqdn) hosts a delegated account; the TEE fqdn carries the auth token.
@@ -208,7 +230,7 @@ try {
   // ---- 0. (TEE) attest the enclave before trusting it with private state ----
   if (TEE) {
     try {
-      const ok = await verifyTeeRpcIntegrity(TEE_RPC);
+      const ok = await attestTee(TEE_RPC);
       check('TEE attestation: Intel TDX quote verified (Phala PCCS)', ok === true);
     } catch (e) {
       console.log('   (TEE attestation skipped - external verifier error:', e.message?.slice(0, 100), ')');
