@@ -148,17 +148,24 @@ export const MAGICBLOCK_ER = {
   VALIDATOR_ASIA: 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57',
   VALIDATOR_EU: 'MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e',
   VALIDATOR_US: 'MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd',
-  VALIDATOR_TEE: 'FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA',
+  // Must match the on-chain constants.rs TEE_VALIDATOR. delegate_capsule defaults to this when no
+  // validator is passed; the create flow delegates the Switch here so its ER copy lives on the TEE node.
+  VALIDATOR_TEE: 'MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo',
   PERMISSION_PROGRAM_ID: 'ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1',
   CRANK_DEFAULT_INTERVAL_MS: 10000,
   CRANK_DEFAULT_ITERATIONS: 100_000,
 } as const
 
-/** Ephemeral Rollup endpoints - ER (Asia devnet primary) + TEE (PER fallback) */
+/**
+ * Private Ephemeral Rollup (TEE / Intel TDX) endpoints. The Switch is delegated to the TEE validator,
+ * so its ER copy lives on the TEE node behind a per-key auth token (getAuthToken). These default to the
+ * proven devnet TEE node (devnet-tee.magicblock.app) used by scripts/magicblock/er-roundtrip.mjs - NOT
+ * the regular ER (devnet-as), which does not enforce the permission account / read filtering.
+ */
 export const PER_TEE = {
-  RPC_URL: process.env.NEXT_PUBLIC_ER_RPC_URL || 'https://devnet-as.magicblock.app',
-  TEE_RPC_URL: process.env.NEXT_PUBLIC_TEE_RPC_URL || 'https://tee.magicblock.app',
-  AUTH_URL: process.env.NEXT_PUBLIC_TEE_AUTH_URL || 'https://tee.magicblock.app',
+  RPC_URL: process.env.NEXT_PUBLIC_TEE_RPC_URL || 'https://devnet-tee.magicblock.app',
+  TEE_RPC_URL: process.env.NEXT_PUBLIC_TEE_RPC_URL || 'https://devnet-tee.magicblock.app',
+  AUTH_URL: process.env.NEXT_PUBLIC_TEE_AUTH_URL || process.env.NEXT_PUBLIC_TEE_RPC_URL || 'https://devnet-tee.magicblock.app',
   DOCS_URL: 'https://docs.magicblock.gg/pages/ephemeral-rollups-ers/introduction',
 } as const
 
