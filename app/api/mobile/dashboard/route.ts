@@ -5,48 +5,9 @@ import { MAGICBLOCK_ER } from '@/constants'
 import { getRegisteredOwners } from '@/lib/capsule-registry'
 import { getCapsulePDA } from '@/lib/program'
 import { computeCapsuleStatus, validateWalletQuery } from '@/lib/mobile'
+import { tryDecodeIntentCapsule } from '@/lib/lean-capsule'
 
 const ACCOUNT_INFO_BATCH_SIZE = 100
-
-function readI64(bytes: Uint8Array, start: number): bigint {
-  let result = 0n
-  for (let i = 0; i < 8; i += 1) {
-    result |= BigInt(bytes[start + i]) << BigInt(i * 8)
-  }
-  if (result & (1n << 63n)) {
-    result -= 1n << 64n
-  }
-  return result
-}
-
-function readU32(bytes: Uint8Array, start: number): number {
-  return bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
-}
-
-function decodeCapsuleAccount(data: Uint8Array) {
-  if (!data || data.length < 60) return null
-
-  let offset = 8
-  offset += 32
-  const inactivityPeriod = Number(readI64(data, offset))
-  offset += 8
-  const lastActivity = Number(readI64(data, offset))
-  offset += 8
-  const intentDataLength = readU32(data, offset)
-  offset += 4
-  offset += intentDataLength
-  const isActive = data[offset] === 1
-  offset += 1
-  const hasExecutedAt = data[offset] === 1
-  offset += 1
-
-  return {
-    inactivityPeriod,
-    lastActivity,
-    isActive,
-    executedAt: hasExecutedAt ? Number(readI64(data, offset)) : null,
-  }
-}
 
 async function getMultipleAccountsInfoBatched(connection: Connection, publicKeys: PublicKey[]) {
   if (!publicKeys.length) return []
@@ -144,7 +105,7 @@ export async function GET(request: NextRequest) {
       .map((entry, index) => {
         const accountInfo = accountInfos[index]
         if (!accountInfo?.data) return null
-        const capsule = decodeCapsuleAccount(accountInfo.data)
+        const capsule = tryDecodeIntentCapsule(accountInfo.data)
         if (!capsule) return null
 
         const status = computeCapsuleStatus({

@@ -4,122 +4,35 @@ import { PublicKey } from '@solana/web3.js'
 import { getCapsulePDA } from '@/lib/program'
 import { getSolanaConnection, getTeeConnection } from '@/config/solana'
 import { MAGICBLOCK_ER } from '@/constants'
+import { tryDecodeIntentCapsule } from '@/lib/lean-capsule'
+import type { OnChainBeneficiary } from '@/types'
 
 export interface DecodedCapsuleState {
   capsuleAddress: string
   owner: PublicKey
   inactivityPeriod: number
   lastActivity: number
-  intentData: Uint8Array
   isActive: boolean
   executedAt: number | null
   accountOwner: PublicKey
-  mint: PublicKey
-  retryCount: number
-  ccipSentBitmap: number
-  privateDistributed: boolean
-  lockedAmount: number
-  distributed: boolean
-  vaultBump: number
-}
-
-function readI64(bytes: Uint8Array, start: number): bigint {
-  let result = 0n
-  for (let i = 0; i < 8; i++) {
-    result |= BigInt(bytes[start + i]) << BigInt(i * 8)
-  }
-  if (result & (1n << 63n)) {
-    result -= 1n << 64n
-  }
-  return result
-}
-
-function readU64(bytes: Uint8Array, start: number): bigint {
-  let result = 0n
-  for (let i = 0; i < 8; i++) {
-    result |= BigInt(bytes[start + i]) << BigInt(i * 8)
-  }
-  return result
-}
-
-function readU32(bytes: Uint8Array, start: number): number {
-  return bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
+  vaultBump?: number
+  beneficiaries: OnChainBeneficiary[]
 }
 
 function decodeCapsuleAccountData(capsuleAddress: PublicKey, accountOwner: PublicKey, data: Buffer): DecodedCapsuleState | null {
-  if (!data || data.length < 64) return null
-  let offset = 8 // Anchor discriminator
-  const owner = new PublicKey(data.slice(offset, offset + 32))
-  offset += 32
-
-  const inactivityPeriod = Number(readI64(data, offset))
-  offset += 8
-  const lastActivity = Number(readI64(data, offset))
-  offset += 8
-
-  const intentDataLength = readU32(data, offset)
-  offset += 4
-  const intentData = new Uint8Array(data.slice(offset, offset + intentDataLength))
-  offset += intentDataLength
-
-  const isActive = data[offset] === 1
-  offset += 1
-
-  const hasExecutedAt = data[offset] === 1
-  offset += 1
-  const executedAt = hasExecutedAt ? Number(readI64(data, offset)) : null
-  if (hasExecutedAt) {
-    offset += 8
-  }
-
-  // Read additional fields (added in program v0.2.0)
-  // bump: u8
-  const bump = data[offset]
-  offset += 1
-  // vault_bump: u8
-  const vaultBump = data[offset]
-  offset += 1
-  // mint: Pubkey (32)
-  const mint = new PublicKey(data.slice(offset, offset + 32))
-  offset += 32
-  // retry_count: u64
-  const retryCount = Number(readU64(data, offset))
-  offset += 8
-  // ccip_sent_bitmap: u16
-  const ccipSentBitmap = data[offset] | (data[offset + 1] << 8)
-  offset += 2
-  // private_distributed: bool (u8)
-  const privateDistributed = data[offset] === 1
-  offset += 1
-  // locked_amount: u64 (audit H4) then distributed: bool (audit H1).
-  // Guard offsets: delegated stubs / legacy capsules may be shorter than the full layout.
-  let lockedAmount = 0
-  let distributed = false
-  if (offset + 8 <= data.length) {
-    lockedAmount = Number(readU64(data, offset))
-    offset += 8
-    if (offset < data.length) {
-      distributed = data[offset] === 1
-      offset += 1
-    }
-  }
+  const capsule = tryDecodeIntentCapsule(data)
+  if (!capsule) return null
 
   return {
     capsuleAddress: capsuleAddress.toBase58(),
-    owner,
-    inactivityPeriod,
-    lastActivity,
-    intentData,
-    isActive,
-    executedAt,
+    owner: capsule.owner,
+    inactivityPeriod: capsule.inactivityPeriod,
+    lastActivity: capsule.lastActivity,
+    isActive: capsule.isActive,
+    executedAt: capsule.executedAt,
     accountOwner,
-    mint,
-    retryCount,
-    ccipSentBitmap,
-    privateDistributed,
-    lockedAmount,
-    distributed,
-    vaultBump,
+    vaultBump: capsule.vaultBump,
+    beneficiaries: capsule.beneficiaries,
   }
 }
 
@@ -212,4 +125,3 @@ export async function fetchCapsuleStatesBatched(
 
   return out
 }
-
