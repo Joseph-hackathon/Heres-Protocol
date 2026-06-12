@@ -1,20 +1,35 @@
-//! Commit the Switch's ER state and undelegate it back to the base layer (crank-callable).
+//! Commit the Switch's ER state and undelegate it - plus its PER permission - back to base (crank).
 //!
-//! Only the Switch is delegated, so only it is undelegated here. Permissionless (the crank wallet
-//! signs as payer). The off-chain pipeline calls this only after the Switch has fired - the
-//! conditional check is kept off-chain because a delegated AccountInfo can't be deserialized to
-//! read executed_at on-chain (audit M5).
+//! Permissionless: the crank wallet signs as payer. For the permission release we sign as the Switch
+//! PDA itself (the permission program accepts EITHER the authority OR the permissioned account as the
+//! signer), so NO living owner and NO AUTHORITY member is required - the program is the authority.
+//! That is what lets the dead-man's-switch settle autonomously after the owner is gone.
+//!
+//! The off-chain pipeline calls this only after the Switch has fired - the conditional check is kept
+//! off-chain because a delegated AccountInfo can't be deserialized to read executed_at (audit M5).
+//! `owner` is passed only to derive the Switch PDA + sign as it; it is never a signer here.
 
 use anchor_lang::prelude::*;
+use ephemeral_rollups_sdk::access_control::instructions::CommitAndUndelegatePermissionCpiBuilder;
+
+use crate::constants::PERMISSION_PROGRAM_ID;
 
 #[derive(Accounts)]
 pub struct CrankUndelegateInput<'info> {
     /// Anyone can call this (crank wallet).
     #[account(mut)]
     pub payer: Signer<'info>,
-    /// CHECK: the Switch PDA (delegated to ER, will be undelegated).
-    #[account(mut)]
+    /// CHECK: owner pubkey - only used to derive the Switch PDA and sign as it. NOT a signer.
+    pub owner: AccountInfo<'info>,
+    /// CHECK: the Switch PDA (delegated to ER, will be undelegated). Seeds [b"intent_capsule", owner].
+    #[account(mut, seeds = [b"intent_capsule", owner.key().as_ref()], bump)]
     pub capsule: AccountInfo<'info>,
+    /// CHECK: permission PDA [b"permission:", capsule] under the permission program.
+    #[account(mut)]
+    pub permission: AccountInfo<'info>,
+    /// CHECK: MagicBlock Permission Program.
+    #[account(address = PERMISSION_PROGRAM_ID)]
+    pub permission_program: AccountInfo<'info>,
     /// CHECK: MagicBlock Magic Context.
     #[account(mut)]
     pub magic_context: AccountInfo<'info>,
@@ -22,9 +37,27 @@ pub struct CrankUndelegateInput<'info> {
     pub magic_program: AccountInfo<'info>,
 }
 
-/// Commit the Switch's state from the ER and undelegate it back to the base layer.
+/// Commit + undelegate the PER permission, then the Switch, back to the base layer.
 pub fn handler(ctx: Context<CrankUndelegateInput>) -> Result<()> {
-    msg!("Crank undelegating Switch from ER");
+    let owner_key = ctx.accounts.owner.key();
+    let capsule_bump = ctx.bumps.capsule;
+    let capsule_seeds: &[&[u8]] = &[b"intent_capsule", owner_key.as_ref(), &[capsule_bump]];
+
+    msg!("Crank undelegating Switch + PER permission from ER");
+
+    // 1. Commit + undelegate the permission account. Authorization comes from the Switch PDA signing
+    //    as permissioned_account (via invoke_signed), so the crank need not be a permission member.
+    //    The crank (payer) is still marked signer so its outer-tx signature propagates into the
+    //    permission program's downstream magic-context CPI (else: PrivilegeEscalation on the payer).
+    CommitAndUndelegatePermissionCpiBuilder::new(&ctx.accounts.permission_program)
+        .authority(&ctx.accounts.payer.to_account_info(), true)
+        .permissioned_account(&ctx.accounts.capsule, true)
+        .permission(&ctx.accounts.permission)
+        .magic_program(&ctx.accounts.magic_program)
+        .magic_context(&ctx.accounts.magic_context)
+        .invoke_signed(&[capsule_seeds])?;
+
+    // 2. Commit + undelegate the Switch itself.
     ephemeral_rollups_sdk::ephem::commit_and_undelegate_accounts(
         &ctx.accounts.payer.to_account_info(),
         vec![&ctx.accounts.capsule.to_account_info()],
@@ -32,6 +65,6 @@ pub fn handler(ctx: Context<CrankUndelegateInput>) -> Result<()> {
         &ctx.accounts.magic_program.to_account_info(),
         None, // magic_fee_vault: no commit sponsorship configured
     )?;
-    msg!("Switch commit+undelegate scheduled");
+    msg!("Switch + permission commit+undelegate scheduled");
     Ok(())
 }

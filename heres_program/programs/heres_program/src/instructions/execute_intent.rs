@@ -24,9 +24,9 @@ pub struct ExecuteIntent<'info> {
     #[account(address = PERMISSION_PROGRAM_ID)]
     pub permission_program: AccountInfo<'info>,
 
-    /// CHECK: PER access-control PDA; seeds [b"permission", capsule].
+    /// CHECK: PER access-control PDA; SDK seed is [b"permission:", capsule] (PERMISSION_SEED).
     #[account(
-        seeds = [b"permission", capsule.key().as_ref()],
+        seeds = [b"permission:", capsule.key().as_ref()],
         bump,
         seeds::program = PERMISSION_PROGRAM_ID
     )]

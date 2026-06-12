@@ -52,7 +52,11 @@ function configBaseRpc() {
   return 'https://api.devnet.solana.com';
 }
 const BASE_RPC = process.env.BASE_RPC ?? configBaseRpc();
-const ER_RPC = process.env.ER_RPC ?? 'https://devnet-as.magicblock.app';
+// ER endpoint: by default discovered per-account from the router AFTER delegation (the TEE endpoint
+// needs the router-issued token; hardcoding it returns 401 Missing token query param). ER_RPC env
+// forces a fixed endpoint (skips the router) - handy for the regular (non-TEE) ER.
+const ER_RPC_OVERRIDE = process.env.ER_RPC ?? null;
+const ROUTER_RPC = process.env.ROUTER_RPC ?? 'https://devnet-router.magicblock.app/';
 const VALIDATOR = new PublicKey(process.env.VALIDATOR ?? 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57');
 
 const DELEGATION_PROGRAM_ID = new PublicKey('DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh');
@@ -77,7 +81,21 @@ const sk = p => join(homedir(), '.config/solana', p);
 const timeoutFetch = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(15000) });
 const connOpts = { commitment: 'confirmed', fetch: timeoutFetch };
 const baseConn = new Connection(BASE_RPC, connOpts);
-const erConn = new Connection(ER_RPC, connOpts);
+// Reassigned to the router-issued fqdn after delegation unless ER_RPC override is set.
+let erConn = new Connection(ER_RPC_OVERRIDE ?? 'https://devnet-as.magicblock.app', connOpts);
+
+// Ask the router which ER (fqdn) hosts a delegated account; the TEE fqdn carries the auth token.
+async function routerFqdn(account) {
+  const body = await retry(async () => {
+    const res = await timeoutFetch(ROUTER_RPC, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getDelegationStatus', params: [account.toBase58()] }),
+    });
+    return res.json();
+  }, 4, 2000);
+  if (body.error) throw new Error('router: ' + body.error.message);
+  return body.result; // { isDelegated, fqdn, delegationRecord }
+}
 
 // Retry a flaky RPC read/send a few times before giving up (public devnet drops requests).
 async function retry(fn, tries = 5, gap = 1500) {
@@ -112,10 +130,15 @@ const seed = s => Buffer.from(s);
 const [capsule] = PublicKey.findProgramAddressSync([seed('intent_capsule'), ownerKp.publicKey.toBuffer()], PROGRAM_ID);
 const [vault] = PublicKey.findProgramAddressSync([seed('capsule_vault'), ownerKp.publicKey.toBuffer()], PROGRAM_ID);
 const [feeConfig] = PublicKey.findProgramAddressSync([seed('fee_config')], PROGRAM_ID);
-const [permission] = PublicKey.findProgramAddressSync([seed('permission'), capsule.toBuffer()], PERMISSION_PROGRAM_ID);
+// SDK permission seed is "permission:" (with the colon) - Permission::find_pda.
+const [permission] = PublicKey.findProgramAddressSync([seed('permission:'), capsule.toBuffer()], PERMISSION_PROGRAM_ID);
 const [bufferPda] = PublicKey.findProgramAddressSync([seed('buffer'), capsule.toBuffer()], PROGRAM_ID);
 const [delegationRecord] = PublicKey.findProgramAddressSync([seed('delegation'), capsule.toBuffer()], DELEGATION_PROGRAM_ID);
 const [delegationMetadata] = PublicKey.findProgramAddressSync([seed('delegation-metadata'), capsule.toBuffer()], DELEGATION_PROGRAM_ID);
+// Delegation PDAs for the permission account itself (owner_program = permission program).
+const [bufferPermission] = PublicKey.findProgramAddressSync([seed('buffer'), permission.toBuffer()], PERMISSION_PROGRAM_ID);
+const [delegationRecordPermission] = PublicKey.findProgramAddressSync([seed('delegation'), permission.toBuffer()], DELEGATION_PROGRAM_ID);
+const [delegationMetadataPermission] = PublicKey.findProgramAddressSync([seed('delegation-metadata'), permission.toBuffer()], DELEGATION_PROGRAM_ID);
 
 // Send a tx to the ER (gasless, skipPreflight: the ER may not simulate the cloned program cleanly).
 async function sendER(ixs, signers, feePayer) {
@@ -138,7 +161,7 @@ const check = (name, ok, detail = '') => {
 
 console.log('=== Heres lean ER round-trip ===');
 console.log('program  :', PROGRAM_ID.toBase58());
-console.log('ER RPC   :', ER_RPC, '| validator', VALIDATOR.toBase58());
+console.log('ER RPC   :', ER_RPC_OVERRIDE ?? `(router ${ROUTER_RPC})`, '| validator', VALIDATOR.toBase58());
 console.log('owner    :', ownerKp.publicKey.toBase58());
 console.log('capsule  :', capsule.toBase58());
 console.log('vault    :', vault.toBase58());
@@ -176,7 +199,7 @@ try {
   const vaultBal = await retry(() => baseConn.getBalance(vault));
   check('deposit SOL into vault', vaultBal >= Math.floor(DEPOSIT_SOL * LAMPORTS_PER_SOL), `vault=${sol(vaultBal)} SOL`);
 
-  // ---- 4. delegate the Switch only ----
+  // ---- 4. delegate the Switch + create/delegate the PER permission ----
   const delegateIx = await program.methods
     .delegateCapsule()
     .accountsPartial({
@@ -189,19 +212,43 @@ try {
       delegationProgram: DELEGATION_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       ownerProgram: PROGRAM_ID,
+      // PER permission lifecycle
+      permissionProgram: PERMISSION_PROGRAM_ID,
+      permission,
+      bufferPermission,
+      delegationRecordPermission,
+      delegationMetadataPermission,
     })
     .instruction();
   await sendBase([delegateIx], [ownerKp]);
 
-  // wait for the base account to be owned by the delegation program + the ER to clone it
-  let delegated = false;
+  // base account now owned by the delegation program
+  let baseDelegated = false;
   for (let i = 0; i < 12; i++) {
     await sleep(2500);
     const baseInfo = await getAcct(baseConn, capsule).catch(() => null);
-    const erInfo = await getAcct(erConn, capsule).catch(() => null);
-    if (baseInfo?.owner.equals(DELEGATION_PROGRAM_ID) && erInfo) { delegated = true; break; }
+    if (baseInfo?.owner.equals(DELEGATION_PROGRAM_ID)) { baseDelegated = true; break; }
   }
-  check('delegate Switch (base owner = delegation program, ER cloned)', delegated);
+
+  // Discover the ER that hosts the capsule from the router (TEE fqdn carries the auth token).
+  if (!ER_RPC_OVERRIDE) {
+    try {
+      const status = await routerFqdn(capsule);
+      if (status?.fqdn) {
+        erConn = new Connection(status.fqdn, connOpts);
+        console.log('   router fqdn:', status.fqdn.replace(/token=[^&]+/, 'token=***'), '| validator', status.delegationRecord?.authority);
+      } else { console.log('   router: no fqdn (isDelegated=' + status?.isDelegated + ')'); }
+    } catch (e) { console.log('   router err:', e.message?.slice(0, 120)); }
+  }
+
+  // ER should now have the cloned account
+  let erCloned = false;
+  for (let i = 0; i < 12; i++) {
+    const erInfo = await getAcct(erConn, capsule).catch(() => null);
+    if (erInfo) { erCloned = true; break; }
+    await sleep(2500);
+  }
+  check('delegate Switch (base owner = delegation program, ER cloned)', baseDelegated && erCloned);
   // assert the Vault stayed on base (never delegated)
   const vaultInfo = await getAcct(baseConn, vault);
   check('Vault NOT delegated (still owned by program)', vaultInfo?.owner.equals(PROGRAM_ID));
@@ -262,10 +309,18 @@ try {
   console.log('');
   check('execute_intent fired AUTONOMOUSLY on ER (no off-chain crank)', fired, firedAt ? `executed_at=${firedAt}` : 'did not fire in window');
 
-  // ---- 9. crank_undelegate: commit + undelegate the Switch back to base ----
+  // ---- 9. crank_undelegate: commit + undelegate the Switch AND the PER permission back to base ----
   const undIx = await program.methods
     .crankUndelegate()
-    .accountsPartial({ payer: crankKp.publicKey, capsule, magicContext: MAGIC_CONTEXT_ID, magicProgram: MAGIC_PROGRAM_ID })
+    .accountsPartial({
+      payer: crankKp.publicKey,
+      owner: ownerKp.publicKey,
+      capsule,
+      permission,
+      permissionProgram: PERMISSION_PROGRAM_ID,
+      magicContext: MAGIC_CONTEXT_ID,
+      magicProgram: MAGIC_PROGRAM_ID,
+    })
     .instruction();
   const undSig = await sendER([undIx], [crankKp], crankKp);
   console.log('9. crank_undelegate sent on ER:', undSig);

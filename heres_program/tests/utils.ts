@@ -59,9 +59,10 @@ export const vaultPda = (owner: PublicKey) =>
     [Buffer.from("capsule_vault"), owner.toBuffer()],
     PROGRAM_ID
   )[0];
+// SDK permission seed is "permission:" (with the colon) - Permission::find_pda.
 export const permissionPda = (capsule: PublicKey) =>
   PublicKey.findProgramAddressSync(
-    [Buffer.from("permission"), capsule.toBuffer()],
+    [Buffer.from("permission:"), capsule.toBuffer()],
     PERMISSION_PROGRAM_ID
   )[0];
 export const ataFor = (owner: PublicKey, mint: PublicKey, offCurve = false) =>

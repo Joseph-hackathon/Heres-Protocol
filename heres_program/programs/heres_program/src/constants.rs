@@ -4,7 +4,8 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::pubkey::pubkey;
 
 /// TEE validator for the Private Ephemeral Rollup (PER). Default when no validator account is passed.
-pub const TEE_VALIDATOR: Pubkey = pubkey!("FnE6VJT5QNZdedZPnCoLsARgBwoE6DeJNjBs2H1gySXA");
+/// Official MagicBlock devnet TEE validator (status.magicblock.app / magicblock-dev-skill resources).
+pub const TEE_VALIDATOR: Pubkey = pubkey!("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
 
 /// MagicBlock Permission Program ID (PER access control).
 pub const PERMISSION_PROGRAM_ID: Pubkey = pubkey!("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
