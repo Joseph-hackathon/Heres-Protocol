@@ -90,7 +90,8 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
   // base-only - it does NOT delegate to the TEE, so the single beneficiary is set on the public base
   // layer (known gap: gate or rework to the multi-step TEE flow before mobile ships).
   const createIx = await program.methods
-    .createCapsule(new BN(inactivitySeconds), getRelayerPubkey())
+    // Mobile path is inactivity-only for now (no target-date UI); pass null = no absolute trigger.
+    .createCapsule(new BN(inactivitySeconds), getRelayerPubkey(), null)
     .accountsPartial({
       capsule: capsulePDA,
       beneficiarySet: beneficiarySetPDA,

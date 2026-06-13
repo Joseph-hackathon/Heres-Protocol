@@ -1,4 +1,5 @@
-//! Fire the Switch when the inactivity period elapses. Permissionless (no owner signature) and
+//! Fire the Switch when the inactivity period elapses OR the absolute target_date is reached
+//! (whichever comes first). Permissionless (no owner signature) and
 //! state-only: it flips is_active -> false and stamps executed_at. Funds never move here; payout
 //! happens on the base layer via distribute_assets after undelegation + the grace window.
 //!
@@ -28,10 +29,11 @@ pub fn handler(ctx: Context<ExecuteIntent>) -> Result<()> {
     require!(capsule.is_active, ErrorCode::CapsuleInactive);
 
     let now = Clock::get()?.unix_timestamp;
-    require!(
-        now - capsule.last_activity >= capsule.inactivity_period,
-        ErrorCode::InactivityPeriodNotMet
-    );
+    // Fire on EITHER trigger, whichever comes first: the owner has been silent for inactivity_period,
+    // OR an absolute target_date has been reached (set => fires regardless of activity; None => silent).
+    let inactivity_due = now - capsule.last_activity >= capsule.inactivity_period;
+    let date_due = capsule.target_date.map_or(false, |t| now >= t);
+    require!(inactivity_due || date_due, ErrorCode::InactivityPeriodNotMet);
 
     capsule.is_active = false;
     capsule.executed_at = Some(now);

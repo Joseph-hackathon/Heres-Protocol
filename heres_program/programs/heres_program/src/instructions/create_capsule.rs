@@ -61,6 +61,7 @@ pub fn handler(
     ctx: Context<CreateCapsule>,
     inactivity_period: i64,
     heartbeat_authority: Pubkey,
+    target_date: Option<i64>,
 ) -> Result<()> {
     // A non-positive inactivity period would make the capsule instantly firable by anyone (audit M3).
     require!(inactivity_period > 0, ErrorCode::InvalidInactivityPeriod);
@@ -89,6 +90,12 @@ pub fn handler(
 
     let now = Clock::get()?.unix_timestamp;
 
+    // An absolute target date in the past would make the capsule instantly firable (same hazard as a
+    // non-positive inactivity period). None = inactivity-only (the original dead-man's-switch behavior).
+    if let Some(t) = target_date {
+        require!(t > now, ErrorCode::InvalidTargetDate);
+    }
+
     let capsule = &mut ctx.accounts.capsule;
     capsule.owner = ctx.accounts.owner.key();
     capsule.inactivity_period = inactivity_period;
@@ -100,7 +107,8 @@ pub fn handler(
     capsule.beneficiaries_bump = ctx.bumps.beneficiary_set;
     capsule.heartbeat_authority = heartbeat_authority;
     capsule.version = IntentCapsule::CURRENT_VERSION;
-    capsule.reserved = [0u8; 64];
+    capsule.target_date = target_date;
+    capsule.reserved = [0u8; 55];
 
     let beneficiary_set = &mut ctx.accounts.beneficiary_set;
     beneficiary_set.owner = ctx.accounts.owner.key();

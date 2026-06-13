@@ -54,8 +54,9 @@ pub mod heres_program {
         ctx: Context<CreateCapsule>,
         inactivity_period: i64,
         heartbeat_authority: Pubkey,
+        target_date: Option<i64>,
     ) -> Result<()> {
-        instructions::create_capsule::handler(ctx, inactivity_period, heartbeat_authority)
+        instructions::create_capsule::handler(ctx, inactivity_period, heartbeat_authority, target_date)
     }
 
     /// Set or replace the private beneficiary list (owner only; route via the PER once delegated).
@@ -74,8 +75,12 @@ pub mod heres_program {
     }
 
     /// Reuse an executed capsule by resetting its lifecycle in place (owner only).
-    pub fn recreate_capsule(ctx: Context<RecreateCapsule>, inactivity_period: i64) -> Result<()> {
-        instructions::recreate_capsule::handler(ctx, inactivity_period)
+    pub fn recreate_capsule(
+        ctx: Context<RecreateCapsule>,
+        inactivity_period: i64,
+        target_date: Option<i64>,
+    ) -> Result<()> {
+        instructions::recreate_capsule::handler(ctx, inactivity_period, target_date)
     }
 
     /// Fire the Switch when the inactivity period elapses (permissionless; state-only).

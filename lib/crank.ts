@@ -154,6 +154,7 @@ type LeanCapsule = {
   isActive: boolean
   executedAt: number | null
   vaultBump: number
+  targetDate: number | null
 }
 
 /**
@@ -169,6 +170,7 @@ function decodeLeanCapsule(data: Buffer): LeanCapsule {
     isActive: c.is_active,
     executedAt: c.executed_at == null ? null : c.executed_at.toNumber(),
     vaultBump: c.vault_bump,
+    targetDate: c.target_date == null ? null : c.target_date.toNumber(),
   }
 }
 
@@ -488,7 +490,11 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
       const cap = decodeLeanCapsule(info.switch.data)
 
       if (cap.isActive) {
-        const dueAt = cap.lastActivity + cap.inactivityPeriod
+        // Fires on EITHER trigger, so the due time is the earlier of the inactivity deadline and the
+        // absolute target_date (if set). target_date is fixed; the inactivity deadline slides forward
+        // on every heartbeat, so once it passes target_date the date becomes the binding constraint.
+        const inactivityDueAt = cap.lastActivity + cap.inactivityPeriod
+        const dueAt = cap.targetDate != null ? Math.min(inactivityDueAt, cap.targetDate) : inactivityDueAt
         if (now >= dueAt) {
           // Never-delegated (or pre-delegation) Switch that is due: fire on base.
           await sendRaw(connection, crankKeypair, [await executeIntentIx(baseProgram, owner)])

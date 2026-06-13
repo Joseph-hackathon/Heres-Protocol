@@ -16,6 +16,8 @@ pub enum ErrorCode {
     InactivityPeriodNotMet,
     #[msg("Inactivity period must be greater than zero")]
     InvalidInactivityPeriod,
+    #[msg("Target date must be in the future")]
+    InvalidTargetDate,
     #[msg("Grace period has not elapsed since execution")]
     GracePeriodNotElapsed,
     #[msg("Invalid fee config or fee recipient")]

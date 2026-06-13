@@ -483,6 +483,12 @@
         {
           "name": "heartbeat_authority",
           "type": "pubkey"
+        },
+        {
+          "name": "target_date",
+          "type": {
+            "option": "i64"
+          }
         }
       ]
     },
@@ -1630,6 +1636,12 @@
         {
           "name": "inactivity_period",
           "type": "i64"
+        },
+        {
+          "name": "target_date",
+          "type": {
+            "option": "i64"
+          }
         }
       ]
     },
@@ -1967,51 +1979,56 @@
     },
     {
       "code": 6006,
+      "name": "InvalidTargetDate",
+      "msg": "Target date must be in the future"
+    },
+    {
+      "code": 6007,
       "name": "GracePeriodNotElapsed",
       "msg": "Grace period has not elapsed since execution"
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "InvalidFeeConfig",
       "msg": "Invalid fee config or fee recipient"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "InvalidTokenAccount",
       "msg": "Invalid token account provided"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "InvalidBeneficiaryAddress",
       "msg": "Invalid beneficiary address"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "TooManyBeneficiaries",
       "msg": "Too many beneficiaries (max 8)"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "InvalidShareSum",
       "msg": "Beneficiary shares must sum to 10000 bps (100%)"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "NoBeneficiaries",
       "msg": "No beneficiaries set on the capsule"
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "InvalidInstructionData",
       "msg": "Invalid instruction data for crank"
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "NothingToDistribute",
       "msg": "Vault is empty; nothing to distribute or recover"
     },
     {
-      "code": 6015,
+      "code": 6016,
       "name": "InvalidAmount",
       "msg": "Amount must be greater than zero"
     }
@@ -2204,11 +2221,17 @@
             "type": "u8"
           },
           {
+            "name": "target_date",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                64
+                55
               ]
             }
           }

@@ -148,7 +148,8 @@ console.log('program:', PROGRAM_ID.toBase58(), '\n')
     beneficiaries_bump: 252,
     heartbeat_authority: crank,
     version: 1,
-    reserved: Array(64).fill(0),
+    target_date: new BN(1750100000),
+    reserved: Array(55).fill(0),
   }
   const buf = await coder.encode('IntentCapsule', switchSample)
   const d = coder.decode('IntentCapsule', buf)
@@ -160,12 +161,14 @@ console.log('program:', PROGRAM_ID.toBase58(), '\n')
     d.executed_at.toNumber() === 1750000123 &&
     d.vault_bump === 253 &&
     d.beneficiaries_bump === 252 &&
+    d.target_date.toNumber() === 1750100000 &&
     d.beneficiaries === undefined // beneficiaries are NOT on the Switch anymore
   check('decoder: lean Switch round-trips (liveness only, no beneficiaries)', switchOk,
     `executed_at=${d.executed_at?.toNumber()} benBump=${d.beneficiaries_bump}`)
-  const buf2 = await coder.encode('IntentCapsule', { ...switchSample, is_active: true, executed_at: null })
+  const buf2 = await coder.encode('IntentCapsule', { ...switchSample, is_active: true, executed_at: null, target_date: null })
   const d2 = coder.decode('IntentCapsule', buf2)
   check('decoder: executed_at None -> null', d2.executed_at == null)
+  check('decoder: target_date None -> null (inactivity-only capsule)', d2.target_date == null)
 
   const setSample = {
     owner,

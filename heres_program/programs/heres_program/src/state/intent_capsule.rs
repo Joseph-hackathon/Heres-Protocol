@@ -20,7 +20,8 @@ pub struct IntentCapsule {
     pub beneficiaries_bump: u8,      // bump of the paired BeneficiarySet PDA (TEE), to derive/sign for it
     pub heartbeat_authority: Pubkey, // off-chain relayer allowed to bump last_activity (regular ER)
     pub version: u8,
-    pub reserved: [u8; 64], // future liveness fields (per-capsule grace, HA validator) - no resize
+    pub target_date: Option<i64>, // absolute unix ts; fires regardless of activity once reached (None = inactivity-only)
+    pub reserved: [u8; 55], // future liveness fields (per-capsule grace, HA validator) - no resize
 }
 
 impl IntentCapsule {
@@ -37,5 +38,6 @@ impl IntentCapsule {
         1 +                      // beneficiaries_bump
         32 +                     // heartbeat_authority
         1 +                      // version
-        64; // reserved
+        1 + 8 +                  // target_date (Option<i64>)
+        55; // reserved (was 64; 9 bytes moved to target_date - total LEN unchanged, so deployed accounts stay valid)
 }

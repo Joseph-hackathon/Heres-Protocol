@@ -47,6 +47,8 @@ export interface IntentCapsule {
   vaultBump?: number
   beneficiariesBump?: number
   heartbeatAuthority?: PublicKey
+  /** Absolute unix ts (seconds) the switch fires regardless of activity; null = inactivity-only. */
+  targetDate?: number | null
   /** Populated from a BeneficiarySet read (TEE w/ token, or base post-reveal); [] otherwise. */
   beneficiaries: OnChainBeneficiary[]
   /** Runtime owner of the account (program vs delegation program) - tells delegated vs settled-on-base. */

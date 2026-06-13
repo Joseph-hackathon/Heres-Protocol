@@ -38,6 +38,7 @@ export function decodeIntentCapsule(data: Buffer | Uint8Array): IntentCapsule {
     vaultBump: c.vault_bump,
     beneficiariesBump: c.beneficiaries_bump,
     heartbeatAuthority: c.heartbeat_authority,
+    targetDate: c.target_date == null ? null : c.target_date.toNumber(),
     beneficiaries: [],
   }
 }

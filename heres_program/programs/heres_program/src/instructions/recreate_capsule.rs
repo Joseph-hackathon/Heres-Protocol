@@ -33,8 +33,13 @@ pub struct RecreateCapsule<'info> {
     pub owner: Signer<'info>,
 }
 
-/// Reset an executed capsule with a new inactivity period and a fresh (empty) lifecycle. Owner-only.
-pub fn handler(ctx: Context<RecreateCapsule>, inactivity_period: i64) -> Result<()> {
+/// Reset an executed capsule with a new inactivity period, target date, and a fresh (empty)
+/// lifecycle. Owner-only. target_date = None clears any prior absolute trigger.
+pub fn handler(
+    ctx: Context<RecreateCapsule>,
+    inactivity_period: i64,
+    target_date: Option<i64>,
+) -> Result<()> {
     require!(inactivity_period > 0, ErrorCode::InvalidInactivityPeriod);
 
     let capsule = &mut ctx.accounts.capsule;
@@ -42,10 +47,16 @@ pub fn handler(ctx: Context<RecreateCapsule>, inactivity_period: i64) -> Result<
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
 
+    let now = Clock::get()?.unix_timestamp;
+    if let Some(t) = target_date {
+        require!(t > now, ErrorCode::InvalidTargetDate);
+    }
+
     capsule.inactivity_period = inactivity_period;
-    capsule.last_activity = Clock::get()?.unix_timestamp;
+    capsule.last_activity = now;
     capsule.is_active = true;
     capsule.executed_at = None;
+    capsule.target_date = target_date;
 
     ctx.accounts.beneficiary_set.beneficiaries = Vec::new();
 

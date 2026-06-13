@@ -67,10 +67,11 @@ const createCapsuleIx = (
   owner: Keypair,
   inactivity: number,
   heartbeat: PublicKey,
-  feeRecipient: PublicKey | null = null
+  feeRecipient: PublicKey | null = null,
+  targetDate: BN | null = null
 ) =>
   env.program.methods
-    .createCapsule(new BN(inactivity), heartbeat)
+    .createCapsule(new BN(inactivity), heartbeat, targetDate)
     .accountsPartial({
       capsule: capsulePda(owner.publicKey),
       beneficiarySet: beneficiarySetPda(owner.publicKey),
@@ -225,8 +226,8 @@ const cancelSplIx = (env: Env, owner: Keypair, mint: PublicKey) =>
     ownerTokenAccount: ataFor(owner.publicKey, mint),
   });
 
-const recreateIx = (env: Env, owner: Keypair, inactivity: number) =>
-  env.program.methods.recreateCapsule(new BN(inactivity)).accountsPartial({
+const recreateIx = (env: Env, owner: Keypair, inactivity: number, targetDate: BN | null = null) =>
+  env.program.methods.recreateCapsule(new BN(inactivity), targetDate).accountsPartial({
     capsule: capsulePda(owner.publicKey),
     beneficiarySet: beneficiarySetPda(owner.publicKey),
     owner: owner.publicKey,
@@ -358,7 +359,7 @@ describe("heres: create_capsule", () => {
       env,
       owner,
       env.program.methods
-        .createCapsule(new BN(-1), owner.publicKey)
+        .createCapsule(new BN(-1), owner.publicKey, null)
         .accountsPartial({
           capsule: capsulePda(owner.publicKey),
           beneficiarySet: beneficiarySetPda(owner.publicKey),
@@ -626,6 +627,61 @@ describe("heres: execute_intent", () => {
     const cranker = await fundedKeypair(env, 5);
     const res = await send(env, cranker, executeIntentIx(env, owner.publicKey));
     assertErr(res, "CapsuleInactive");
+  });
+});
+
+describe("heres: execute_intent target_date", () => {
+  it("fires on the target_date even while the owner is still well within the inactivity window", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await fundedKeypair(env, 50);
+    const now = await getNow(env);
+    // Long inactivity (30 days) so only the absolute date can trigger; target 100s out.
+    const created = await send(
+      env,
+      owner,
+      createCapsuleIx(env, owner, 30 * DAY, owner.publicKey, null, new BN(now + 100)),
+      [owner]
+    );
+    assertOk(created, "create_capsule (with target_date)");
+
+    await warp(env, 300); // past target_date, nowhere near the 30-day inactivity deadline
+    const cranker = await fundedKeypair(env, 5); // permissionless: not the owner
+    const res = await send(env, cranker, executeIntentIx(env, owner.publicKey));
+    assertOk(res, "execute_intent (target_date)");
+
+    const cap = await fetchCapsule(env, owner.publicKey);
+    expect(cap.isActive).to.eq(false);
+    expect(cap.executedAt).to.not.eq(null);
+  });
+
+  it("rejects firing when neither the inactivity period nor the target_date has been reached", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await fundedKeypair(env, 50);
+    const now = await getNow(env);
+    const created = await send(
+      env,
+      owner,
+      createCapsuleIx(env, owner, DAY, owner.publicKey, null, new BN(now + 10000)),
+      [owner]
+    );
+    assertOk(created, "create_capsule (with target_date)");
+
+    await warp(env, 100); // before both triggers
+    const res = await send(env, env.payer, executeIntentIx(env, owner.publicKey));
+    assertErr(res, "InactivityPeriodNotMet");
+  });
+
+  it("rejects a target_date in the past at creation", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await fundedKeypair(env, 50);
+    const now = await getNow(env);
+    const res = await send(
+      env,
+      owner,
+      createCapsuleIx(env, owner, DAY, owner.publicKey, null, new BN(now - 100)),
+      [owner]
+    );
+    assertErr(res, "InvalidTargetDate");
   });
 });
 

@@ -289,7 +289,8 @@ async function sendBaseBatch(
 export async function createCapsule(
   wallet: WalletContextState,
   inactivityPeriodSeconds: number,
-  heartbeatAuthority?: PublicKey
+  heartbeatAuthority?: PublicKey,
+  targetDateSeconds?: number | null
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
@@ -312,7 +313,7 @@ export async function createCapsule(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await program.methods
-        .createCapsule(new BN(inactivityPeriodSeconds), hb)
+        .createCapsule(new BN(inactivityPeriodSeconds), hb, targetDateSeconds != null ? new BN(targetDateSeconds) : null)
         .accountsPartial({
           capsule: capsulePDA,
           beneficiarySet: beneficiarySetPDA,
@@ -647,6 +648,8 @@ export async function scheduleExecuteIntent(
 
 export type CreateDelegatedCapsuleParams = {
   inactivitySeconds: number
+  /** Absolute unix ts (seconds) the switch fires regardless of activity; null/undefined = inactivity-only. */
+  targetDateSeconds?: number | null
   beneficiaries: OnChainBeneficiary[]
   /** Vault funding amount in lamports (SOL) or the mint's base units (SPL). */
   depositBaseUnits: number | BN
@@ -703,13 +706,14 @@ export async function createDelegatedCapsule(
     : programId // sentinel when no fee recipient is configured
 
   // ---- base ix 1: create (or recreate) the Switch + BeneficiarySet (+ Vault on create) ----
+  const targetDateBN = params.targetDateSeconds != null ? new BN(params.targetDateSeconds) : null
   const createIx = params.recreate
     ? await program.methods
-        .recreateCapsule(new BN(params.inactivitySeconds))
+        .recreateCapsule(new BN(params.inactivitySeconds), targetDateBN)
         .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner })
         .instruction()
     : await program.methods
-        .createCapsule(new BN(params.inactivitySeconds), hb)
+        .createCapsule(new BN(params.inactivitySeconds), hb, targetDateBN)
         .accountsPartial({
           capsule: capsulePDA,
           beneficiarySet: beneficiarySetPDA,
@@ -1017,7 +1021,8 @@ export async function updateActivity(wallet: WalletContextState, ownerPublicKey?
  */
 export async function recreateCapsule(
   wallet: WalletContextState,
-  inactivityPeriodSeconds: number
+  inactivityPeriodSeconds: number,
+  targetDateSeconds?: number | null
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
@@ -1026,7 +1031,7 @@ export async function recreateCapsule(
   const [beneficiarySetPDA] = getBeneficiarySetPDA(wallet.publicKey!)
 
   return program.methods
-    .recreateCapsule(new BN(inactivityPeriodSeconds))
+    .recreateCapsule(new BN(inactivityPeriodSeconds), targetDateSeconds != null ? new BN(targetDateSeconds) : null)
     .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner: wallet.publicKey! })
     .rpc()
 }
