@@ -8,15 +8,13 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js'
 import { Program, AnchorProvider, type Wallet } from '@coral-xyz/anchor'
-import nacl from 'tweetnacl'
-import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk'
 import idl from '../idl/heres_program.json'
 import { getSolanaConnection } from '@/config/solana'
 import { getCapsulePDA } from './program'
 import { getRegisteredOwners } from './capsule-registry'
 import { loadSyncCheckpoint, saveSyncCheckpoint } from './dashboard-store'
 import { getWalletActivity } from './helius'
-import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
+import { MAGICBLOCK_ER } from '@/constants'
 
 /**
  * Off-chain liveness service: the missing half of the dead-man's-switch.
@@ -27,43 +25,18 @@ import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
  * (heartbeat_authority) bump last_activity. That is the proof-of-life input: using your wallet keeps
  * you alive. Without it, the switch fires on a living owner who simply didn't manually heartbeat.
  *
- * The relayer cannot READ last_activity on a TEE-delegated Switch (the Query Filtering Service hides
- * it from a 0-read-flag member), so "is this activity new?" is answered off-chain: we remember the
- * last signature we bumped on per owner and only bump when Helius reports a different latest signature.
- * The relayer CAN write (update_activity) without read access - that is exactly the privacy model.
+ * Workstream A: the Switch (liveness) now lives on a REGULAR ER, never the TEE - only the separate
+ * BeneficiarySet is enclave-resident. So the heartbeat hot path is TOKEN-FREE: update_activity is a
+ * gasless write to the regular ER (or base, pre-delegation) with no getAuthToken round-trip. "Is this
+ * activity new?" is still answered off-chain via a per-owner last-signature marker (Helius is the
+ * activity source; we avoid an ER read per tick), but the TEE token machinery is gone from here.
  */
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
-const VALIDATOR_TEE = new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE)
-const TEE_RPC = PER_TEE.RPC_URL.replace(/\/+$/, '')
-const TEE_AUTH_URL = PER_TEE.AUTH_URL.replace(/\/+$/, '')
 
 // Bound the per-run cost: a single tick processes at most this many owners. Larger registries spread
 // across ticks (the dedup marker makes re-scanning cheap).
 const MAX_OWNERS_PER_RUN = 200
-
-// ---- Server-side TEE auth token (relayer key), cached + auto-refreshed ----------------------------
-
-type CachedToken = { token: string; mintedAt: number }
-const teeTokenCache = new Map<string, CachedToken>()
-// TEE tokens are short-lived; re-mint every few minutes. Minting is a signature, not an RPC round to a
-// gated endpoint, so it is cheap. A read/write that 401s forces an immediate re-mint regardless.
-const TEE_TOKEN_TTL_MS = 5 * 60 * 1000
-
-/** Sign an arbitrary message with a server-held keypair (the SDK getAuthToken signMessage shape). */
-function keypairSignMessage(kp: Keypair) {
-  return (msg: Uint8Array) => Promise.resolve(nacl.sign.detached(msg, kp.secretKey))
-}
-
-/** Mint (or reuse) a TEE auth token for a server keypair. forceRefresh re-mints past a stale token. */
-async function getTeeToken(kp: Keypair, forceRefresh = false): Promise<string> {
-  const key = kp.publicKey.toBase58()
-  const cached = teeTokenCache.get(key)
-  if (!forceRefresh && cached && Date.now() - cached.mintedAt < TEE_TOKEN_TTL_MS) return cached.token
-  const { token } = await getAuthToken(TEE_AUTH_URL, kp.publicKey, keypairSignMessage(kp))
-  teeTokenCache.set(key, { token, mintedAt: Date.now() })
-  return token
-}
 
 // ---- Anchor program + tx helpers (server keypair, mirrors lib/crank.ts) ---------------------------
 
@@ -116,21 +89,18 @@ async function sendEr(connection: Connection, kp: Keypair, ixs: TransactionInstr
 
 // ---- Delegation routing: where does the Switch live right now? -------------------------------------
 
-type Target = 'base' | 'regular-er' | 'tee' | 'missing'
+type Target = 'base' | 'regular-er' | 'missing'
 
 /**
- * Read ONLY the base account to decide where update_activity must go. A delegated Switch is owned by
- * the delegation program; its data stub's first 32 bytes are the validator it was delegated to, so we
- * tell a TEE-delegated Switch from a regular-ER one without any token or ER read.
+ * Read ONLY the base account to decide where update_activity must go. The Switch is either on base
+ * (program-owned, pre-delegation) or delegated to the regular ER (owned by the delegation program).
+ * It is NEVER on the TEE under Workstream A, so no validator-stub inspection or token is needed.
  */
 async function delegationTarget(owner: PublicKey): Promise<Target> {
   const [capsule] = getCapsulePDA(owner)
   const info = await getSolanaConnection().getAccountInfo(capsule, 'confirmed')
   if (!info) return 'missing'
-  if (!info.owner.equals(DELEGATION_PROGRAM_ID)) return 'base'
-  const stub = Buffer.from(info.data)
-  if (stub.length >= 32 && new PublicKey(stub.subarray(0, 32)).equals(VALIDATOR_TEE)) return 'tee'
-  return 'regular-er'
+  return info.owner.equals(DELEGATION_PROGRAM_ID) ? 'regular-er' : 'base'
 }
 
 /** Build update_activity signed by the relayer (heartbeat_authority). No permission accounts. */
@@ -139,29 +109,15 @@ function updateActivityIx(prog: Program, owner: PublicKey, relayer: PublicKey): 
   return prog.methods.updateActivity().accountsPartial({ capsule, authority: relayer }).instruction()
 }
 
-/** Send the liveness bump to wherever the Switch currently lives. Returns the tx signature. */
+/** Send the liveness bump to wherever the Switch currently lives (base or regular ER). Token-free. */
 async function bumpLiveness(owner: PublicKey, relayer: Keypair, target: Target): Promise<string> {
   if (target === 'base') {
     const conn = getSolanaConnection()
     return sendBase(conn, relayer, [await updateActivityIx(programFor(conn, relayer), owner, relayer.publicKey)])
   }
-  if (target === 'regular-er') {
-    const conn = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-    return sendEr(conn, relayer, [await updateActivityIx(programFor(conn, relayer), owner, relayer.publicKey)])
-  }
-  // TEE: needs a relayer auth token. Retry once with a fresh token on an auth (401) failure.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const token = await getTeeToken(relayer, attempt > 0)
-    const conn = new Connection(`${TEE_RPC}?token=${token}`, { commitment: 'confirmed' })
-    try {
-      return await sendEr(conn, relayer, [await updateActivityIx(programFor(conn, relayer), owner, relayer.publicKey)])
-    } catch (e) {
-      const m = e instanceof Error ? e.message : String(e)
-      if (attempt === 0 && /401|InvalidToken|Missing token|Unauthorized/i.test(m)) continue
-      throw e
-    }
-  }
-  throw new Error('unreachable')
+  // regular-er: gasless, token-free write to the ER where the Switch is delegated.
+  const conn = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
+  return sendEr(conn, relayer, [await updateActivityIx(programFor(conn, relayer), owner, relayer.publicKey)])
 }
 
 /**

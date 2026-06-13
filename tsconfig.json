@@ -39,6 +39,7 @@
   "exclude": [
     "node_modules",
     "scripts",
+    "heres_program/**/*",
     "heres-cre/**/*",
     "cre-workflow/**/*",
     "vendor/ccip-svm/**/*"

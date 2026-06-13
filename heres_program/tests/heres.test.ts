@@ -7,9 +7,20 @@
 //   distribution ........ distribute_assets (SOL+SPL, share split, remainder, grace gate, idempotency)
 //   escape hatch ........ recover_vault (SOL+SPL, pre-fire only)
 //
-// init_fee_config (C3 upgrade-authority gate) and the 3 ER instructions (delegate/crank/schedule)
-// are covered on devnet - bankrun loads the program non-upgradeable and has no MagicBlock programs.
-// See scripts/init-fee-config.ts and tests/README.md.
+// init_fee_config (C3 upgrade-authority gate) and the ER instructions (delegate_capsule,
+// delegate_beneficiaries, crank_undelegate, crank_undelegate_beneficiaries, schedule_execute_intent)
+// are covered on devnet (scripts/magicblock/er-roundtrip.mjs) - bankrun loads the program
+// non-upgradeable and has no MagicBlock programs. See scripts/init-fee-config.ts and tests/README.md.
+//
+// Workstream A note: the private beneficiary list lives in its own BeneficiarySet account (delegated
+// to the TEE in production). Bankrun never delegates, so update_intent / distribute / cancel /
+// recreate exercise it directly on the base layer here.
+
+// Each on-chain Beneficiary carries a reserved[14] pad (future cross-chain heir field); the TS arg
+// must include it or Anchor's coder rejects the encode.
+const withReserved = (
+  list: { pubkey: PublicKey; shareBps: number }[]
+) => list.map((b) => ({ ...b, reserved: Array(14).fill(0) }));
 
 import { assert, expect } from "chai";
 import { SystemProgram as SP } from "@solana/web3.js";
@@ -23,13 +34,12 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
   TOKEN_PROGRAM_ID,
-  PERMISSION_PROGRAM_ID,
   GRACE_PERIOD,
   MAX_CREATION_FEE_LAMPORTS,
   capsulePda,
   vaultPda,
+  beneficiarySetPda,
   feeConfigPda,
-  permissionPda,
   ataFor,
   send,
   sendRaw,
@@ -37,6 +47,7 @@ import {
   assertErr,
   assertFailed,
   fetchCapsule,
+  fetchBeneficiarySet,
   fetchFeeConfig,
   lamportsOf,
   tokenBalance,
@@ -62,6 +73,7 @@ const createCapsuleIx = (
     .createCapsule(new BN(inactivity), heartbeat)
     .accountsPartial({
       capsule: capsulePda(owner.publicKey),
+      beneficiarySet: beneficiarySetPda(owner.publicKey),
       vault: vaultPda(owner.publicKey),
       owner: owner.publicKey,
       feeConfig: feeConfigPda(),
@@ -74,8 +86,8 @@ const updateIntentIx = (
   owner: Keypair,
   beneficiaries: { pubkey: PublicKey; shareBps: number }[]
 ) =>
-  env.program.methods.updateIntent(beneficiaries).accountsPartial({
-    capsule: capsulePda(owner.publicKey),
+  env.program.methods.updateIntent(withReserved(beneficiaries)).accountsPartial({
+    beneficiarySet: beneficiarySetPda(owner.publicKey),
     owner: owner.publicKey,
   });
 
@@ -114,8 +126,6 @@ const depositSplIx = (
 const executeIntentIx = (env: Env, ownerPk: PublicKey) =>
   env.program.methods.executeIntent().accountsPartial({
     capsule: capsulePda(ownerPk),
-    permissionProgram: PERMISSION_PROGRAM_ID,
-    permission: permissionPda(capsulePda(ownerPk)),
   });
 
 const updateActivityIx = (env: Env, ownerPk: PublicKey, authority: PublicKey) =>
@@ -133,6 +143,7 @@ const distributeSolIx = (
     .distributeAssets()
     .accountsPartial({
       capsule: capsulePda(ownerPk),
+      beneficiarySet: beneficiarySetPda(ownerPk),
       vault: vaultPda(ownerPk),
       systemProgram: SystemProgram.programId,
       tokenProgram: null,
@@ -153,6 +164,7 @@ const distributeSplIx = (
     .distributeAssets()
     .accountsPartial({
       capsule: capsulePda(ownerPk),
+      beneficiarySet: beneficiarySetPda(ownerPk),
       vault: vaultPda(ownerPk),
       systemProgram: SystemProgram.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
@@ -190,6 +202,7 @@ const recoverSplIx = (env: Env, owner: Keypair, mint: PublicKey) =>
 const cancelSolIx = (env: Env, owner: Keypair) =>
   env.program.methods.cancelCapsule().accountsPartial({
     capsule: capsulePda(owner.publicKey),
+    beneficiarySet: beneficiarySetPda(owner.publicKey),
     vault: vaultPda(owner.publicKey),
     owner: owner.publicKey,
     systemProgram: SystemProgram.programId,
@@ -202,6 +215,7 @@ const cancelSolIx = (env: Env, owner: Keypair) =>
 const cancelSplIx = (env: Env, owner: Keypair, mint: PublicKey) =>
   env.program.methods.cancelCapsule().accountsPartial({
     capsule: capsulePda(owner.publicKey),
+    beneficiarySet: beneficiarySetPda(owner.publicKey),
     vault: vaultPda(owner.publicKey),
     owner: owner.publicKey,
     systemProgram: SystemProgram.programId,
@@ -214,6 +228,7 @@ const cancelSplIx = (env: Env, owner: Keypair, mint: PublicKey) =>
 const recreateIx = (env: Env, owner: Keypair, inactivity: number) =>
   env.program.methods.recreateCapsule(new BN(inactivity)).accountsPartial({
     capsule: capsulePda(owner.publicKey),
+    beneficiarySet: beneficiarySetPda(owner.publicKey),
     owner: owner.publicKey,
   });
 
@@ -315,8 +330,13 @@ describe("heres: create_capsule", () => {
     expect(cap.isActive).to.eq(true);
     expect(cap.executedAt).to.eq(null);
     expect(cap.heartbeatAuthority.toBase58()).to.eq(heartbeat.toBase58());
-    expect(cap.beneficiaries.length).to.eq(0);
     expect(await accountExists(env, vaultPda(owner.publicKey))).to.eq(true);
+
+    // the BeneficiarySet is created empty alongside the Switch
+    const bs = await fetchBeneficiarySet(env, owner.publicKey);
+    expect(bs.owner.toBase58()).to.eq(owner.publicKey.toBase58());
+    expect(bs.beneficiaries.length).to.eq(0);
+    expect(await accountExists(env, beneficiarySetPda(owner.publicKey))).to.eq(true);
   });
 
   it("rejects inactivity_period = 0", async () => {
@@ -341,6 +361,7 @@ describe("heres: create_capsule", () => {
         .createCapsule(new BN(-1), owner.publicKey)
         .accountsPartial({
           capsule: capsulePda(owner.publicKey),
+          beneficiarySet: beneficiarySetPda(owner.publicKey),
           vault: vaultPda(owner.publicKey),
           owner: owner.publicKey,
           feeConfig: feeConfigPda(),
@@ -497,11 +518,11 @@ describe("heres: update_intent", () => {
     const list = benes(2, [6000, 4000]);
     assertOk(await send(env, owner, updateIntentIx(env, owner, list), [owner]));
 
-    const cap = await fetchCapsule(env, owner.publicKey);
-    expect(cap.beneficiaries.length).to.eq(2);
-    expect(cap.beneficiaries[0].shareBps).to.eq(6000);
-    expect(cap.beneficiaries[1].shareBps).to.eq(4000);
-    expect(cap.beneficiaries[0].pubkey.toBase58()).to.eq(list[0].pubkey.toBase58());
+    const bs = await fetchBeneficiarySet(env, owner.publicKey);
+    expect(bs.beneficiaries.length).to.eq(2);
+    expect(bs.beneficiaries[0].shareBps).to.eq(6000);
+    expect(bs.beneficiaries[1].shareBps).to.eq(4000);
+    expect(bs.beneficiaries[0].pubkey.toBase58()).to.eq(list[0].pubkey.toBase58());
   });
 
   it("replaces an existing list", async () => {
@@ -510,8 +531,8 @@ describe("heres: update_intent", () => {
     assertOk(await send(env, owner, updateIntentIx(env, owner, benes(2, [5000, 5000])), [owner]));
     const next = benes(3, [3000, 3000, 4000]);
     assertOk(await send(env, owner, updateIntentIx(env, owner, next), [owner]));
-    const cap = await fetchCapsule(env, owner.publicKey);
-    expect(cap.beneficiaries.length).to.eq(3);
+    const bs = await fetchBeneficiarySet(env, owner.publicKey);
+    expect(bs.beneficiaries.length).to.eq(3);
   });
 
   it("rejects an empty list", async () => {
@@ -564,8 +585,8 @@ describe("heres: update_intent", () => {
     const res = await send(
       env,
       stranger,
-      env.program.methods.updateIntent(benes(1, [10000])).accountsPartial({
-        capsule: capsulePda(owner.publicKey),
+      env.program.methods.updateIntent(withReserved(benes(1, [10000]))).accountsPartial({
+        beneficiarySet: beneficiarySetPda(owner.publicKey),
         owner: stranger.publicKey,
       }),
       [stranger]
@@ -881,6 +902,7 @@ describe("heres: cancel_capsule", () => {
     assertOk(await send(env, owner, depositSolIx(env, owner, 2 * LAMPORTS_PER_SOL), [owner]));
     assertOk(await send(env, owner, cancelSolIx(env, owner), [owner]), "cancel");
     expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(false);
+    expect(await accountExists(env, beneficiarySetPda(owner.publicKey))).to.eq(false);
     expect(await accountExists(env, vaultPda(owner.publicKey))).to.eq(false);
   });
 
@@ -919,7 +941,8 @@ describe("heres: recreate_capsule", () => {
     expect(cap.isActive).to.eq(true);
     expect(cap.executedAt).to.eq(null);
     expect(cap.inactivityPeriod.toNumber()).to.eq(7 * DAY);
-    expect(cap.beneficiaries.length).to.eq(0);
+    const bs = await fetchBeneficiarySet(env, owner.publicKey);
+    expect(bs.beneficiaries.length).to.eq(0);
   });
 
   it("rejects recreate on an active capsule", async () => {

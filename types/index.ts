@@ -19,11 +19,24 @@ export interface Beneficiary {
 export interface OnChainBeneficiary {
   pubkey: PublicKey
   shareBps: number
+  /** Per-entry reserved pad (future cross-chain heir field). Optional in the app; zero-filled on write. */
+  reserved?: number[]
 }
 
-// Intent Capsule (lean program layout). No intent_data / single mint: beneficiaries are first-class
-// on-chain (set via update_intent), the vault holds SOL + any number of SPL token accounts, and the
-// encrypted human "intent statement" lives off-chain (CRE), decoupled from the chain.
+/**
+ * The private beneficiary list (Workstream A: split out of the Switch into its own TEE-resident
+ * account). Set/edited via update_intent routed to the TEE; revealed to base before distribution.
+ */
+export interface BeneficiarySet {
+  owner: PublicKey
+  beneficiaries: OnChainBeneficiary[]
+}
+
+// Intent Capsule (lean program layout). The "Switch" carries dead-man's-switch LIVENESS only; the
+// private beneficiary list lives in a separate BeneficiarySet account (TEE). `beneficiaries` here is
+// a view-model field the read path (getCapsule) populates from a BeneficiarySet read - it is [] when
+// no set read happened or the TEE filtered it (no auth token). The vault holds SOL + any number of
+// SPL token accounts; the encrypted human "intent statement" lives off-chain (CRE).
 export interface IntentCapsule {
   owner: PublicKey
   inactivityPeriod: number
@@ -32,7 +45,9 @@ export interface IntentCapsule {
   executedAt: number | null
   bump?: number
   vaultBump?: number
+  beneficiariesBump?: number
   heartbeatAuthority?: PublicKey
+  /** Populated from a BeneficiarySet read (TEE w/ token, or base post-reveal); [] otherwise. */
   beneficiaries: OnChainBeneficiary[]
   /** Runtime owner of the account (program vs delegation program) - tells delegated vs settled-on-base. */
   accountOwner?: PublicKey

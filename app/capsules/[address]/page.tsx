@@ -212,8 +212,11 @@ export default function CapsuleDetailPage() {
     setActionLoading('undelegate')
     setActionResult(null)
     try {
-      const tx = await undelegateCapsule(wallet as any, capsule.owner)
-      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress))
+      // The two-step undelegate reveals the private BeneficiarySet from the TEE, which needs the
+      // owner's auth token; reuse the session token (minted once) so there's no extra signMessage.
+      const token = await getOrMintTeeToken(wallet as any)
+      const tx = await undelegateCapsule(wallet as any, capsule.owner, token)
+      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
       setCapsule(refreshed)
       setActionResult({ type: 'success', message: `Undelegate TX: ${tx}` })
     } catch (err: any) {

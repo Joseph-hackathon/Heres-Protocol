@@ -19,6 +19,7 @@ import {
   getCapsulePDA,
   getFeeConfigPDA,
   getCapsuleVaultPDA,
+  getBeneficiarySetPDA,
   getBufferPDA,
   getDelegationRecordPDA,
   getDelegationMetadataPDA,
@@ -27,7 +28,7 @@ import {
 } from './program'
 import { SOLANA_CONFIG, PLATFORM_FEE, MAGICBLOCK_ER } from '@/constants'
 import { debugLog } from '@/lib/log'
-import { decodeIntentCapsule, tryDecodeIntentCapsule } from '@/lib/lean-capsule'
+import { decodeIntentCapsule, tryDecodeIntentCapsule, tryDecodeBeneficiarySet } from '@/lib/lean-capsule'
 import { getTeeAuthToken, getCachedTeeToken, setCachedTeeToken } from '@/lib/tee'
 import type { IntentCapsule, OnChainBeneficiary } from '@/types'
 
@@ -215,9 +216,27 @@ async function sendEr(
 
 /** True if the base account is currently delegated to the MagicBlock delegation program. */
 async function isCapsuleDelegated(capsulePDA: PublicKey): Promise<boolean> {
-  const info = await getSolanaConnection().getAccountInfo(capsulePDA)
+  return isAccountDelegated(capsulePDA)
+}
+
+/** True if an arbitrary base PDA (Switch or BeneficiarySet) is delegated to the delegation program. */
+async function isAccountDelegated(pda: PublicKey): Promise<boolean> {
+  const info = await getSolanaConnection().getAccountInfo(pda)
   return !!info && info.owner.equals(DELEGATION_PROGRAM_ID)
 }
+
+/** Connection to the regular ER (where the Switch is delegated under Workstream A). Token-free. */
+function regularErConnection(): Connection {
+  return new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
+}
+
+// Each on-chain Beneficiary carries a reserved[14] pad (future cross-chain heir field). The Anchor arg
+// encoder needs every field, so zero-fill it on write (camelCase keys for the instruction-arg coder).
+const toBenArg = (b: OnChainBeneficiary) => ({
+  pubkey: b.pubkey,
+  shareBps: b.shareBps,
+  reserved: b.reserved ?? Array(14).fill(0),
+})
 
 /**
  * Sign a batch of base-layer transactions with a SINGLE wallet approval (signAllTransactions), then
@@ -277,6 +296,7 @@ export async function createCapsule(
 
   const owner = wallet.publicKey!
   const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
   const [feeConfigPDA] = getFeeConfigPDA()
 
@@ -295,6 +315,7 @@ export async function createCapsule(
         .createCapsule(new BN(inactivityPeriodSeconds), hb)
         .accountsPartial({
           capsule: capsulePDA,
+          beneficiarySet: beneficiarySetPDA,
           vault: vaultPDA,
           owner,
           feeConfig: feeConfigPDA,
@@ -351,27 +372,31 @@ export async function registerCapsuleOwnerForAutomation(ownerPubkey: string): Pr
 }
 
 /**
- * Set / replace the on-chain beneficiary list (Solana pubkeys + share_bps; shares must sum to 10000).
- * Owner-only. Routes to the ER when the Switch is delegated, otherwise to the base layer.
+ * Set / replace the PRIVATE beneficiary list (Solana pubkeys + share_bps; shares must sum to 10000).
+ * Owner-only, and targets the BeneficiarySet - the one enclave-resident account. When that set is
+ * delegated to the TEE the write routes there behind the owner's auth token (so the list never touches
+ * the base layer); pre-delegation it writes to base. Pass a token, or have one cached for this owner.
  */
 export async function updateIntent(
   wallet: WalletContextState,
-  beneficiaries: OnChainBeneficiary[]
+  beneficiaries: OnChainBeneficiary[],
+  token?: string
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
 
   const owner = wallet.publicKey!
-  const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
 
   const ix = await program.methods
-    .updateIntent(beneficiaries.map((b) => ({ pubkey: b.pubkey, shareBps: b.shareBps })))
-    .accountsPartial({ capsule: capsulePDA, owner })
+    .updateIntent(beneficiaries.map(toBenArg))
+    .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
     .instruction()
 
-  if (await isCapsuleDelegated(capsulePDA)) {
-    const erConnection = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-    return sendEr(erConnection, wallet, [ix])
+  if (await isAccountDelegated(beneficiarySetPDA)) {
+    const teeToken = token ?? getCachedTeeToken(owner) ?? (await getTeeAuthToken(wallet))
+    setCachedTeeToken(owner, teeToken)
+    return sendEr(getTeeConnection(teeToken), wallet, [ix])
   }
   return sendBase(getSolanaConnection(), wallet, [ix])
 }
@@ -435,28 +460,24 @@ export async function executeIntent(
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')
 
   const [capsulePDA] = getCapsulePDA(ownerPublicKey)
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
 
   const ix = await program.methods
     .executeIntent()
-    .accountsPartial({
-      capsule: capsulePDA,
-      permissionProgram: PERMISSION_PROGRAM_ID,
-      permission: permissionPDA,
-    })
+    .accountsPartial({ capsule: capsulePDA })
     .instruction()
 
   if (await isCapsuleDelegated(capsulePDA)) {
-    debugLog('[executeIntent] Capsule is delegated, routing through ER RPC')
-    const erConnection = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-    return sendEr(erConnection, wallet, [ix])
+    debugLog('[executeIntent] Switch is delegated, routing through the regular ER RPC')
+    return sendEr(regularErConnection(), wallet, [ix])
   }
   return sendBase(getSolanaConnection(), wallet, [ix])
 }
 
 /**
- * Delegate ONLY the Switch (capsule) to a MagicBlock ER validator, creating + delegating the PER
- * permission alongside it. The Vault is never delegated. Runs on the base layer.
+ * Delegate ONLY the Switch (capsule) to a regular MagicBlock ER validator. The Switch carries no
+ * private data and no PER permission under Workstream A, so this is a plain delegate (11 accounts).
+ * The Vault is never delegated; the private BeneficiarySet is delegated separately (delegateBeneficiaries).
+ * Runs on the base layer.
  */
 export async function delegateCapsule(
   wallet: WalletContextState,
@@ -483,14 +504,9 @@ export async function delegateCapsule(
     throw new Error(`Capsule is not owned by the Heres Program. Current owner: ${accountInfo.owner.toBase58()}`)
   }
 
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
   const [bufferPDA] = getBufferPDA(capsulePDA, BUFFER_SEED_PROGRAM_ID)
   const [delegationRecordPDA] = getDelegationRecordPDA(capsulePDA, DELEGATION_PROGRAM_ID)
   const [delegationMetadataPDA] = getDelegationMetadataPDA(capsulePDA, DELEGATION_PROGRAM_ID)
-  // Delegation PDAs for the permission account itself (owner_program = permission program).
-  const [bufferPermission] = getBufferPDA(permissionPDA, PERMISSION_PROGRAM_ID)
-  const [delegationRecordPermission] = getDelegationRecordPDA(permissionPDA, DELEGATION_PROGRAM_ID)
-  const [delegationMetadataPermission] = getDelegationMetadataPDA(permissionPDA, DELEGATION_PROGRAM_ID)
 
   return program.methods
     .delegateCapsule()
@@ -506,32 +522,83 @@ export async function delegateCapsule(
       delegationProgram: DELEGATION_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       ownerProgram: programId,
-      permissionProgram: PERMISSION_PROGRAM_ID,
-      permission: permissionPDA,
-      bufferPermission,
-      delegationRecordPermission,
-      delegationMetadataPermission,
     } as any)
     .rpc()
 }
 
 /**
- * Schedule the autonomous MagicBlock ScheduleTask crank that fires execute_intent on the ER. Takes 5
- * accounts (magic_program, payer, capsule, permission_program, permission). Runs on the ER (or the
- * TEE when a token is supplied).
+ * Delegate the private BeneficiarySet to the MagicBlock TEE (Private ER), creating + delegating its PER
+ * permission alongside (owner-only member). This is the single enclave-resident account. Runs on the
+ * base layer. Defaults to the TEE validator. Idempotent: a no-op if already delegated.
+ */
+export async function delegateBeneficiaries(
+  wallet: WalletContextState,
+  validatorPubkey?: PublicKey
+): Promise<string> {
+  const program = getProgram(wallet)
+  if (!program) throw new Error('Wallet not connected')
+  if (!wallet.publicKey) throw new Error('Wallet not connected')
+
+  const owner = wallet.publicKey
+  const programId = getProgramId()
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
+  const validator = validatorPubkey ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE)
+
+  const connection = getSolanaConnection()
+  const accountInfo = await connection.getAccountInfo(beneficiarySetPDA)
+  if (!accountInfo) throw new Error('BeneficiarySet account not found. Please create a capsule first.')
+  if (accountInfo.owner.equals(DELEGATION_PROGRAM_ID)) {
+    debugLog('BeneficiarySet is already delegated to the TEE. Proceeding...')
+    return 'ALREADY_DELEGATED'
+  }
+
+  const [permissionPDA] = getPermissionPDA(beneficiarySetPDA, PERMISSION_PROGRAM_ID)
+  const [bufferPDA] = getBufferPDA(beneficiarySetPDA, BUFFER_SEED_PROGRAM_ID)
+  const [delegationRecordPDA] = getDelegationRecordPDA(beneficiarySetPDA, DELEGATION_PROGRAM_ID)
+  const [delegationMetadataPDA] = getDelegationMetadataPDA(beneficiarySetPDA, DELEGATION_PROGRAM_ID)
+  // Delegation PDAs for the permission account itself.
+  const [bufferPermission] = getBufferPDA(permissionPDA, PERMISSION_PROGRAM_ID)
+  const [delegationRecordPermission] = getDelegationRecordPDA(permissionPDA, DELEGATION_PROGRAM_ID)
+  const [delegationMetadataPermission] = getDelegationMetadataPDA(permissionPDA, DELEGATION_PROGRAM_ID)
+
+  return program.methods
+    .delegateBeneficiaries()
+    .accountsPartial({
+      payer: owner,
+      owner,
+      validator,
+      bufferPda: bufferPDA,
+      delegationRecordPda: delegationRecordPDA,
+      delegationMetadataPda: delegationMetadataPDA,
+      pda: beneficiarySetPDA,
+      magicProgram: MAGIC_PROGRAM_ID,
+      delegationProgram: DELEGATION_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      permissionProgram: PERMISSION_PROGRAM_ID,
+      permission: permissionPDA,
+      bufferPermission,
+      delegationRecordPermission,
+      delegationMetadataPermission,
+      ownerProgram: programId,
+    } as any)
+    .rpc()
+}
+
+/**
+ * Schedule the autonomous MagicBlock ScheduleTask crank that fires execute_intent on the ER. Takes 3
+ * accounts (magic_program, payer, capsule) - the Switch is on a regular ER with no PER permission, so
+ * this runs there, token-free.
  */
 export async function scheduleExecuteIntent(
   wallet: WalletContextState,
   ownerPublicKey: PublicKey,
-  args?: { taskId?: BN; executionIntervalMillis?: BN; iterations?: BN },
-  token?: string
+  args?: { taskId?: BN; executionIntervalMillis?: BN; iterations?: BN }
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
   if (!wallet.publicKey) throw new Error('Wallet not connected')
 
   const [capsulePDA] = getCapsulePDA(ownerPublicKey)
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
 
   const taskId = args?.taskId ?? new BN(Date.now())
   const executionIntervalMillis = args?.executionIntervalMillis ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS || 60000)
@@ -544,15 +611,10 @@ export async function scheduleExecuteIntent(
         magicProgram: MAGIC_PROGRAM_ID,
         payer: wallet.publicKey,
         capsule: capsulePDA,
-        permissionProgram: PERMISSION_PROGRAM_ID,
-        permission: permissionPDA,
       })
       .instruction()
 
-    const erConnection = token
-      ? getTeeConnection(token)
-      : new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-    return await sendEr(erConnection, wallet, [ix])
+    return await sendEr(regularErConnection(), wallet, [ix])
   } catch (err: any) {
     let errorMessage = err.message || 'Unknown error'
     let logs: string[] | null = null
@@ -603,33 +665,36 @@ export type CreateDelegatedCapsuleParams = {
 }
 
 /**
- * The single, intended capsule-creation flow: create the Switch + Vault, fund it, delegate the Switch
- * to the MagicBlock TEE (Private ER), set the PRIVATE beneficiary list on the TEE copy, and register
- * the autonomous execute_intent crank. Beneficiaries NEVER touch the base layer - they are written only
- * inside the TEE, which is the whole point of the privacy design. There is no base-only fork.
+ * The single, intended capsule-creation flow (Workstream A):
+ *   - create the Switch + BeneficiarySet + Vault, fund the Vault;
+ *   - delegate the Switch to a REGULAR ER (token-free liveness) and the BeneficiarySet to the TEE
+ *     (the one enclave-resident account, behind a PER permission);
+ *   - schedule the autonomous execute_intent crank on the regular-ER Switch;
+ *   - set the PRIVATE beneficiary list inside the TEE.
+ * Beneficiaries NEVER touch the base layer - they are written only inside the TEE. There is no base-only fork.
  *
- * Wallet approvals are minimized to two transaction popups plus one auth-token signature:
- *   1. base bundle    - signAllTransactions([create+deposit, delegate]) -> ONE approval, sent in order
- *      (delegate must read the Switch the create tx wrote, so it can't share an instruction list).
- *   2. TEE auth token - getAuthToken mints a per-key token (signMessage) so the TEE accepts our ops.
- *   3. TEE bundle     - update_intent (private beneficiaries) + schedule_execute_intent in one tx.
+ * Wallet interactions: one base-bundle approval (create+deposit, delegate Switch, delegate set), one
+ * regular-ER approval (schedule, token-free), one auth-token signature, one TEE approval (private
+ * beneficiaries). Delegations must run as distinct txs (each reads state a prior tx wrote).
  */
 export async function createDelegatedCapsule(
   wallet: WalletContextState,
   params: CreateDelegatedCapsuleParams
-): Promise<{ baseSigs: string[]; teeSig: string; capsule: PublicKey; token: string }> {
+): Promise<{ baseSigs: string[]; teeSig: string; scheduleSig: string; capsule: PublicKey; token: string }> {
   const program = getProgram(wallet)
   if (!program || !wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')
 
   const owner = wallet.publicKey
   const programId = getProgramId()
   const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
   const [feeConfigPDA] = getFeeConfigPDA()
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
+  const [permissionPDA] = getPermissionPDA(beneficiarySetPDA, PERMISSION_PROGRAM_ID)
 
   const hb = params.heartbeatAuthority ?? getRelayerPubkey()
-  const validator = params.validator ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE)
+  const erValidator = new PublicKey(MAGICBLOCK_ER.ACTIVE_VALIDATOR) // regular ER for the Switch
+  const teeValidator = params.validator ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE) // TEE for the set
   const mint = params.mint ?? null
   const amt = params.depositBaseUnits instanceof BN ? params.depositBaseUnits : new BN(params.depositBaseUnits)
 
@@ -637,16 +702,17 @@ export async function createDelegatedCapsule(
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : programId // sentinel when no fee recipient is configured
 
-  // ---- base ix 1: create (or recreate) the Switch ----
+  // ---- base ix 1: create (or recreate) the Switch + BeneficiarySet (+ Vault on create) ----
   const createIx = params.recreate
     ? await program.methods
         .recreateCapsule(new BN(params.inactivitySeconds))
-        .accountsPartial({ capsule: capsulePDA, owner })
+        .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner })
         .instruction()
     : await program.methods
         .createCapsule(new BN(params.inactivitySeconds), hb)
         .accountsPartial({
           capsule: capsulePDA,
+          beneficiarySet: beneficiarySetPDA,
           vault: vaultPDA,
           owner,
           feeConfig: feeConfigPDA,
@@ -681,92 +747,115 @@ export async function createDelegatedCapsule(
       }
   const depositIx = await program.methods.deposit(amt).accountsPartial(depositAccounts).instruction()
 
-  // ---- base ix 3: delegate ONLY the Switch (+ PER permission) to the TEE validator ----
-  const [bufferPDA] = getBufferPDA(capsulePDA, BUFFER_SEED_PROGRAM_ID)
-  const [delegationRecordPDA] = getDelegationRecordPDA(capsulePDA, DELEGATION_PROGRAM_ID)
-  const [delegationMetadataPDA] = getDelegationMetadataPDA(capsulePDA, DELEGATION_PROGRAM_ID)
-  const [bufferPermission] = getBufferPDA(permissionPDA, PERMISSION_PROGRAM_ID)
-  const [delegationRecordPermission] = getDelegationRecordPDA(permissionPDA, DELEGATION_PROGRAM_ID)
-  const [delegationMetadataPermission] = getDelegationMetadataPDA(permissionPDA, DELEGATION_PROGRAM_ID)
-  const delegateIx = await program.methods
+  // ---- base ix 3: delegate the Switch to the regular ER (no permission, 11 accounts) ----
+  const [swBufferPDA] = getBufferPDA(capsulePDA, BUFFER_SEED_PROGRAM_ID)
+  const [swRecordPDA] = getDelegationRecordPDA(capsulePDA, DELEGATION_PROGRAM_ID)
+  const [swMetaPDA] = getDelegationMetadataPDA(capsulePDA, DELEGATION_PROGRAM_ID)
+  const delegateSwitchIx = await program.methods
     .delegateCapsule()
     .accountsPartial({
       payer: owner,
       owner,
-      validator,
-      bufferPda: bufferPDA,
-      delegationRecordPda: delegationRecordPDA,
-      delegationMetadataPda: delegationMetadataPDA,
+      validator: erValidator,
+      bufferPda: swBufferPDA,
+      delegationRecordPda: swRecordPDA,
+      delegationMetadataPda: swMetaPDA,
       pda: capsulePDA,
       magicProgram: MAGIC_PROGRAM_ID,
       delegationProgram: DELEGATION_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
       ownerProgram: programId,
+    } as any)
+    .instruction()
+
+  // ---- base ix 4: delegate the BeneficiarySet (+ PER permission) to the TEE (16 accounts) ----
+  const [bsBufferPDA] = getBufferPDA(beneficiarySetPDA, BUFFER_SEED_PROGRAM_ID)
+  const [bsRecordPDA] = getDelegationRecordPDA(beneficiarySetPDA, DELEGATION_PROGRAM_ID)
+  const [bsMetaPDA] = getDelegationMetadataPDA(beneficiarySetPDA, DELEGATION_PROGRAM_ID)
+  const [bufferPermission] = getBufferPDA(permissionPDA, PERMISSION_PROGRAM_ID)
+  const [delegationRecordPermission] = getDelegationRecordPDA(permissionPDA, DELEGATION_PROGRAM_ID)
+  const [delegationMetadataPermission] = getDelegationMetadataPDA(permissionPDA, DELEGATION_PROGRAM_ID)
+  const delegateBenIx = await program.methods
+    .delegateBeneficiaries()
+    .accountsPartial({
+      payer: owner,
+      owner,
+      validator: teeValidator,
+      bufferPda: bsBufferPDA,
+      delegationRecordPda: bsRecordPDA,
+      delegationMetadataPda: bsMetaPDA,
+      pda: beneficiarySetPDA,
+      magicProgram: MAGIC_PROGRAM_ID,
+      delegationProgram: DELEGATION_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
       permissionProgram: PERMISSION_PROGRAM_ID,
       permission: permissionPDA,
       bufferPermission,
       delegationRecordPermission,
       delegationMetadataPermission,
+      ownerProgram: programId,
     } as any)
     .instruction()
 
-  // One wallet approval for the whole base setup. delegate carries a CU bump: create + delegate's
-  // permission/delegation CPIs together exceed the 200k default.
-  params.onStep?.('Creating, funding & delegating capsule to TEE...')
+  // One wallet approval for the whole base setup. Each delegate carries a CU bump: the create +
+  // permission/delegation CPIs exceed the 200k default.
+  params.onStep?.('Creating, funding & delegating capsule...')
   const baseConn = getSolanaConnection()
   const baseSigs = await sendBaseBatch(baseConn, wallet, [
     [createIx, depositIx],
-    [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), delegateIx],
+    [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), delegateSwitchIx],
+    [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), delegateBenIx],
   ])
 
-  // Wait for the base account to flip to the delegation program before touching the TEE copy.
-  params.onStep?.('Waiting for TEE delegation...')
+  // Wait for BOTH base accounts to flip to the delegation program.
+  params.onStep?.('Waiting for delegations...')
   for (let i = 0; i < 16; i++) {
-    if (await isCapsuleDelegated(capsulePDA)) break
+    if ((await isAccountDelegated(capsulePDA)) && (await isAccountDelegated(beneficiarySetPDA))) break
     await sleep(2500)
   }
 
-  // Mint the per-key TEE auth token (signMessage) so the Private ER accepts our reads/sends. Cache it
-  // so the immediate post-create dashboard/detail read can show live private state without re-prompting.
-  params.onStep?.('Authorizing TEE access...')
-  const token = await getTeeAuthToken(wallet)
-  setCachedTeeToken(owner, token)
-  const teeConn = getTeeConnection(token)
-
-  // Wait for the Switch to clone onto the TEE node.
-  params.onStep?.('Waiting for TEE sync...')
+  // ---- regular ER: schedule the autonomous execute_intent crank on the Switch (token-free) ----
+  params.onStep?.('Waiting for ER sync...')
+  const erConn = regularErConnection()
   for (let i = 0; i < 16; i++) {
-    const info = await teeConn.getAccountInfo(capsulePDA).catch(() => null)
+    const info = await erConn.getAccountInfo(capsulePDA).catch(() => null)
     if (info) break
     await sleep(2500)
   }
-
-  // ---- TEE ix 1: set the PRIVATE beneficiary list (only ever written inside the TEE) ----
-  const updateIntentIx = await program.methods
-    .updateIntent(params.beneficiaries.map((b) => ({ pubkey: b.pubkey, shareBps: b.shareBps })))
-    .accountsPartial({ capsule: capsulePDA, owner })
-    .instruction()
-
-  // ---- TEE ix 2: register the autonomous execute_intent crank ----
   const taskId = params.schedule?.taskId ?? new BN(Date.now())
   const executionIntervalMillis =
     params.schedule?.executionIntervalMillis ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS || 10000)
   const iterations = params.schedule?.iterations ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_ITERATIONS || 100_000)
   const scheduleIx = await program.methods
     .scheduleExecuteIntent({ taskId, executionIntervalMillis, iterations })
-    .accountsPartial({
-      magicProgram: MAGIC_PROGRAM_ID,
-      payer: owner,
-      capsule: capsulePDA,
-      permissionProgram: PERMISSION_PROGRAM_ID,
-      permission: permissionPDA,
-    })
+    .accountsPartial({ magicProgram: MAGIC_PROGRAM_ID, payer: owner, capsule: capsulePDA })
     .instruction()
+  params.onStep?.('Scheduling autonomous crank...')
+  const scheduleSig = await sendEr(erConn, wallet, [scheduleIx])
 
-  params.onStep?.('Setting private beneficiaries & scheduling crank...')
-  const teeSig = await sendEr(teeConn, wallet, [updateIntentIx, scheduleIx])
+  // ---- TEE: set the PRIVATE beneficiary list (only ever written inside the TEE) ----
+  // Mint the per-key TEE auth token (signMessage). Cache it so the immediate post-create read can show
+  // live private state without re-prompting.
+  params.onStep?.('Authorizing TEE access...')
+  const token = await getTeeAuthToken(wallet)
+  setCachedTeeToken(owner, token)
+  const teeConn = getTeeConnection(token)
 
-  return { baseSigs, teeSig, capsule: capsulePDA, token }
+  // Wait for the BeneficiarySet to clone onto the TEE node.
+  params.onStep?.('Waiting for TEE sync...')
+  for (let i = 0; i < 16; i++) {
+    const info = await teeConn.getAccountInfo(beneficiarySetPDA).catch(() => null)
+    if (info) break
+    await sleep(2500)
+  }
+  const updateIntentIx = await program.methods
+    .updateIntent(params.beneficiaries.map(toBenArg))
+    .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
+    .instruction()
+  params.onStep?.('Setting private beneficiaries...')
+  const teeSig = await sendEr(teeConn, wallet, [updateIntentIx])
+
+  return { baseSigs, teeSig, scheduleSig, capsule: capsulePDA, token }
 }
 
 /**
@@ -785,11 +874,15 @@ export async function distributeAssets(
   if (!beneficiaries.length) throw new Error('Capsule has no beneficiaries')
 
   const [capsulePDA] = getCapsulePDA(ownerPublicKey)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(ownerPublicKey)
   const [vaultPDA] = getCapsuleVaultPDA(ownerPublicKey)
   const connection = getSolanaConnection()
 
   if (await isCapsuleDelegated(capsulePDA)) {
-    throw new Error('Capsule is still delegated to ER. Please undelegate first before distributing assets.')
+    throw new Error('Switch is still delegated to ER. Please undelegate first before distributing assets.')
+  }
+  if (await isAccountDelegated(beneficiarySetPDA)) {
+    throw new Error('Beneficiary list is still in the TEE. Reveal it (undelegate) first before distributing.')
   }
 
   let lastSig = ''
@@ -815,6 +908,7 @@ export async function distributeAssets(
       .distributeAssets()
       .accountsPartial({
         capsule: capsulePDA,
+        beneficiarySet: beneficiarySetPDA,
         vault: vaultPDA,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -838,6 +932,7 @@ export async function distributeAssets(
         // omits null, so cast (the IDL is already loaded untyped).
         .accountsPartial({
           capsule: capsulePDA,
+          beneficiarySet: beneficiarySetPDA,
           vault: vaultPDA,
           systemProgram: SystemProgram.programId,
           tokenProgram: null,
@@ -928,57 +1023,77 @@ export async function recreateCapsule(
   if (!program) throw new Error('Wallet not connected')
 
   const [capsulePDA] = getCapsulePDA(wallet.publicKey!)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(wallet.publicKey!)
 
   return program.methods
     .recreateCapsule(new BN(inactivityPeriodSeconds))
-    .accountsPartial({ capsule: capsulePDA, owner: wallet.publicKey! })
+    .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner: wallet.publicKey! })
     .rpc()
 }
 
 /**
- * Decode the live state of a DELEGATED Switch. The base account is a delegation stub (its first 32
- * bytes are the validator the Switch was delegated to), so the real state lives on the ER/TEE:
- *   - delegated to the TEE validator: read the TEE node. With the owner's auth token the read returns
- *     the private beneficiaries + fresh liveness; without a token the TEE filters the read (non-private
- *     fields only, beneficiaries hidden) - which is exactly the privacy guarantee.
- *   - delegated to a regular ER validator (legacy): read the regular ER.
- * Returns null only if no candidate yields decodable data (e.g. delegated + read fully blocked).
+ * Decode the live LIVENESS of a DELEGATED Switch. The base account is a delegation stub; under
+ * Workstream A the Switch is delegated to a REGULAR ER (never the TEE), so its real state is read
+ * token-free from the ER. Beneficiaries are NOT here - they live in the BeneficiarySet (see
+ * readBeneficiaries). Returns null if the ER read yields no decodable data.
  */
 async function decodeDelegatedCapsule(
   capsulePDA: PublicKey,
-  baseInfo: { data: Buffer | Uint8Array; owner: PublicKey },
-  token?: string
+  baseInfo: { data: Buffer | Uint8Array; owner: PublicKey }
 ): Promise<IntentCapsule | null> {
-  const stub = Buffer.from(baseInfo.data)
-  const isTee =
-    stub.length >= 32 && new PublicKey(stub.subarray(0, 32)).equals(new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE))
-
-  // Candidate live-state buffers, in priority order (most-authoritative first).
-  const candidates: Buffer[] = []
-  const tryRead = async (conn: Connection) => {
-    try {
-      const info = await conn.getAccountInfo(capsulePDA)
-      if (info?.data) candidates.push(Buffer.from(info.data))
-    } catch {
-      /* keep trying other candidates */
+  try {
+    const info = await regularErConnection().getAccountInfo(capsulePDA)
+    if (info?.data) {
+      const capsule = tryDecodeIntentCapsule(Buffer.from(info.data))
+      if (capsule) {
+        capsule.accountOwner = baseInfo.owner
+        return capsule
+      }
     }
-  }
-
-  if (isTee) {
-    if (token) await tryRead(getTeeConnection(token)) // owner-authed: full private state
-    await tryRead(getTeeConnection()) // unauth: non-private fields (beneficiaries filtered)
-  } else {
-    await tryRead(new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' }))
-  }
-
-  for (const buf of candidates) {
-    const capsule = tryDecodeIntentCapsule(buf)
-    if (capsule) {
-      capsule.accountOwner = baseInfo.owner
-      return capsule
-    }
+  } catch {
+    /* fall through to null */
   }
   return null
+}
+
+/**
+ * Read the private beneficiary list for an owner from the BeneficiarySet. When delegated to the TEE,
+ * reads the enclave copy behind the owner's auth token (the read is FILTERED to [] without a valid
+ * token - the privacy guarantee). Pre-delegation or post-reveal, reads the base account directly.
+ * Never throws (returns [] on any failure / filtered read).
+ */
+async function readBeneficiaries(owner: PublicKey, token?: string): Promise<OnChainBeneficiary[]> {
+  const [benSetPDA] = getBeneficiarySetPDA(owner)
+  try {
+    const baseInfo = await getSolanaConnection().getAccountInfo(benSetPDA)
+    if (!baseInfo) return []
+
+    if (baseInfo.owner.equals(DELEGATION_PROGRAM_ID)) {
+      // Delegated to the TEE: read the enclave copy. A valid token unlocks the list; without one the
+      // Query Filtering Service returns a stub that won't decode -> [].
+      const authToken = token ?? getCachedTeeToken(owner)
+      const candidates: Buffer[] = []
+      const tryRead = async (conn: Connection) => {
+        try {
+          const i = await conn.getAccountInfo(benSetPDA)
+          if (i?.data) candidates.push(Buffer.from(i.data))
+        } catch {
+          /* try the next candidate */
+        }
+      }
+      if (authToken) await tryRead(getTeeConnection(authToken))
+      for (const buf of candidates) {
+        const bens = tryDecodeBeneficiarySet(buf)
+        if (bens) return bens
+      }
+      return []
+    }
+
+    // Base-resident (pre-delegation or post-reveal): decode directly.
+    return tryDecodeBeneficiarySet(Buffer.from(baseInfo.data)) ?? []
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -1036,14 +1151,18 @@ export async function getCapsule(owner: PublicKey, token?: string): Promise<Inte
 
     if (!accountInfo || !accountInfo.data) return null
 
-    // Delegated: the base account is a stub - read the live copy from the TEE/ER. Use the passed token,
-    // or a token cached for this owner this session (e.g. seeded by createDelegatedCapsule).
-    if (accountInfo.owner.equals(DELEGATION_PROGRAM_ID)) {
-      return decodeDelegatedCapsule(capsulePDA, accountInfo, token ?? getCachedTeeToken(owner))
-    }
+    // Liveness: delegated Switch -> read the live copy from the regular ER (token-free); else base.
+    const capsule = accountInfo.owner.equals(DELEGATION_PROGRAM_ID)
+      ? await decodeDelegatedCapsule(capsulePDA, accountInfo)
+      : (() => {
+          const c = decodeIntentCapsule(accountInfo.data)
+          c.accountOwner = accountInfo.owner
+          return c
+        })()
+    if (!capsule) return null
 
-    const capsule = decodeIntentCapsule(accountInfo.data)
-    capsule.accountOwner = accountInfo.owner
+    // Beneficiaries live in the separate BeneficiarySet (TEE w/ token, or base post-reveal).
+    capsule.beneficiaries = await readBeneficiaries(owner, token ?? getCachedTeeToken(owner))
     return capsule
   } catch (error) {
     console.error('Error fetching capsule:', error, 'owner:', owner.toString())
@@ -1063,9 +1182,9 @@ export async function getCapsuleByAddress(
     const accountInfo = await connection.getAccountInfo(capsulePda)
     if (!accountInfo || !accountInfo.data) return null
 
-    // Delegated: read the live copy from the TEE/ER (token unlocks the private beneficiaries).
+    // Liveness: delegated Switch -> read the live copy from the regular ER (token-free); else base.
     const capsule = accountInfo.owner.equals(DELEGATION_PROGRAM_ID)
-      ? await decodeDelegatedCapsule(capsulePda, accountInfo, token)
+      ? await decodeDelegatedCapsule(capsulePda, accountInfo)
       : (() => {
           const c = decodeIntentCapsule(accountInfo.data)
           c.accountOwner = accountInfo.owner
@@ -1073,6 +1192,8 @@ export async function getCapsuleByAddress(
         })()
 
     if (!capsule) return null
+    // Beneficiaries live in the separate BeneficiarySet (TEE w/ token, or base post-reveal).
+    capsule.beneficiaries = await readBeneficiaries(capsule.owner, token ?? getCachedTeeToken(capsule.owner))
     return { ...capsule, capsuleAddress: capsulePda.toBase58() }
   } catch {
     return null
@@ -1080,13 +1201,18 @@ export async function getCapsuleByAddress(
 }
 
 /**
- * Commit + undelegate the Switch (and its PER permission) from the ER back to the base layer
- * (crank_undelegate: 7 lean accounts). Gated on-chain to fired capsules. Waits for the base account
- * to be program-owned again before returning.
+ * Owner escape hatch: bring BOTH the Switch and the private BeneficiarySet back to the base layer.
+ * Two steps in sequence (each gated on-chain to owner-or-fired):
+ *   1. crank_undelegate (Switch, regular ER, 5 accounts, token-free), then
+ *   2. crank_undelegate_beneficiaries (BeneficiarySet, TEE, 8 accounts) - the privacy reveal, which
+ *      needs the owner's auth token and the Switch already back on base (step 1).
+ * Each step is skipped if that account is already on base. Waits for the base account to be
+ * program-owned again after each step.
  */
 export async function undelegateCapsule(
   wallet: WalletContextState,
-  ownerPublicKey?: PublicKey
+  ownerPublicKey?: PublicKey,
+  token?: string
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
@@ -1094,26 +1220,10 @@ export async function undelegateCapsule(
 
   const ownerKey = ownerPublicKey ?? wallet.publicKey
   const [capsulePDA] = getCapsulePDA(ownerKey)
-  const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(ownerKey)
   const programId = getProgramId()
-
-  const ix = await program.methods
-    .crankUndelegate()
-    .accountsPartial({
-      payer: wallet.publicKey,
-      owner: ownerKey,
-      capsule: capsulePDA,
-      permission: permissionPDA,
-      permissionProgram: PERMISSION_PROGRAM_ID,
-      magicContext: MAGIC_CONTEXT_ID,
-      magicProgram: MAGIC_PROGRAM_ID,
-    })
-    .instruction()
-
-  const erConnection = new Connection(MAGICBLOCK_ER.ER_RPC_URL, { commitment: 'confirmed' })
-  const txSig = await sendEr(erConnection, wallet, [ix])
-
   const baseConnection = getSolanaConnection()
+
   const waitForBaseProgramOwner = async (account: PublicKey, timeoutMs = 20_000): Promise<boolean> => {
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
@@ -1124,13 +1234,53 @@ export async function undelegateCapsule(
     return false
   }
 
-  const capsuleReady = await waitForBaseProgramOwner(capsulePDA)
-  if (!capsuleReady) {
-    throw new Error('Undelegation submitted but not yet visible on base layer')
+  let lastSig = ''
+
+  // ---- Step 1: undelegate the Switch from the regular ER ----
+  if (await isAccountDelegated(capsulePDA)) {
+    const ix = await program.methods
+      .crankUndelegate()
+      .accountsPartial({
+        payer: wallet.publicKey,
+        owner: ownerKey,
+        capsule: capsulePDA,
+        magicContext: MAGIC_CONTEXT_ID,
+        magicProgram: MAGIC_PROGRAM_ID,
+      })
+      .instruction()
+    lastSig = await sendEr(regularErConnection(), wallet, [ix])
+    if (!(await waitForBaseProgramOwner(capsulePDA))) {
+      throw new Error('Switch undelegation submitted but not yet visible on base layer')
+    }
   }
 
-  debugLog('[undelegateCapsule] Success. Tx:', txSig)
-  return txSig
+  // ---- Step 2: reveal the BeneficiarySet from the TEE (needs the owner's auth token) ----
+  if (await isAccountDelegated(beneficiarySetPDA)) {
+    const teeToken = token ?? getCachedTeeToken(ownerKey) ?? (await getTeeAuthToken(wallet))
+    setCachedTeeToken(ownerKey, teeToken)
+    const [permissionPDA] = getPermissionPDA(beneficiarySetPDA, PERMISSION_PROGRAM_ID)
+    const ix = await program.methods
+      .crankUndelegateBeneficiaries()
+      .accountsPartial({
+        payer: wallet.publicKey,
+        owner: ownerKey,
+        beneficiarySet: beneficiarySetPDA,
+        switch: capsulePDA,
+        permission: permissionPDA,
+        permissionProgram: PERMISSION_PROGRAM_ID,
+        magicContext: MAGIC_CONTEXT_ID,
+        magicProgram: MAGIC_PROGRAM_ID,
+      })
+      .instruction()
+    lastSig = await sendEr(getTeeConnection(teeToken), wallet, [ix])
+    if (!(await waitForBaseProgramOwner(beneficiarySetPDA))) {
+      throw new Error('Beneficiary reveal submitted but not yet visible on base layer')
+    }
+  }
+
+  if (!lastSig) throw new Error('Nothing to undelegate (Switch and BeneficiarySet already on base)')
+  debugLog('[undelegateCapsule] Success. Tx:', lastSig)
+  return lastSig
 }
 
 /**
@@ -1212,11 +1362,13 @@ export async function cancelCapsule(wallet: WalletContextState, mint?: PublicKey
 
   const owner = wallet.publicKey
   const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
 
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
+        beneficiarySet: beneficiarySetPDA,
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,
@@ -1227,6 +1379,7 @@ export async function cancelCapsule(wallet: WalletContextState, mint?: PublicKey
       }
     : {
         capsule: capsulePDA,
+        beneficiarySet: beneficiarySetPDA,
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,

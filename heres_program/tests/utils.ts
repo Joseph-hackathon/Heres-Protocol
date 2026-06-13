@@ -59,6 +59,11 @@ export const vaultPda = (owner: PublicKey) =>
     [Buffer.from("capsule_vault"), owner.toBuffer()],
     PROGRAM_ID
   )[0];
+export const beneficiarySetPda = (owner: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("beneficiary_set"), owner.toBuffer()],
+    PROGRAM_ID
+  )[0];
 // SDK permission seed is "permission:" (with the colon) - Permission::find_pda.
 export const permissionPda = (capsule: PublicKey) =>
   PublicKey.findProgramAddressSync(
@@ -229,6 +234,14 @@ export async function fetchFeeConfig(env: Env): Promise<any | null> {
   const acct = await env.client.getAccount(feeConfigPda());
   if (!acct) return null;
   return decode(env, "FeeConfig", Buffer.from(acct.data));
+}
+
+// The private beneficiary list now lives in its own account (split out of the Switch). In bankrun it
+// is never delegated, so update_intent / distribute / cancel / recreate operate on it directly.
+export async function fetchBeneficiarySet(env: Env, owner: PublicKey): Promise<any | null> {
+  const acct = await env.client.getAccount(beneficiarySetPda(owner));
+  if (!acct) return null;
+  return decode(env, "BeneficiarySet", Buffer.from(acct.data));
 }
 
 function decode(env: Env, name: string, data: Buffer): any {

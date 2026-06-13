@@ -46,6 +46,21 @@ export function getCapsuleVaultPDA(owner: PublicKey): [PublicKey, number] {
 }
 
 /**
+ * Derive the BeneficiarySet PDA (seeds = ["beneficiary_set", owner]).
+ *
+ * Workstream A split the private beneficiary list out of the Switch into its own account so only it
+ * needs TEE delegation. The Switch (liveness) lives on a regular ER; this set is the single enclave-
+ * resident account. Set/edited via update_intent (routed to the TEE), revealed on the base layer via
+ * crank_undelegate_beneficiaries before distribution.
+ */
+export function getBeneficiarySetPDA(owner: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('beneficiary_set'), owner.toBuffer()],
+    getProgramId()
+  )
+}
+
+/**
  * Derive Magicblock Buffer PDA (seeds = ["buffer", pda])
  */
 export function getBufferPDA(pda: PublicKey, magicProgramId: PublicKey): [PublicKey, number] {

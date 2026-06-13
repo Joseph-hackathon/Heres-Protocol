@@ -9,11 +9,14 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js'
 import { Program, AnchorProvider, BorshAccountsCoder, type Wallet } from '@coral-xyz/anchor'
+import nacl from 'tweetnacl'
+import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk'
 import idl from '../idl/heres_program.json'
 import { getSolanaConnection } from '@/config/solana'
-import { getCapsulePDA, getCapsuleVaultPDA } from './program'
+import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA } from './program'
+import { decodeBeneficiarySet } from './lean-capsule'
 import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
-import { MAGICBLOCK_ER } from '@/constants'
+import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
@@ -26,18 +29,39 @@ const MAGIC_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_PROGRAM_ID)
 // distribute_assets is gated on-chain by this post-fire grace window (constants.rs GRACE_PERIOD).
 const GRACE_PERIOD = 48 * 60 * 60
 
-// The ER endpoint the crank submits crank_undelegate to. Defaults to the regular ER. For the
-// Private/TEE ER this must be a token-authed URL (mint a crank auth token out of band and set it
-// here, e.g. https://devnet-tee.magicblock.app?token=...). TODO: in-crank per-key token minting.
+// Workstream A: the Switch lives on a REGULAR ER (token-free), so crank_undelegate goes here. Defaults
+// to the regular ER RPC. The TEE is only touched for the rare BeneficiarySet reveal (see below).
 const CRANK_ER_RPC_URL = process.env.CRANK_ER_RPC_URL || MAGICBLOCK_ER.ER_RPC_URL
 
 const accountsCoder = new BorshAccountsCoder(idl as any)
 
-// SDK permission seed is "permission:" (with the colon - Permission::find_pda). The shared
-// getPermissionPDA in lib/program.ts uses the colon-less "permission" seed, which is wrong for the
-// lean program; derive locally so the crank is correct. (lib/program.ts fix = frontend phase.)
-function permissionPda(capsule: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync([Buffer.from('permission:'), capsule.toBuffer()], PERMISSION_PROGRAM_ID)[0]
+// SDK permission seed is "permission:" (with the colon - Permission::find_pda). The permission is now
+// derived from the BeneficiarySet PDA (the only TEE-delegated account), not the Switch.
+function permissionPda(account: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from('permission:'), account.toBuffer()], PERMISSION_PROGRAM_ID)[0]
+}
+
+// ---- Server-side TEE auth token (BeneficiarySet reveal only) ----------------------------------------
+//
+// The hot path (heartbeats, Switch undelegate) is token-free. Only the rare privacy reveal -
+// crank_undelegate_beneficiaries, run once per fired capsule after the grace window - touches the TEE,
+// which requires a per-key auth token. The crank wallet mints its own with nacl (no browser wallet).
+// An operator can instead pin a pre-authed URL via CRANK_TEE_RPC_URL (...&token=...).
+let crankTeeTokenCache: string | null = null
+
+async function getCrankTeeToken(crankKeypair: Keypair, forceRefresh = false): Promise<string> {
+  const pinned = process.env.CRANK_TEE_RPC_URL?.match(/[?&]token=([^&]+)/)?.[1]
+  if (pinned) return decodeURIComponent(pinned)
+  if (crankTeeTokenCache && !forceRefresh) return crankTeeTokenCache
+  const signMessage = async (msg: Uint8Array) => nacl.sign.detached(msg, crankKeypair.secretKey)
+  const { token } = await getAuthToken(PER_TEE.AUTH_URL, crankKeypair.publicKey, signMessage)
+  crankTeeTokenCache = token
+  return token
+}
+
+function teeRpcUrl(token: string): string {
+  if (process.env.CRANK_TEE_RPC_URL) return process.env.CRANK_TEE_RPC_URL
+  return `${PER_TEE.RPC_URL}?token=${token}`
 }
 
 function ata(mint: PublicKey, owner: PublicKey): PublicKey {
@@ -130,10 +154,12 @@ type LeanCapsule = {
   isActive: boolean
   executedAt: number | null
   vaultBump: number
-  beneficiaries: LeanBeneficiary[]
 }
 
-/** Decode a base-layer (undelegated, program-owned) Switch with the lean IDL layout. */
+/**
+ * Decode a base-layer (undelegated, program-owned) Switch with the lean IDL layout. Liveness only -
+ * the beneficiary list now lives in the BeneficiarySet (decoded separately for distribution).
+ */
 function decodeLeanCapsule(data: Buffer): LeanCapsule {
   const c = accountsCoder.decode('IntentCapsule', data) as any
   return {
@@ -143,61 +169,63 @@ function decodeLeanCapsule(data: Buffer): LeanCapsule {
     isActive: c.is_active,
     executedAt: c.executed_at == null ? null : c.executed_at.toNumber(),
     vaultBump: c.vault_bump,
-    beneficiaries: (c.beneficiaries ?? []).map((b: any) => ({ pubkey: b.pubkey, shareBps: b.share_bps })),
   }
 }
 
+type BaseInfo = { accountOwner: PublicKey; data: Buffer }
+type OwnerBaseInfos = { switch: BaseInfo | null; benSet: BaseInfo | null }
+
 /**
- * Batch-fetch BASE account infos for many owners (one getMultipleAccountsInfo per 100). The crank
- * deliberately reads ONLY the base layer: a delegated Switch lives in the Private/TEE ER where the
- * Query Filtering Service filters the crank's reads, so its liveness is unreadable here. The base
- * account's owner alone tells us delegated (owner = delegation program) vs settled-on-base.
+ * Batch-fetch BASE account infos for many owners - both the Switch and the BeneficiarySet (two reads
+ * per owner, batched <=100 keys per getMultipleAccountsInfo). The crank reads ONLY the base layer; an
+ * account's base owner tells us delegated (owner = delegation program) vs settled-on-base. The Switch
+ * (regular ER) and the BeneficiarySet (TEE) are delegated independently, so each is tracked separately:
+ * the two-step undelegate sequences off whichever is still delegated.
  */
-async function fetchBaseInfos(
-  owners: string[]
-): Promise<Map<string, { accountOwner: PublicKey; data: Buffer } | null>> {
-  const out = new Map<string, { accountOwner: PublicKey; data: Buffer } | null>()
+async function fetchBaseInfos(owners: string[]): Promise<Map<string, OwnerBaseInfos>> {
+  const out = new Map<string, OwnerBaseInfos>()
   const connection = getSolanaConnection()
 
-  const targets: { ownerStr: string; capsulePDA: PublicKey }[] = []
+  const targets: { ownerStr: string; capsulePDA: PublicKey; benSetPDA: PublicKey }[] = []
   for (const ownerStr of owners) {
     try {
-      const [capsulePDA] = getCapsulePDA(new PublicKey(ownerStr))
-      targets.push({ ownerStr, capsulePDA })
+      const ownerKey = new PublicKey(ownerStr)
+      const [capsulePDA] = getCapsulePDA(ownerKey)
+      const [benSetPDA] = getBeneficiarySetPDA(ownerKey)
+      targets.push({ ownerStr, capsulePDA, benSetPDA })
     } catch {
       // skip unparseable owner string
     }
   }
 
-  const CHUNK = 100
+  const CHUNK = 50 // 2 accounts per owner -> <=100 keys per RPC call
   for (let i = 0; i < targets.length; i += CHUNK) {
     const slice = targets.slice(i, i + CHUNK)
-    const infos = await connection.getMultipleAccountsInfo(
-      slice.map((t) => t.capsulePDA),
-      'confirmed'
-    )
+    const keys: PublicKey[] = []
+    for (const t of slice) keys.push(t.capsulePDA, t.benSetPDA)
+    const infos = await connection.getMultipleAccountsInfo(keys, 'confirmed')
     for (let j = 0; j < slice.length; j++) {
-      const info = infos[j]
-      out.set(slice[j].ownerStr, info ? { accountOwner: info.owner, data: info.data } : null)
+      const sw = infos[2 * j]
+      const bs = infos[2 * j + 1]
+      out.set(slice[j].ownerStr, {
+        switch: sw ? { accountOwner: sw.owner, data: sw.data } : null,
+        benSet: bs ? { accountOwner: bs.owner, data: bs.data } : null,
+      })
     }
   }
   return out
 }
 
-/** execute_intent (lean: capsule, permission_program, permission). State-only fire; no funds move. */
+/** execute_intent (lean: exactly [capsule]). State-only fire; no funds move; no PER permission. */
 function executeIntentIx(program: Program, owner: PublicKey): Promise<TransactionInstruction> {
   const [capsule] = getCapsulePDA(owner)
-  return program.methods
-    .executeIntent()
-    .accountsPartial({
-      capsule,
-      permissionProgram: PERMISSION_PROGRAM_ID,
-      permission: permissionPda(capsule),
-    })
-    .instruction()
+  return program.methods.executeIntent().accountsPartial({ capsule }).instruction()
 }
 
-/** crank_undelegate (lean accounts). Commits ER state + returns the Switch (and permission) to base. */
+/**
+ * crank_undelegate (Switch only, 5 accounts). The Switch is on a regular ER with NO PER permission, so
+ * this is a plain commit+undelegate back to base. Gated on-chain to owner-or-fired.
+ */
 function crankUndelegateIx(program: Program, payer: PublicKey, owner: PublicKey): Promise<TransactionInstruction> {
   const [capsule] = getCapsulePDA(owner)
   return program.methods
@@ -206,7 +234,32 @@ function crankUndelegateIx(program: Program, payer: PublicKey, owner: PublicKey)
       payer,
       owner,
       capsule,
-      permission: permissionPda(capsule),
+      magicContext: MAGIC_CONTEXT_ID,
+      magicProgram: MAGIC_PROGRAM_ID,
+    })
+    .instruction()
+}
+
+/**
+ * crank_undelegate_beneficiaries (the TEE privacy reveal, 8 accounts). Commits the BeneficiarySet's TEE
+ * state and undelegates it (+ its PER permission) back to base. Gated on-chain: permissionless only once
+ * the Switch has fired AND is already back on base (so this MUST run after crank_undelegate has settled).
+ */
+function crankUndelegateBeneficiariesIx(
+  program: Program,
+  payer: PublicKey,
+  owner: PublicKey
+): Promise<TransactionInstruction> {
+  const [capsule] = getCapsulePDA(owner)
+  const [benSet] = getBeneficiarySetPDA(owner)
+  return program.methods
+    .crankUndelegateBeneficiaries()
+    .accountsPartial({
+      payer,
+      owner,
+      beneficiarySet: benSet,
+      switch: capsule,
+      permission: permissionPda(benSet),
       permissionProgram: PERMISSION_PROGRAM_ID,
       magicContext: MAGIC_CONTEXT_ID,
       magicProgram: MAGIC_PROGRAM_ID,
@@ -214,7 +267,7 @@ function crankUndelegateIx(program: Program, payer: PublicKey, owner: PublicKey)
     .instruction()
 }
 
-/** True when a failed crank_undelegate was rejected by the fired-gate (not yet fired) rather than a real error. */
+/** True when a failed crank undelegate was rejected by the owner-or-fired gate rather than a real error. */
 function isNotFiredError(e: unknown): boolean {
   const m = e instanceof Error ? e.message : String(e)
   // ErrorCode::CapsuleActive = 6002 (anchor custom error base 6000); the gate rejects pre-fire undelegate.
@@ -231,12 +284,13 @@ async function distributeAll(
   program: Program,
   keypair: Keypair,
   owner: PublicKey,
-  cap: LeanCapsule
+  beneficiaries: LeanBeneficiary[]
 ): Promise<boolean> {
-  if (cap.beneficiaries.length === 0) throw new Error('capsule has no beneficiaries')
+  if (beneficiaries.length === 0) throw new Error('capsule has no beneficiaries')
   const [capsulePDA] = getCapsulePDA(owner)
+  const [benSetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
-  const recipients = cap.beneficiaries
+  const recipients = beneficiaries
 
   // 1. SPL legs first.
   const tokenAccts = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
@@ -259,6 +313,7 @@ async function distributeAll(
       .distributeAssets()
       .accountsPartial({
         capsule: capsulePDA,
+        beneficiarySet: benSetPDA,
         vault: vaultPDA,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -282,6 +337,7 @@ async function distributeAll(
         // The generated TS type omits null, so cast; the IDL is already loaded untyped (idl as any).
         .accountsPartial({
           capsule: capsulePDA,
+          beneficiarySet: benSetPDA,
           vault: vaultPDA,
           systemProgram: SystemProgram.programId,
           tokenProgram: null,
@@ -313,6 +369,8 @@ export type PipelineResult = {
   executedBase: number
   executedEr: number
   undelegated: number
+  /** BeneficiarySet TEE -> base reveals (crank_undelegate_beneficiaries) this tick. */
+  revealed: number
   distributed: number
   errors: string[]
 }
@@ -330,20 +388,24 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
 }
 
 /**
- * Unified dead-man's-switch crank for the LEAN program (Model A: delegated Switch + base Vault).
+ * Unified dead-man's-switch crank for the LEAN program (Workstream A: Switch on a regular ER, the
+ * private BeneficiarySet on the TEE, Vault on base).
  *
- * Reads ONLY the base layer. The Switch is delegated to the Private/TEE ER from creation, where the
- * crank's reads are filtered, so it cannot see a delegated Switch's liveness - and it does not need
- * to. Firing a delegated Switch is the autonomous MagicBlock ScheduleTask's job. The crank's state
- * machine, per due capsule:
+ * Reads ONLY the base layer, tracking the Switch and the BeneficiarySet independently (each is
+ * delegated to a different ER). The hot path is TOKEN-FREE; the TEE auth token is minted lazily and
+ * used only for the rare privacy reveal. The two-step undelegate is the crux: the BeneficiarySet's
+ * reveal is gated on the Switch already being fired + back on base, so the Switch must undelegate
+ * first. State machine per due capsule:
  *
- *   delegated                      -> optimistically crank_undelegate on the ER. The on-chain
- *                                     fired-gate makes a pre-fire attempt a safe no-op; once the
- *                                     ScheduleTask has fired it, this commits the Switch back to base.
- *   base + active + elapsed        -> execute_intent on base (never-delegated / pre-delegation path).
- *   base + active + not-elapsed    -> self-heal the due index from the real on-chain fire-time.
- *   base + fired + grace elapsed   -> distribute every Vault asset, then unregister once drained.
- *   base + fired + in grace        -> wait; set the due index to the grace end.
+ *   switch delegated                  -> optimistically crank_undelegate on the regular ER (token-free).
+ *                                        Fired-gate no-ops pre-fire; the autonomous ScheduleTask fires.
+ *   switch base + active + elapsed     -> execute_intent on base (never-delegated / pre-delegation path).
+ *   switch base + active + not-elapsed -> self-heal the due index from the real on-chain fire-time.
+ *   switch base + fired + in grace     -> wait (set due index to grace end). BeneficiarySet STAYS on
+ *                                        the TEE - the list is never revealed until payout time.
+ *   switch base + fired + grace done:
+ *       benSet delegated  -> crank_undelegate_beneficiaries on the TEE (the privacy reveal; token).
+ *       benSet on base    -> distribute every Vault asset to the now-public list, then unregister.
  *
  * On-chain guards make every step idempotent (structural drain-and-close, not a flag), so a mid-tick
  * failure is recovered on the next tick.
@@ -361,11 +423,12 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
     executedBase: 0,
     executedEr: 0,
     undelegated: 0,
+    revealed: 0,
     distributed: 0,
     errors: [],
   }
 
-  let infos: Map<string, { accountOwner: PublicKey; data: Buffer } | null>
+  let infos: Map<string, OwnerBaseInfos>
   try {
     infos = await fetchBaseInfos(owners)
   } catch (e) {
@@ -378,6 +441,23 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
   const erConnection = new Connection(CRANK_ER_RPC_URL, { commitment: 'confirmed' })
   const erProgram = crankProgram(erConnection, crankKeypair)
 
+  // The TEE connection/program is built lazily (token minted on first reveal) so live capsules never
+  // pay the auth round-trip. Re-minted once on an auth failure.
+  let teeConn: Connection | null = null
+  let teeProgram: Program | null = null
+  const ensureTee = async (forceToken = false): Promise<{ conn: Connection; prog: Program }> => {
+    if (forceToken) {
+      teeConn = null
+      teeProgram = null
+    }
+    if (!teeConn || !teeProgram) {
+      const token = await getCrankTeeToken(crankKeypair, forceToken)
+      teeConn = new Connection(teeRpcUrl(token), { commitment: 'confirmed' })
+      teeProgram = crankProgram(teeConn, crankKeypair)
+    }
+    return { conn: teeConn, prog: teeProgram }
+  }
+
   for (const ownerStr of owners) {
     let owner: PublicKey
     try {
@@ -387,13 +467,12 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
     }
 
     const info = infos.get(ownerStr)
-    if (!info) continue // capsule account not found on base yet
+    if (!info || !info.switch) continue // Switch account not found on base yet
     result.scanned += 1
 
     try {
-      if (info.accountOwner.equals(DELEGATION_PROGRAM_ID)) {
-        // Delegated: liveness is unreadable here. Optimistically undelegate; the fired-gate no-ops
-        // pre-fire. Firing itself is the autonomous ScheduleTask, not the crank.
+      // ---- Switch still delegated to the regular ER: optimistically undelegate it ----
+      if (info.switch.accountOwner.equals(DELEGATION_PROGRAM_ID)) {
         const ix = await crankUndelegateIx(erProgram, crankKeypair.publicKey, owner)
         try {
           await sendEr(erConnection, crankKeypair, [ix])
@@ -405,8 +484,8 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
         continue
       }
 
-      // Settled on base (program-owned): state is public, decode it.
-      const cap = decodeLeanCapsule(info.data)
+      // ---- Switch settled on base (program-owned): state is public, decode it ----
+      const cap = decodeLeanCapsule(info.switch.data)
 
       if (cap.isActive) {
         const dueAt = cap.lastActivity + cap.inactivityPeriod
@@ -417,17 +496,50 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
         } else {
           await setCapsuleDue(ownerStr, dueAt)
         }
-      } else if (cap.executedAt != null) {
-        const graceEnd = cap.executedAt + GRACE_PERIOD
-        if (now >= graceEnd) {
-          const drained = await distributeAll(connection, baseProgram, crankKeypair, owner, cap)
-          result.distributed += 1
-          if (drained) await unregisterCapsuleOwner(ownerStr)
-        } else {
-          await setCapsuleDue(ownerStr, graceEnd) // wait out the post-fire grace window
-        }
+        continue
       }
-      // else: inactive and never executed -> anomaly, skip.
+
+      if (cap.executedAt == null) continue // inactive and never executed -> anomaly, skip.
+
+      // ---- Fired Switch on base. Hold the reveal until the grace window elapses ----
+      const graceEnd = cap.executedAt + GRACE_PERIOD
+      if (now < graceEnd) {
+        await setCapsuleDue(ownerStr, graceEnd) // BeneficiarySet stays private on the TEE until payout
+        continue
+      }
+
+      // ---- Grace elapsed: reveal the BeneficiarySet (if still on the TEE), else distribute ----
+      const benSetDelegated = !!info.benSet && info.benSet.accountOwner.equals(DELEGATION_PROGRAM_ID)
+      if (benSetDelegated) {
+        // Privacy reveal: commit + undelegate the BeneficiarySet from the TEE back to base. Gated
+        // on-chain by the now-fired, base-resident Switch (read inside the instruction).
+        try {
+          const { conn, prog } = await ensureTee()
+          await sendEr(conn, crankKeypair, [await crankUndelegateBeneficiariesIx(prog, crankKeypair.publicKey, owner)])
+          result.revealed += 1
+        } catch (e) {
+          const m = e instanceof Error ? e.message : String(e)
+          if (/401|unauthor|invalid token|auth/i.test(m)) {
+            // Token likely expired -> re-mint once and retry the reveal.
+            const { conn, prog } = await ensureTee(true)
+            await sendEr(conn, crankKeypair, [await crankUndelegateBeneficiariesIx(prog, crankKeypair.publicKey, owner)])
+            result.revealed += 1
+          } else {
+            throw e
+          }
+        }
+        continue // BeneficiarySet settles to base; distribute on a later tick
+      }
+
+      // BeneficiarySet is on base (revealed): decode the now-public list and pay out.
+      if (!info.benSet) {
+        result.errors.push(`${ownerStr}: fired + grace elapsed but BeneficiarySet account missing`)
+        continue
+      }
+      const beneficiaries = decodeBeneficiarySet(info.benSet.data).beneficiaries
+      const drained = await distributeAll(connection, baseProgram, crankKeypair, owner, beneficiaries)
+      result.distributed += 1
+      if (drained) await unregisterCapsuleOwner(ownerStr)
     } catch (e) {
       result.ok = false
       result.errors.push(`${ownerStr}: ${e instanceof Error ? e.message : String(e)}`)
