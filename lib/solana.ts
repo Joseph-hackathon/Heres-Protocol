@@ -23,6 +23,7 @@ import {
   getDelegationRecordPDA,
   getDelegationMetadataPDA,
   getPermissionPDA,
+  getRelayerPubkey,
 } from './program'
 import { SOLANA_CONFIG, PLATFORM_FEE, MAGICBLOCK_ER } from '@/constants'
 import { debugLog } from '@/lib/log'
@@ -263,7 +264,8 @@ async function sendBaseBatch(
 /**
  * Create a new Intent Capsule (Switch + Vault). Beneficiaries are NOT set here (use updateIntent);
  * the vault is NOT funded here (use deposit). heartbeatAuthority is the key allowed to send the
- * liveness heartbeat (update_activity); defaults to the owner.
+ * liveness heartbeat (update_activity); defaults to the protocol relayer so the off-chain liveness
+ * service can bump last_activity (the owner can always bump too via the on-chain is_owner branch).
  */
 export async function createCapsule(
   wallet: WalletContextState,
@@ -282,7 +284,7 @@ export async function createCapsule(
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : getProgramId() // sentinel when no fee recipient is configured
 
-  const hb = heartbeatAuthority ?? owner
+  const hb = heartbeatAuthority ?? getRelayerPubkey()
 
   // Retry transient RPC failures (503/blockhash/timeout) with exponential backoff.
   const maxRetries = 5
@@ -588,7 +590,7 @@ export type CreateDelegatedCapsuleParams = {
   depositBaseUnits: number | BN
   /** SPL mint, or null/undefined for native SOL. */
   mint?: PublicKey | null
-  /** Liveness heartbeat authority; defaults to the owner. */
+  /** Liveness heartbeat authority; defaults to the protocol relayer (off-chain liveness service). */
   heartbeatAuthority?: PublicKey
   /** Override the delegation validator; defaults to the TEE node (VALIDATOR_TEE). */
   validator?: PublicKey
@@ -626,7 +628,7 @@ export async function createDelegatedCapsule(
   const [feeConfigPDA] = getFeeConfigPDA()
   const [permissionPDA] = getPermissionPDA(capsulePDA, PERMISSION_PROGRAM_ID)
 
-  const hb = params.heartbeatAuthority ?? owner
+  const hb = params.heartbeatAuthority ?? getRelayerPubkey()
   const validator = params.validator ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE)
   const mint = params.mint ?? null
   const amt = params.depositBaseUnits instanceof BN ? params.depositBaseUnits : new BN(params.depositBaseUnits)

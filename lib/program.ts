@@ -4,6 +4,16 @@
 
 import { PublicKey } from '@solana/web3.js'
 import { getProgramId } from '@/config/solana'
+import { SOLANA_CONFIG } from '@/constants'
+
+/**
+ * The protocol relayer pubkey (crank wallet). Default heartbeat_authority for new capsules: the
+ * off-chain liveness service signs update_activity as this key, and delegate_capsule makes it the
+ * interact-only TEE permission member. Must match the keypair behind CRANK_WALLET_PRIVATE_KEY.
+ */
+export function getRelayerPubkey(): PublicKey {
+  return new PublicKey(SOLANA_CONFIG.CRANK_WALLET_PUBLIC_KEY)
+}
 
 /**
  * Derive capsule PDA (Program Derived Address)

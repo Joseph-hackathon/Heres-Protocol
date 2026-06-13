@@ -495,8 +495,9 @@ export default function CreatePage() {
         beneficiaries: leanBeneficiaries,
         depositBaseUnits,
         mint: selectedMint ?? null,
-        // heartbeat_authority defaults to the owner (the wallet can send its own liveness heartbeat).
-        heartbeatAuthority: publicKey,
+        // heartbeat_authority defaults to the protocol relayer so the off-chain liveness service can
+        // bump last_activity from detected wallet activity. Owner can still bump (on-chain is_owner
+        // branch). Unset -> relayer default in createDelegatedCapsule.
         recreate,
         onStep: (label) => setCurrentStep(label),
       })

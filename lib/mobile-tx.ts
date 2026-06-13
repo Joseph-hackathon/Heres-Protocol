@@ -3,7 +3,7 @@ import { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana
 import idl from '@/idl/heres_program.json'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG } from '@/constants'
-import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
+import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA, getRelayerPubkey } from '@/lib/program'
 import { daysToSeconds } from '@/utils/intent'
 import { isValidAmountString } from '@/lib/assets'
 
@@ -84,9 +84,12 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     : owner
 
   // Lean flow as three base-layer instructions in one tx the mobile app signs once: create the Switch
-  // (heartbeat_authority = owner), set the single beneficiary at 100% (10000 bps), and fund the Vault.
+  // (heartbeat_authority = relayer, so the off-chain liveness service can bump), set the single
+  // beneficiary at 100% (10000 bps), and fund the Vault. NOTE: this mobile path is still base-only -
+  // it does NOT delegate to the TEE, so the single beneficiary is set on the public base layer (known
+  // gap: gate or rework to the multi-step TEE flow before mobile ships).
   const createIx = await program.methods
-    .createCapsule(new BN(inactivitySeconds), owner)
+    .createCapsule(new BN(inactivitySeconds), getRelayerPubkey())
     .accountsPartial({
       capsule: capsulePDA,
       vault: vaultPDA,

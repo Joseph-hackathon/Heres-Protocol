@@ -100,7 +100,12 @@ export const SOLANA_CONFIG = {
       getDefaultSolanaRpcUrl(normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK)),
     /** Platform wallet for creation/execution fees */
     PLATFORM_FEE_RECIPIENT: process.env.NEXT_PUBLIC_PLATFORM_FEE_RECIPIENT || 'Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb',
-    CRANK_WALLET_PUBLIC_KEY: process.env.NEXT_PUBLIC_CRANK_WALLET_PUBLIC_KEY || '8DzPUhZ8Jd6Rfu9R7QWuZ7gMBjdrnrjH22FHyfDUPeHW',
+    // Relayer / crank wallet pubkey. Doubles as the default heartbeat_authority on new capsules so the
+    // off-chain liveness service can bump last_activity. MUST match the keypair behind
+    // CRANK_WALLET_PRIVATE_KEY (the heartbeat tx signer + the interact-only TEE permission member);
+    // a mismatch silently breaks heartbeats and the switch fires on a living owner. Default = the live
+    // devnet relayer (3Xjbnum...), not a placeholder.
+    CRANK_WALLET_PUBLIC_KEY: process.env.NEXT_PUBLIC_CRANK_WALLET_PUBLIC_KEY || '3XjbnUmCRfq6tHZCfXuDSMKoapyxj9pnkaJSTVRfcEqd',
     USE_MAGICBLOCK_PRIVATE_PAYMENTS: process.env.USE_MAGICBLOCK_PRIVATE_PAYMENTS === '1',
     MAGICBLOCK_PRIVATE_PAYMENTS_BASE_URL: process.env.MAGICBLOCK_PRIVATE_PAYMENTS_BASE_URL || 'https://payments.magicblock.app',
     MAGICBLOCK_PRIVATE_PAYMENTS_API_KEY: process.env.MAGICBLOCK_PRIVATE_PAYMENTS_API_KEY || '',

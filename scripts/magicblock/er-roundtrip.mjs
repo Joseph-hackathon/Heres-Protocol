@@ -160,7 +160,7 @@ const sendBase = (ixs, signers) =>
 
 const funder = loadKp(sk('id.json'));         // 44 SOL faucet wallet
 const crankKp = loadKp(sk('heres-crank.json'));   // permissionless crank (undelegate payer)
-const relayerKp = loadKp(sk('heres-relayer.json')); // heartbeat_authority
+const relayerKp = loadKp(sk(process.env.RELAYER_KEY ?? 'heres-relayer.json')); // heartbeat_authority
 const ownerKp = Keypair.generate();              // throwaway capsule owner
 const ben1 = Keypair.generate();
 const ben2 = Keypair.generate();
