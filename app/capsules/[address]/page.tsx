@@ -588,15 +588,21 @@ export default function CapsuleDetailPage() {
     )
   }
 
+  // Effective due time = the earlier of the inactivity deadline and the optional fixed target date.
+  // The inactivity deadline slides forward on each heartbeat, so once it passes the fixed date the
+  // date becomes the binding trigger - mirrors the on-chain `inactivity_due || date_due` condition.
+  const inactivityDueTs = capsule.lastActivity + capsule.inactivityPeriod
+  const effectiveDueTs = capsule.targetDate != null ? Math.min(inactivityDueTs, capsule.targetDate) : inactivityDueTs
   const status = capsule.executedAt
     ? 'Executed'
     : !capsule.isActive
       ? 'Waiting'
-      : capsule.lastActivity + capsule.inactivityPeriod < Math.floor(Date.now() / 1000)
+      : effectiveDueTs < Math.floor(Date.now() / 1000)
         ? 'Expired'
         : 'Active'
   const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
   const lastUpdatedMs = capsule.lastActivity ? capsule.lastActivity * 1000 : null
+  const targetDateMs = capsule.targetDate != null ? capsule.targetDate * 1000 : null
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
   const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
 
@@ -625,7 +631,7 @@ export default function CapsuleDetailPage() {
             className="mb-6"
             eyebrow={<SectionEyebrow>Capsule Detail</SectionEyebrow>}
             title="Capsule"
-            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}`}
+            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}${targetDateMs != null ? ` · Fires by ${new Date(targetDateMs).toLocaleDateString()}` : ''}`}
             statusLine={`Updated ${timeAgo(lastUpdatedMs)}`}
             badges={
               <>
@@ -696,6 +702,18 @@ export default function CapsuleDetailPage() {
               <p className="text-sm font-mono text-Heres-white">
                 {capsule.beneficiaries.length > 0 ? `${capsule.beneficiaries.length} on-chain` : 'Not set'}
               </p>
+            </ServiceMetaCard>
+            <ServiceMetaCard label="Trigger">
+              <p className="text-sm font-medium text-Heres-white">
+                {formatDuration(capsule.inactivityPeriod)} inactivity
+              </p>
+              {targetDateMs != null ? (
+                <p className="mt-0.5 text-xs text-Heres-accent">
+                  or fixed date {new Date(targetDateMs).toLocaleDateString()} (whichever first)
+                </p>
+              ) : (
+                <p className="mt-0.5 text-xs text-Heres-muted">No fixed date</p>
+              )}
             </ServiceMetaCard>
           </ServiceMetaGrid>
 
@@ -872,12 +890,12 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
-                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. The inactivity period has not elapsed yet. Actions will become available once the capsule expires.
+                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} Actions will become available once the capsule expires.
                     </p>
                   )}
                   {canExecute && (
                     <p className="text-sm text-amber-400">
-                      Inactivity period has elapsed. You can now <strong>Execute Intent</strong> to deactivate the capsule, then distribute assets.
+                      {targetDateMs != null ? 'A trigger condition has been met' : 'Inactivity period has elapsed'}. You can now <strong>Execute Intent</strong> to deactivate the capsule, then distribute assets.
                     </p>
                   )}
                   {isExpired && !isExecuted && (
@@ -948,7 +966,7 @@ export default function CapsuleDetailPage() {
                     type="button"
                     onClick={handleExecuteIntent}
                     disabled={!canExecute || !!actionLoading}
-                    title={!canExecute ? (isActive ? 'Inactivity period not elapsed' : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
+                    title={!canExecute ? (isActive ? (targetDateMs != null ? 'No trigger condition met yet' : 'Inactivity period not elapsed') : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
                     className="rounded-lg border border-Heres-accent px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-accent/10 text-Heres-accent hover:bg-Heres-accent/20"
                   >
                     {actionLoading === 'execute' ? 'Executing...' : isExecuted ? 'Executed ✓' : 'Execute Intent'}
