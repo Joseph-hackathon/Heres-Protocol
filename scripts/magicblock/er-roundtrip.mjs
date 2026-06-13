@@ -77,6 +77,12 @@ const MAGIC_CONTEXT_ID = new PublicKey('MagicContext1111111111111111111111111111
 const PERMISSION_PROGRAM_ID = new PublicKey('ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1');
 
 const INACTIVITY = Number(process.env.INACTIVITY ?? 5);
+// MODE 'inactivity' (default): dead-man's-switch, target_date = null, fires on the inactivity window.
+// MODE 'date': set an absolute target_date a few seconds out + a LONG inactivity, so the autonomous
+// fire can ONLY come from the date trigger - proves execute_intent's `inactivity_due || date_due` on
+// a live ER (the on-chain half of the target_date feature).
+const MODE = (process.env.MODE ?? 'inactivity').toLowerCase();
+const DATE_OFFSET_S = Number(process.env.DATE_OFFSET_S ?? 12);
 const SCHEDULE_INTERVAL_MS = Number(process.env.SCHEDULE_INTERVAL_MS ?? 3000);
 const SCHEDULE_ITERS = Number(process.env.SCHEDULE_ITERS ?? 6);
 const FUND_SOL = Number(process.env.FUND_SOL ?? 0.25);
@@ -256,8 +262,12 @@ try {
   console.log(`1. funded owner ${FUND_SOL} SOL`);
 
   // ---- 2. create_capsule (base; 3 PDAs; no beneficiaries; heartbeat_authority = relayer) ----
+  // In date mode use a long inactivity so the date is the only trigger that can fire the switch.
+  const effectiveInactivity = MODE === 'date' ? Math.max(INACTIVITY, 3600) : INACTIVITY;
+  const targetDateUnix = MODE === 'date' ? Math.floor(Date.now() / 1000) + DATE_OFFSET_S : null;
+  console.log(`   mode=${MODE} inactivity=${effectiveInactivity}s target_date=${targetDateUnix ?? 'null'}`);
   const createIx = await program.methods
-    .createCapsule(new BN(INACTIVITY), relayerKp.publicKey)
+    .createCapsule(new BN(effectiveInactivity), relayerKp.publicKey, targetDateUnix != null ? new BN(targetDateUnix) : null)
     .accountsPartial({
       capsule, beneficiarySet: benSet, vault, owner: ownerKp.publicKey, feeConfig,
       platformFeeRecipient: PROGRAM_ID,
@@ -418,8 +428,11 @@ try {
   } catch (e) { rDetail = 'recover err: ' + (e.message?.slice(0, 90) ?? ''); }
   check('escape hatch: owner recover_vault while Switch DELEGATED returns funds', recovered, rDetail);
 
-  // ---- 7. wait out the inactivity window, then schedule the autonomous crank on the regular ER ----
-  await sleep((INACTIVITY + 3) * 1000);
+  // ---- 7. wait out the trigger, then schedule the autonomous crank on the regular ER ----
+  // Schedule only once the capsule is actually due, so the first ScheduleTask iteration succeeds.
+  // Inactivity mode: wait the inactivity window. Date mode: the delegations already took longer than
+  // DATE_OFFSET_S, so target_date is in the past now - a short settle wait is enough.
+  await sleep((MODE === 'date' ? Math.max(DATE_OFFSET_S - 20, 2) + 3 : INACTIVITY + 3) * 1000);
   const args = { taskId: new BN(Date.now()), executionIntervalMillis: new BN(SCHEDULE_INTERVAL_MS), iterations: new BN(SCHEDULE_ITERS) };
   const schedIx = await program.methods
     .scheduleExecuteIntent(args)
@@ -501,6 +514,17 @@ try {
     const cap = decodeCapsule((await getAcct(baseConn, capsule)).data);
     check('base: Switch is_active = false', cap.is_active === false);
     check('base: Switch executed_at set', cap.executed_at != null, cap.executed_at?.toString());
+    if (MODE === 'date') {
+      const ea = cap.executed_at != null ? Number(cap.executed_at) : null;
+      const la = Number(cap.last_activity);
+      const td = cap.target_date != null ? Number(cap.target_date) : null;
+      check('date mode: target_date persisted on-chain', td === targetDateUnix, `on-chain=${td} expected=${targetDateUnix}`);
+      // The clincher: it fired AFTER the target_date but well BEFORE the (3600s) inactivity deadline,
+      // so the date trigger - not inactivity - is what fired execute_intent on the live ER.
+      check('date mode: fired via target_date, NOT inactivity',
+        ea != null && td != null && ea >= td && ea < la + effectiveInactivity,
+        `executed_at=${ea} target_date=${td} inactivity_deadline=${la + effectiveInactivity}`);
+    }
   }
   if (benBack) {
     const bs = decodeBenSet((await getAcct(baseConn, benSet)).data);
