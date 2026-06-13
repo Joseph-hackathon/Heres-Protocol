@@ -1,11 +1,12 @@
 //! Fire the Switch when the inactivity period elapses. Permissionless (no owner signature) and
 //! state-only: it flips is_active -> false and stamps executed_at. Funds never move here; payout
 //! happens on the base layer via distribute_assets after undelegation + the grace window.
-//! Optimized for the ER/TEE: touches only the (delegated) Switch.
+//!
+//! The Switch lives on a *regular* ER (no PER permission), so this references only the Switch. The
+//! MagicBlock ScheduleTask runs it autonomously on that ER.
 
 use anchor_lang::prelude::*;
 
-use crate::constants::PERMISSION_PROGRAM_ID;
 use crate::error::ErrorCode;
 use crate::events::IntentExecuted;
 use crate::state::IntentCapsule;
@@ -18,19 +19,6 @@ pub struct ExecuteIntent<'info> {
         bump = capsule.bump
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
-
-    /// MagicBlock Permission Program.
-    /// CHECK: validated by address.
-    #[account(address = PERMISSION_PROGRAM_ID)]
-    pub permission_program: AccountInfo<'info>,
-
-    /// CHECK: PER access-control PDA; SDK seed is [b"permission:", capsule] (PERMISSION_SEED).
-    #[account(
-        seeds = [b"permission:", capsule.key().as_ref()],
-        bump,
-        seeds::program = PERMISSION_PROGRAM_ID
-    )]
-    pub permission: AccountInfo<'info>,
 }
 
 /// Fire the switch once the owner has been silent for inactivity_period. Anyone can call (this is

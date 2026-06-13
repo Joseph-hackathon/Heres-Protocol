@@ -1,4 +1,7 @@
 //! Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals on the ER.
+//!
+//! The Switch is on a regular ER (no PER permission) and execute_intent is flip-only, so the
+//! scheduled inner ix references ONLY the Switch.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
@@ -8,7 +11,6 @@ use anchor_lang::solana_program::{
 use ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID;
 use magicblock_magic_program_api::{args::ScheduleTaskArgs, instruction::MagicBlockInstruction};
 
-use crate::constants::PERMISSION_PROGRAM_ID;
 use crate::error::ErrorCode;
 
 /// Anchor discriminator for execute_intent (no args). Name-derived (sha256("global:execute_intent")),
@@ -26,36 +28,20 @@ pub struct ScheduleExecuteIntentArgs {
 pub struct ScheduleExecuteIntent<'info> {
     /// CHECK: Magic program for the ScheduleTask CPI.
     pub magic_program: AccountInfo<'info>,
-    /// Payer who signs the schedule transaction (on the PER/TEE RPC).
+    /// Payer who signs the schedule transaction (on the ER RPC).
     #[account(mut)]
     pub payer: Signer<'info>,
-    /// CHECK: Switch PDA delegated to PER/ER.
+    /// CHECK: Switch PDA delegated to the regular ER.
     #[account(mut)]
     pub capsule: AccountInfo<'info>,
-    /// MagicBlock Permission Program.
-    /// CHECK: validated by address.
-    #[account(address = PERMISSION_PROGRAM_ID)]
-    pub permission_program: AccountInfo<'info>,
-    /// CHECK: PER access-control PDA; SDK seed is [b"permission:", capsule] (PERMISSION_SEED).
-    #[account(
-        seeds = [b"permission:", capsule.key().as_ref()],
-        bump,
-        seeds::program = PERMISSION_PROGRAM_ID
-    )]
-    pub permission: AccountInfo<'info>,
 }
 
 /// Schedule a crank that runs execute_intent at intervals (MagicBlock ScheduleTask). The Vault is
-/// not delegated and execute_intent is flip-only, so the inner ix references only the Switch + the
-/// two PER access-control accounts.
+/// not delegated and execute_intent is flip-only, so the inner ix references only the Switch.
 pub fn handler(ctx: Context<ScheduleExecuteIntent>, args: ScheduleExecuteIntentArgs) -> Result<()> {
     msg!("Scheduling execute_intent crank for capsule: {:?}", ctx.accounts.capsule.key());
 
-    let inner_accounts = vec![
-        AccountMeta::new(ctx.accounts.capsule.key(), false),
-        AccountMeta::new_readonly(ctx.accounts.permission_program.key(), false),
-        AccountMeta::new_readonly(ctx.accounts.permission.key(), false),
-    ];
+    let inner_accounts = vec![AccountMeta::new(ctx.accounts.capsule.key(), false)];
     let execute_ix = Instruction {
         program_id: crate::ID,
         accounts: inner_accounts,
@@ -80,8 +66,6 @@ pub fn handler(ctx: Context<ScheduleExecuteIntent>, args: ScheduleExecuteIntentA
         vec![
             AccountMeta::new(ctx.accounts.payer.key(), true),
             AccountMeta::new(ctx.accounts.capsule.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.permission_program.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.permission.key(), false),
         ],
     );
 
@@ -91,8 +75,6 @@ pub fn handler(ctx: Context<ScheduleExecuteIntent>, args: ScheduleExecuteIntentA
             ctx.accounts.magic_program.to_account_info(),
             ctx.accounts.payer.to_account_info(),
             ctx.accounts.capsule.to_account_info(),
-            ctx.accounts.permission_program.to_account_info(),
-            ctx.accounts.permission.to_account_info(),
         ],
         &[],
     )?;

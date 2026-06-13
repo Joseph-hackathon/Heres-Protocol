@@ -13,7 +13,7 @@ use anchor_spl::token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer}
 use crate::constants::{BPS_DENOMINATOR, GRACE_PERIOD};
 use crate::error::ErrorCode;
 use crate::events::AssetsDistributed;
-use crate::state::{CapsuleVault, IntentCapsule};
+use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct DistributeAssets<'info> {
@@ -22,6 +22,16 @@ pub struct DistributeAssets<'info> {
         bump = capsule.bump
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
+
+    /// The (now-revealed) beneficiary list. Must already be committed back to base
+    /// (crank_undelegate_beneficiaries) - while delegated to the TEE this account is not program-owned
+    /// and Anchor's Account<> owner-check would reject it, which is exactly the privacy guarantee.
+    #[account(
+        seeds = [b"beneficiary_set", capsule.owner.as_ref()],
+        bump = capsule.beneficiaries_bump,
+        constraint = beneficiary_set.owner == capsule.owner @ ErrorCode::Unauthorized,
+    )]
+    pub beneficiary_set: Box<Account<'info, BeneficiarySet>>,
 
     #[account(
         mut,
@@ -50,11 +60,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
     let now = Clock::get()?.unix_timestamp;
     // Honor the post-fire grace window: the owner may still revive during it (update_activity).
     require!(now >= executed_at + GRACE_PERIOD, ErrorCode::GracePeriodNotElapsed);
-    require!(!capsule.beneficiaries.is_empty(), ErrorCode::NoBeneficiaries);
+    require!(!ctx.accounts.beneficiary_set.beneficiaries.is_empty(), ErrorCode::NoBeneficiaries);
 
     let owner_key = capsule.owner;
     let vault_bump = capsule.vault_bump;
-    let beneficiaries = &capsule.beneficiaries;
+    let beneficiaries = &ctx.accounts.beneficiary_set.beneficiaries;
     let last_idx = beneficiaries.len() - 1;
     let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
     let signer_seeds = &[vault_seeds];

@@ -8,7 +8,7 @@
 use anchor_lang::prelude::*;
 
 use crate::error::ErrorCode;
-use crate::state::IntentCapsule;
+use crate::state::{BeneficiarySet, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct RecreateCapsule<'info> {
@@ -19,6 +19,16 @@ pub struct RecreateCapsule<'info> {
         constraint = capsule.owner == owner.key() @ ErrorCode::Unauthorized,
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
+
+    /// Reset alongside the Switch. Must be back on base (undelegated) - same as the Switch after a
+    /// completed distribution. Re-delegate + re-set beneficiaries via update_intent to re-arm privacy.
+    #[account(
+        mut,
+        seeds = [b"beneficiary_set", owner.key().as_ref()],
+        bump = beneficiary_set.bump,
+        constraint = beneficiary_set.owner == owner.key() @ ErrorCode::Unauthorized,
+    )]
+    pub beneficiary_set: Box<Account<'info, BeneficiarySet>>,
 
     pub owner: Signer<'info>,
 }
@@ -36,7 +46,8 @@ pub fn handler(ctx: Context<RecreateCapsule>, inactivity_period: i64) -> Result<
     capsule.last_activity = Clock::get()?.unix_timestamp;
     capsule.is_active = true;
     capsule.executed_at = None;
-    capsule.beneficiaries = Vec::new();
+
+    ctx.accounts.beneficiary_set.beneficiaries = Vec::new();
 
     msg!("Capsule lifecycle reset (recreate) for owner: {:?}", capsule.owner);
     Ok(())

@@ -1,25 +1,12 @@
-//! The Switch: per-wallet liveness + private beneficiary list.
+//! The Switch: per-wallet liveness only (Workstream A split).
 //!
-//! Under Model A this is the ONLY delegated account (lives in the PER/TEE from creation), so the
-//! beneficiary list stays inside the enclave while the owner is alive (Tier-1 privacy). It carries
-//! no funds and no per-asset state - the base-layer Vault's token accounts are the asset manifest.
-//! Seeds = ["intent_capsule", owner].
+//! Holds the inactivity clock + the heartbeat authority. The private beneficiary list lives in a
+//! SEPARATE account (`BeneficiarySet`) so the Switch can be delegated to a *regular* ER - making
+//! heartbeats gasless AND token-free - while only the beneficiary list sits in the TEE. The Switch
+//! carries no funds and no beneficiaries; the base-layer Vault's token accounts are the asset
+//! manifest. Seeds = ["intent_capsule", owner].
 
 use anchor_lang::prelude::*;
-
-use crate::constants::MAX_BENEFICIARIES;
-
-/// One inheritance beneficiary and its share of every distributed asset, in basis points.
-/// Shares across the list must sum to `BPS_DENOMINATOR` (10000 = 100%).
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Beneficiary {
-    pub pubkey: Pubkey,
-    pub share_bps: u16,
-}
-
-impl Beneficiary {
-    pub const LEN: usize = 32 + 2;
-}
 
 #[account]
 pub struct IntentCapsule {
@@ -30,11 +17,16 @@ pub struct IntentCapsule {
     pub executed_at: Option<i64>, // set when the switch fires; doubles as the grace-window anchor
     pub bump: u8,
     pub vault_bump: u8,
-    pub heartbeat_authority: Pubkey, // off-chain relayer allowed to bump last_activity
-    pub beneficiaries: Vec<Beneficiary>, // PRIVATE while delegated; set via update_intent on the PER
+    pub beneficiaries_bump: u8,      // bump of the paired BeneficiarySet PDA (TEE), to derive/sign for it
+    pub heartbeat_authority: Pubkey, // off-chain relayer allowed to bump last_activity (regular ER)
+    pub version: u8,
+    pub reserved: [u8; 64], // future liveness fields (per-capsule grace, HA validator) - no resize
 }
 
 impl IntentCapsule {
+    /// On-chain layout version. Bump when the struct changes so future code can branch on it.
+    pub const CURRENT_VERSION: u8 = 1;
+
     pub const LEN: usize = 32 + // owner
         8 +                      // inactivity_period
         8 +                      // last_activity
@@ -42,6 +34,8 @@ impl IntentCapsule {
         1 + 8 +                  // executed_at (Option<i64>)
         1 +                      // bump
         1 +                      // vault_bump
+        1 +                      // beneficiaries_bump
         32 +                     // heartbeat_authority
-        4 + MAX_BENEFICIARIES * Beneficiary::LEN; // beneficiaries (Vec len prefix + capped elems)
+        1 +                      // version
+        64; // reserved
 }

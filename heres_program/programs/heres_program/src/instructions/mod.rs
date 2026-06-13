@@ -3,7 +3,9 @@
 
 pub mod cancel_capsule;
 pub mod crank_undelegate;
+pub mod crank_undelegate_beneficiaries;
 pub mod create_capsule;
+pub mod delegate_beneficiaries;
 pub mod delegate_capsule;
 pub mod deposit;
 pub mod distribute_assets;

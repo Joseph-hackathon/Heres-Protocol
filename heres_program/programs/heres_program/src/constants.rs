@@ -3,9 +3,16 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::pubkey::pubkey;
 
-/// TEE validator for the Private Ephemeral Rollup (PER). Default when no validator account is passed.
-/// Official MagicBlock devnet TEE validator (status.magicblock.app / magicblock-dev-skill resources).
+/// TEE validator for the Private Ephemeral Rollup (PER). Default for the BeneficiarySet delegation
+/// (the only account that needs enclave privacy). Official MagicBlock devnet TEE validator
+/// (status.magicblock.app / magicblock-dev-skill resources).
 pub const TEE_VALIDATOR: Pubkey = pubkey!("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
+
+/// Default *regular* (non-TEE) ER validator for the Switch delegation. The Switch holds no private
+/// state, so it lives on a standard ER: heartbeats are gasless AND token-free (no TEE auth), and the
+/// MagicBlock ScheduleTask fires execute_intent autonomously here. Asia devnet ER; matches the
+/// off-chain NEXT_PUBLIC_ER_VALIDATOR. Overridable per-call by passing a validator account.
+pub const DEFAULT_ER_VALIDATOR: Pubkey = pubkey!("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57");
 
 /// MagicBlock Permission Program ID (PER access control).
 pub const PERMISSION_PROGRAM_ID: Pubkey = pubkey!("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");

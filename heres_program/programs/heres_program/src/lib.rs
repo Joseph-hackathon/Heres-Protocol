@@ -11,7 +11,9 @@ pub mod state;
 // so the #[program] dispatcher can resolve them. Private (no re-export) to avoid glob ambiguity.
 use instructions::cancel_capsule::*;
 use instructions::crank_undelegate::*;
+use instructions::crank_undelegate_beneficiaries::*;
 use instructions::create_capsule::*;
+use instructions::delegate_beneficiaries::*;
 use instructions::delegate_capsule::*;
 use instructions::deposit::*;
 use instructions::distribute_assets::*;
@@ -98,14 +100,27 @@ pub mod heres_program {
         instructions::recover_vault::handler(ctx)
     }
 
-    /// Delegate the Switch to the MagicBlock ER/PER.
+    /// Delegate the Switch (liveness only) to a regular MagicBlock ER. Token-free heartbeats.
     pub fn delegate_capsule(ctx: Context<DelegateCapsuleInput>) -> Result<()> {
         instructions::delegate_capsule::handler(ctx)
+    }
+
+    /// Delegate the private BeneficiarySet to the TEE behind a PER permission (owner-only member).
+    pub fn delegate_beneficiaries(ctx: Context<DelegateBeneficiariesInput>) -> Result<()> {
+        instructions::delegate_beneficiaries::handler(ctx)
     }
 
     /// Commit ER state and undelegate the Switch back to the base layer (crank-callable).
     pub fn crank_undelegate(ctx: Context<CrankUndelegateInput>) -> Result<()> {
         instructions::crank_undelegate::handler(ctx)
+    }
+
+    /// Commit + undelegate the BeneficiarySet (and its permission) back to base: the privacy reveal,
+    /// gated on the owner OR an already-fired, base-committed Switch (crank-callable post-fire).
+    pub fn crank_undelegate_beneficiaries(
+        ctx: Context<CrankUndelegateBeneficiariesInput>,
+    ) -> Result<()> {
+        instructions::crank_undelegate_beneficiaries::handler(ctx)
     }
 
     /// Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals.

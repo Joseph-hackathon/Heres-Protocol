@@ -55,6 +55,38 @@
           }
         },
         {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
           "name": "vault",
           "writable": true,
           "pda": {
@@ -174,6 +206,109 @@
           }
         },
         {
+          "name": "magic_context",
+          "writable": true
+        },
+        {
+          "name": "magic_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "crank_undelegate_beneficiaries",
+      "docs": [
+        "Commit + undelegate the BeneficiarySet (and its permission) back to base: the privacy reveal,",
+        "gated on the owner OR an already-fired, base-committed Switch (crank-callable post-fire)."
+      ],
+      "discriminator": [
+        105,
+        113,
+        165,
+        65,
+        66,
+        62,
+        148,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Anyone can call this once the switch has fired (crank wallet); or the owner, to reveal early."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "switch",
+          "docs": [
+            "base (program-owned) for the dead-man path. Seeds [b\"intent_capsule\", owner]."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
           "name": "permission",
           "writable": true
         },
@@ -229,6 +364,38 @@
                   117,
                   108,
                   101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
                 ]
               },
               {
@@ -320,9 +487,238 @@
       ]
     },
     {
+      "name": "delegate_beneficiaries",
+      "docs": [
+        "Delegate the private BeneficiarySet to the TEE behind a PER permission (owner-only member)."
+      ],
+      "discriminator": [
+        190,
+        184,
+        64,
+        8,
+        34,
+        128,
+        120,
+        65
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "validator",
+          "optional": true
+        },
+        {
+          "name": "buffer_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                221,
+                22,
+                198,
+                50,
+                128,
+                170,
+                223,
+                127,
+                83,
+                43,
+                97,
+                173,
+                8,
+                22,
+                120,
+                143,
+                101,
+                161,
+                85,
+                154,
+                64,
+                153,
+                210,
+                120,
+                135,
+                241,
+                97,
+                17,
+                129,
+                123,
+                179
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "magic_program"
+        },
+        {
+          "name": "delegation_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "buffer_permission",
+          "writable": true
+        },
+        {
+          "name": "delegation_record_permission",
+          "writable": true
+        },
+        {
+          "name": "delegation_metadata_permission",
+          "writable": true
+        },
+        {
+          "name": "owner_program",
+          "address": "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "delegate_capsule",
       "docs": [
-        "Delegate the Switch to the MagicBlock ER/PER."
+        "Delegate the Switch (liveness only) to a regular MagicBlock ER. Token-free heartbeats."
       ],
       "discriminator": [
         127,
@@ -519,26 +915,6 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "permission_program",
-          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
-        },
-        {
-          "name": "permission",
-          "writable": true
-        },
-        {
-          "name": "buffer_permission",
-          "writable": true
-        },
-        {
-          "name": "delegation_record_permission",
-          "writable": true
-        },
-        {
-          "name": "delegation_metadata_permission",
-          "writable": true
         },
         {
           "name": "owner_program",
@@ -798,6 +1174,43 @@
           }
         },
         {
+          "name": "beneficiary_set",
+          "docs": [
+            "The (now-revealed) beneficiary list. Must already be committed back to base",
+            "(crank_undelegate_beneficiaries) - while delegated to the TEE this account is not program-owned",
+            "and Anchor's Account<> owner-check would reject it, which is exactly the privacy guarantee."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
           "name": "vault",
           "writable": true,
           "pda": {
@@ -895,77 +1308,6 @@
                 "account": "IntentCapsule"
               }
             ]
-          }
-        },
-        {
-          "name": "permission_program",
-          "docs": [
-            "MagicBlock Permission Program."
-          ],
-          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
-        },
-        {
-          "name": "permission",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  101,
-                  114,
-                  109,
-                  105,
-                  115,
-                  115,
-                  105,
-                  111,
-                  110,
-                  58
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                136,
-                161,
-                10,
-                196,
-                33,
-                152,
-                1,
-                214,
-                246,
-                106,
-                29,
-                60,
-                6,
-                152,
-                192,
-                102,
-                169,
-                175,
-                212,
-                217,
-                180,
-                252,
-                231,
-                71,
-                151,
-                141,
-                209,
-                5,
-                168,
-                212,
-                103,
-                82
-              ]
-            }
           }
         }
       ],
@@ -1244,6 +1586,42 @@
           }
         },
         {
+          "name": "beneficiary_set",
+          "docs": [
+            "Reset alongside the Switch. Must be back on base (undelegated) - same as the Switch after a",
+            "completed distribution. Re-delegate + re-set beneficiaries via update_intent to re-arm privacy."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
           "name": "owner",
           "signer": true
         }
@@ -1277,7 +1655,7 @@
         {
           "name": "payer",
           "docs": [
-            "Payer who signs the schedule transaction (on the PER/TEE RPC)."
+            "Payer who signs the schedule transaction (on the ER RPC)."
           ],
           "writable": true,
           "signer": true
@@ -1285,77 +1663,6 @@
         {
           "name": "capsule",
           "writable": true
-        },
-        {
-          "name": "permission_program",
-          "docs": [
-            "MagicBlock Permission Program."
-          ],
-          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
-        },
-        {
-          "name": "permission",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  101,
-                  114,
-                  109,
-                  105,
-                  115,
-                  115,
-                  105,
-                  111,
-                  110,
-                  58
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                136,
-                161,
-                10,
-                196,
-                33,
-                152,
-                1,
-                214,
-                246,
-                106,
-                29,
-                60,
-                6,
-                152,
-                192,
-                102,
-                169,
-                175,
-                212,
-                217,
-                180,
-                252,
-                231,
-                71,
-                151,
-                141,
-                209,
-                5,
-                168,
-                212,
-                103,
-                82
-              ]
-            }
-          }
         }
       ],
       "args": [
@@ -1495,27 +1802,28 @@
       ],
       "accounts": [
         {
-          "name": "capsule",
+          "name": "beneficiary_set",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  105,
-                  110,
-                  116,
+                  98,
                   101,
                   110,
-                  116,
-                  95,
+                  101,
+                  102,
+                  105,
                   99,
+                  105,
                   97,
-                  112,
+                  114,
+                  121,
+                  95,
                   115,
-                  117,
-                  108,
-                  101
+                  101,
+                  116
                 ]
               },
               {
@@ -1545,6 +1853,19 @@
     }
   ],
   "accounts": [
+    {
+      "name": "BeneficiarySet",
+      "discriminator": [
+        223,
+        63,
+        178,
+        126,
+        234,
+        251,
+        111,
+        217
+      ]
+    },
     {
       "name": "CapsuleVault",
       "discriminator": [
@@ -1727,7 +2048,12 @@
       "name": "Beneficiary",
       "docs": [
         "One inheritance beneficiary and its share of every distributed asset, in basis points.",
-        "Shares across the list must sum to `BPS_DENOMINATOR` (10000 = 100%)."
+        "Shares across the set must sum to `BPS_DENOMINATOR` (10000 = 100%).",
+        "",
+        "`reserved` pads each entry for a future cross-chain-heir field (e.g. a 20-byte EVM address + a",
+        "chain tag, when the CCIP heir module returns). Per-element width is the ONE dimension that",
+        "account-level padding cannot cover, so we reserve it up front to avoid a later resize of every",
+        "BeneficiarySet."
       ],
       "type": {
         "kind": "struct",
@@ -1739,6 +2065,58 @@
           {
             "name": "share_bps",
             "type": "u16"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                14
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "BeneficiarySet",
+      "docs": [
+        "Per-owner private beneficiary list. Delegated to the TEE from creation; carries no funds and no",
+        "liveness - the Switch owns liveness, the base Vault owns assets."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "beneficiaries",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -1752,7 +2130,7 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "dummy",
+            "name": "version",
             "type": "u8"
           }
         ]
@@ -1814,17 +2192,24 @@
             "type": "u8"
           },
           {
+            "name": "beneficiaries_bump",
+            "type": "u8"
+          },
+          {
             "name": "heartbeat_authority",
             "type": "pubkey"
           },
           {
-            "name": "beneficiaries",
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
             "type": {
-              "vec": {
-                "defined": {
-                  "name": "Beneficiary"
-                }
-              }
+              "array": [
+                "u8",
+                64
+              ]
             }
           }
         ]

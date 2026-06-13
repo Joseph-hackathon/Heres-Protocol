@@ -1,14 +1,16 @@
-//! Create the Switch + Vault for an owner. Liveness + heartbeat authority + creation fee only.
+//! Create the Switch + BeneficiarySet + Vault for an owner. Liveness + heartbeat authority +
+//! creation fee only.
 //!
 //! Funds are added separately via `deposit` (repeatable, multi-asset). Beneficiaries are NOT taken
 //! here and never written to the base ledger in plaintext - they are set privately via
-//! `update_intent` on the PER after delegation (redesign D8). Seeds: capsule/vault per owner.
+//! `update_intent` on the TEE after the BeneficiarySet is delegated (redesign D8). All three PDAs are
+//! initialized empty here. Seeds: capsule / beneficiary_set / vault per owner.
 
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
 use crate::error::ErrorCode;
-use crate::state::{CapsuleVault, FeeConfig, IntentCapsule};
+use crate::state::{BeneficiarySet, CapsuleVault, FeeConfig, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct CreateCapsule<'info> {
@@ -20,6 +22,15 @@ pub struct CreateCapsule<'info> {
         bump
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
+
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + BeneficiarySet::LEN,
+        seeds = [b"beneficiary_set", owner.key().as_ref()],
+        bump
+    )]
+    pub beneficiary_set: Box<Account<'info, BeneficiarySet>>,
 
     #[account(
         init,
@@ -44,7 +55,8 @@ pub struct CreateCapsule<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Initialize a new Switch + Vault. Charges the one-time creation fee; no funds locked yet.
+/// Initialize a new Switch + BeneficiarySet + Vault. Charges the one-time creation fee; no funds
+/// locked and no beneficiaries set yet.
 pub fn handler(
     ctx: Context<CreateCapsule>,
     inactivity_period: i64,
@@ -76,6 +88,7 @@ pub fn handler(
     }
 
     let now = Clock::get()?.unix_timestamp;
+
     let capsule = &mut ctx.accounts.capsule;
     capsule.owner = ctx.accounts.owner.key();
     capsule.inactivity_period = inactivity_period;
@@ -84,9 +97,20 @@ pub fn handler(
     capsule.executed_at = None;
     capsule.bump = ctx.bumps.capsule;
     capsule.vault_bump = ctx.bumps.vault;
+    capsule.beneficiaries_bump = ctx.bumps.beneficiary_set;
     capsule.heartbeat_authority = heartbeat_authority;
-    capsule.beneficiaries = Vec::new();
+    capsule.version = IntentCapsule::CURRENT_VERSION;
+    capsule.reserved = [0u8; 64];
 
-    msg!("Switch + Vault created for owner: {:?}", capsule.owner);
+    let beneficiary_set = &mut ctx.accounts.beneficiary_set;
+    beneficiary_set.owner = ctx.accounts.owner.key();
+    beneficiary_set.bump = ctx.bumps.beneficiary_set;
+    beneficiary_set.version = BeneficiarySet::CURRENT_VERSION;
+    beneficiary_set.beneficiaries = Vec::new();
+    beneficiary_set.reserved = [0u8; 64];
+
+    ctx.accounts.vault.version = CapsuleVault::CURRENT_VERSION;
+
+    msg!("Switch + BeneficiarySet + Vault created for owner: {:?}", capsule.owner);
     Ok(())
 }

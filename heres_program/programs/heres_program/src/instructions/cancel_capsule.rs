@@ -3,13 +3,18 @@
 //! Refunds the native SOL (via `close = owner` on the vault) plus, optionally, one SPL asset passed
 //! explicitly. For a multi-mint vault, recover the extra mints via `recover_vault` first, then
 //! cancel to close the SOL + accounts (closing the vault while it still owns ATAs would strand them).
+//!
+//! Closes all three PDAs (Switch + BeneficiarySet + Vault), so both the Switch (regular ER) and the
+//! BeneficiarySet (TEE) must be undelegated back to base first - Anchor's Account<> owner-check
+//! rejects a still-delegated account, so the client undelegates (crank_undelegate +
+//! crank_undelegate_beneficiaries, owner-gated) before cancelling.
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer};
 
 use crate::error::ErrorCode;
-use crate::state::{CapsuleVault, IntentCapsule};
+use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct CancelCapsule<'info> {
@@ -21,6 +26,15 @@ pub struct CancelCapsule<'info> {
         constraint = capsule.owner == owner.key() @ ErrorCode::Unauthorized,
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
+
+    #[account(
+        mut,
+        close = owner,
+        seeds = [b"beneficiary_set", owner.key().as_ref()],
+        bump = beneficiary_set.bump,
+        constraint = beneficiary_set.owner == owner.key() @ ErrorCode::Unauthorized,
+    )]
+    pub beneficiary_set: Box<Account<'info, BeneficiarySet>>,
 
     #[account(
         mut,
