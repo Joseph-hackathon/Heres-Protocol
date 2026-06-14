@@ -17,8 +17,8 @@ export function UseCases() {
           </span>
           <h3>Families</h3>
           <p>
-            Make sure your people receive what you built. Set a beneficiary split across your wallet.
-            When the time comes, your assets move to their wallets with no court and no one having to ask.
+            Make sure your people receive what you built. Set a beneficiary split, and when the time
+            comes your assets move to their wallets, no court, no one having to ask.
           </p>
         </article>
 
@@ -28,8 +28,8 @@ export function UseCases() {
           </span>
           <h3>Wallet backup</h3>
           <p>
-            A silent failsafe for lost access. Set a recovery wallet or a trusted contact. If you go
-            dark, lost keys or worse, your capsule routes your assets to safety. Set it once and forget it.
+            A silent failsafe for lost access. Name a recovery wallet or trusted contact. If you go
+            dark, your capsule routes your assets to safety. Set it once and forget it.
           </p>
         </article>
 
@@ -39,9 +39,8 @@ export function UseCases() {
           </span>
           <h3>Founders and long-term holders</h3>
           <p>
-            Protocol-native succession for people building on Solana. If your treasury or a vesting
-            wallet should pass somewhere specific in an emergency, Heres carries out that instruction
-            automatically.
+            Protocol-native succession for builders on Solana. If a treasury or vesting wallet should
+            pass somewhere specific in an emergency, Heres carries that out automatically.
           </p>
         </article>
       </div>

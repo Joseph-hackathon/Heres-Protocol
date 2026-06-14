@@ -9,8 +9,8 @@ export function Gap() {
           Most crypto assets have no inheritance plan.
         </h2>
         <p className="gap__body reveal">
-          If something happened to you today, what would happen to your SOL and your tokens?{' '}
-          <b>No chain answers that on its own.</b> Heres does, with a single setup that runs silently
+          If something happened to you today, where would your SOL and tokens go?{' '}
+          <b>No chain answers that on its own.</b> Heres does, with one setup that runs silently
           until it needs to act.
         </p>
       </div>
