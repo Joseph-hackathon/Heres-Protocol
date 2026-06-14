@@ -10,7 +10,7 @@ import Lenis from 'lenis'
    A breathing line that slows and flattens into stillness.
    amplitude is a single state value 0..1 (1 = fully alive).
    ============================================================ */
-type PulseOpts = { cycles?: number; tick?: boolean; startAmp?: number }
+type PulseOpts = { tick?: boolean; startAmp?: number }
 type PulseController = {
   start: () => void
   stop: () => void
@@ -33,6 +33,22 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
   let visible = true
   let t0 = performance.now()
   const accent = '#2DD4E8'
+
+  // One normalized heartbeat (P-QRS-T), bp in [0,1) -> roughly [-0.30, 1.0].
+  // Flat baseline between the centers, a tall sharp R spike, so the trace reads
+  // unmistakably as a heart monitor: a wallet's sign of life. amp scales it, so
+  // amp -> 0 collapses to a flatline (the settlement trigger in the how section).
+  function ecg(bp: number): number {
+    const g = (c: number, w: number, h: number) =>
+      h * Math.exp(-((bp - c) * (bp - c)) / (2 * w * w))
+    return (
+      g(0.20, 0.024, 0.12) - // P wave
+      g(0.31, 0.012, 0.16) + // Q
+      g(0.35, 0.011, 1.0) - // R (spike)
+      g(0.40, 0.014, 0.30) + // S
+      g(0.60, 0.052, 0.20) // T wave
+    )
+  }
 
   function resize() {
     const rect = canvas!.getBoundingClientRect()
@@ -63,38 +79,44 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
     ctx!.lineTo(W, midY)
     ctx!.stroke()
 
-    const breathe = 0.65 + 0.35 * Math.sin(elapsed * ((Math.PI * 2) / 4))
+    // Gentle breathing swell so the line feels alive between beats.
+    const breathe = 0.88 + 0.12 * Math.sin(elapsed * ((Math.PI * 2) / 5))
     const env = amp * breathe
 
-    ctx!.beginPath()
-    ctx!.lineWidth = 1.25
-    ctx!.strokeStyle = accent
-    ctx!.globalAlpha = 0.42 + 0.5 * amp
+    // Beats spread across the width, scrolling in from the right at ~0.8/s; the
+    // how-section scrub lowers `speed`, so beats slow before they flatline.
+    const beats = Math.max(3, Math.round(W / 150))
+    const scroll = elapsed * 0.8 * speed
 
-    const pts = Math.max(60, Math.floor(W / 2))
+    ctx!.beginPath()
+    ctx!.lineWidth = 1.6
+    ctx!.strokeStyle = accent
+    ctx!.globalAlpha = 0.5 + 0.4 * amp
+
+    const pts = Math.max(120, Math.floor(W))
+    let leadY = midY
     for (let i = 0; i <= pts; i++) {
-      const x = (i / pts) * W
-      const phase = (i / pts) * Math.PI * (opts.cycles || 6) + elapsed * 1.4 * speed
-      const base = Math.sin(phase) * 0.5
-      let beat = 0
-      const beatPhase = phase % (Math.PI * 2)
-      if (beatPhase > Math.PI * 0.92 && beatPhase < Math.PI * 1.08) {
-        beat = Math.sin(((beatPhase - Math.PI * 0.92) / (Math.PI * 0.16)) * Math.PI) * 0.9
-      }
-      const y = midY - (base + beat) * (H * 0.3) * env
+      const f = i / pts
+      const x = f * W
+      const bp = (((f * beats - scroll) % 1) + 1) % 1
+      const y = midY - ecg(bp) * (H * 0.36) * env
       if (i === 0) ctx!.moveTo(x, y)
       else ctx!.lineTo(x, y)
+      leadY = y
     }
     ctx!.stroke()
     ctx!.globalAlpha = 1
 
+    // Live reading head: a glowing dot riding the leading edge of the trace.
     if (amp > 0.06 && opts.tick) {
-      const tx = ((elapsed * 0.12) % 1) * W
       ctx!.beginPath()
       ctx!.fillStyle = accent
-      ctx!.globalAlpha = 0.5 * amp
-      ctx!.arc(tx, midY, 2.2, 0, Math.PI * 2)
+      ctx!.shadowColor = accent
+      ctx!.shadowBlur = 8
+      ctx!.globalAlpha = 0.85 * amp
+      ctx!.arc(W - 1, leadY, 2.6, 0, Math.PI * 2)
       ctx!.fill()
+      ctx!.shadowBlur = 0
       ctx!.globalAlpha = 1
     }
 
@@ -132,22 +154,22 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
     ctx!.moveTo(0, midY)
     ctx!.lineTo(W, midY)
     ctx!.stroke()
-    if (a > 0.05) {
-      ctx!.beginPath()
-      ctx!.lineWidth = 1.25
-      ctx!.strokeStyle = accent
-      ctx!.globalAlpha = 0.8
-      const pts = Math.max(60, Math.floor(W / 2))
-      for (let i = 0; i <= pts; i++) {
-        const x = (i / pts) * W
-        const phase = (i / pts) * Math.PI * (opts.cycles || 6)
-        const y = midY - Math.sin(phase) * 0.5 * (H * 0.3) * a
-        if (i === 0) ctx!.moveTo(x, y)
-        else ctx!.lineTo(x, y)
-      }
-      ctx!.stroke()
-      ctx!.globalAlpha = 1
+    ctx!.beginPath()
+    ctx!.lineWidth = 1.6
+    ctx!.strokeStyle = accent
+    ctx!.globalAlpha = a > 0.05 ? 0.85 : 0.32
+    const beats = Math.max(3, Math.round(W / 150))
+    const pts = Math.max(120, Math.floor(W))
+    for (let i = 0; i <= pts; i++) {
+      const f = i / pts
+      const x = f * W
+      const bp = (((f * beats) % 1) + 1) % 1
+      const y = midY - ecg(bp) * (H * 0.36) * a
+      if (i === 0) ctx!.moveTo(x, y)
+      else ctx!.lineTo(x, y)
     }
+    ctx!.stroke()
+    ctx!.globalAlpha = 1
   }
 
   const onResize = () => {
@@ -403,12 +425,10 @@ export function LandingClient() {
 
     // ---- Liveness pulses ----
     const heroPulse = makePulse(document.getElementById('heroPulse') as HTMLCanvasElement | null, {
-      cycles: 7,
       tick: true,
       startAmp: 1,
     })
     const howPulse = makePulse(document.getElementById('howPulse') as HTMLCanvasElement | null, {
-      cycles: 9,
       tick: false,
       startAmp: 1,
     })
