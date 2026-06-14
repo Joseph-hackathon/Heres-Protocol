@@ -17,9 +17,6 @@ export function TrustStrip() {
         <span className="logo" title="Alchemy">
           <Image src="/logos/alchemy-logo.svg" alt="Alchemy" width={120} height={24} style={{ height: '24px', width: 'auto' }} unoptimized />
         </span>
-        <span className="logo" title="Colosseum">
-          <Image src="/logos/colosseum-logo-white.svg" alt="Colosseum" width={120} height={24} style={{ height: '24px', width: 'auto' }} unoptimized />
-        </span>
       </div>
       <p className="trust__sub reveal">Running on Solana, secured by MagicBlock&apos;s Trusted Execution Environment.</p>
     </section>

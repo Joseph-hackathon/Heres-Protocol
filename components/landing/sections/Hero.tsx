@@ -20,9 +20,8 @@ export function Hero() {
       <div className="hero__lower">
         <div>
           <p className="hero__sub reveal">
-            Heres is a <b>private vault on Solana</b>. Set your beneficiaries, your assets, and your
-            inactivity window once. If your wallet goes quiet past that window, your instructions
-            settle automatically. No executor, no manual step, no waiting.
+            A <b>private vault on Solana</b>. Name your beneficiaries and an inactivity window once.
+            If your wallet goes quiet, your instructions settle automatically.
           </p>
           <div className="hero__actions reveal">
             <Link className="btn btn--gold" href="/create">

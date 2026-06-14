@@ -242,6 +242,7 @@ html.lenis{scroll-behavior:auto !important}
    ============================================================ */
 .hero{
   position:relative;
+  min-height:100svh;
   display:flex;flex-direction:column;
   padding-top:128px;padding-bottom:clamp(72px,9vw,104px);
 }
