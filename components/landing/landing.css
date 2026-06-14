@@ -54,9 +54,14 @@
   overflow-x:hidden;
 }
 
-/* When Lenis is active it controls scroll; baseline smooth off for reduced-motion safety */
+/* When Lenis is active it controls scroll. Kill native scroll-behavior for the
+   whole time Lenis is mounted. globals.css sets html{scroll-behavior:smooth},
+   and Lenis 1.3 only adds the `lenis-smooth` class transiently (during active
+   momentum), so the upstream `.lenis.lenis-smooth` guard leaves native smooth
+   scroll on at rest, where it fights Lenis's per-frame scroll and causes jank.
+   The base `lenis` class is present the whole time the instance lives. */
 html.lenis,html.lenis body{height:auto}
-.lenis.lenis-smooth{scroll-behavior:auto !important}
+html.lenis{scroll-behavior:auto !important}
 .lenis.lenis-stopped{overflow:hidden}
 
 .lp ::selection{ background:var(--gold-dim); color:var(--vellum); }
