@@ -42,11 +42,6 @@ export function MarketingFooter() {
               </a>
             </li>
             <li>
-              <a href="https://doc.heresprotocol.com" target="_blank" rel="noopener noreferrer">
-                GitBook
-              </a>
-            </li>
-            <li>
               <a href="https://github.com/HeresProtocol" target="_blank" rel="noopener noreferrer">
                 GitHub
               </a>
