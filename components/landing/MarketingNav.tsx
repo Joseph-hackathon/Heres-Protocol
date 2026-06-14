@@ -6,7 +6,7 @@ export function MarketingNav() {
     <header className="nav" id="nav">
       <div className="wrap nav__inner">
         <a className="brand" href="#top" aria-label="Heres home">
-          <Image src="/logo-white-icon.png" alt="" width={22} height={22} className="mark" unoptimized />
+          <Image src="/logo-white-icon.png" alt="" width={30} height={30} className="mark" unoptimized />
           <span>
             Here<b>s</b>
           </span>

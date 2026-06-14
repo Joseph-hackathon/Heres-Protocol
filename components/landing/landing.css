@@ -212,7 +212,7 @@ html.lenis,html.lenis body{height:auto}
   letter-spacing:0.01em;
   color:var(--vellum);
 }
-.brand .mark{ width:22px;height:22px; }
+.brand .mark{ width:30px;height:30px; }
 .brand b{ color:var(--gold);font-weight:400; }
 .nav__links{ display:flex;align-items:center;gap:34px; }
 .nav__links a{
@@ -497,70 +497,6 @@ html.lenis,html.lenis body{height:auto}
 @media (max-width:520px){
   .bento{ grid-template-columns:1fr; }
   .cell--lede,.cell--state,.cell--diagram,.cell--note,.cell--tee{ grid-column:span 1; }
-}
-
-/* ============================================================
-   MOBILE
-   ============================================================ */
-.mobile__grid{
-  display:grid;grid-template-columns:1.05fr 0.95fr;
-  gap:clamp(40px,6vw,80px);align-items:center;
-}
-.mobile__head h2{ font-size:clamp(30px,4.4vw,50px);max-width:16ch; }
-.mobile__body{ color:var(--ash);font-size:18px;margin-top:20px;max-width:48ch; }
-.mobile__body b{ color:var(--vellum);font-weight:500; }
-.mobile__actions{ display:flex;gap:14px;margin-top:28px;flex-wrap:wrap; }
-/* phone frame */
-.phone{
-  justify-self:center;
-  width:266px;
-  border:1px solid var(--hair-strong);
-  border-radius:38px;
-  background:var(--surface);
-  padding:12px;
-  box-shadow:var(--shadow-amb);
-  position:relative;
-}
-.phone__screen{
-  border-radius:28px;
-  background:var(--ink);
-  border:1px solid var(--hair);
-  overflow:hidden;
-  aspect-ratio:9/19;
-  padding:20px 18px;
-  display:flex;flex-direction:column;
-}
-.phone__notch{
-  position:absolute;top:20px;left:50%;transform:translateX(-50%);
-  width:64px;height:5px;border-radius:5px;background:rgba(234,238,246,0.12);
-}
-.phone__top{ display:flex;align-items:center;justify-content:space-between;margin-bottom:18px; }
-.phone__brand{ font-family:var(--serif);font-size:17px;color:var(--vellum); }
-.phone__brand b{ color:var(--gold);font-weight:400; }
-.phone__status{ font-size:10px;color:var(--sage);display:inline-flex;align-items:center;gap:5px;font-variant:small-caps; }
-.phone__status i{ width:5px;height:5px;border-radius:50%;background:var(--sage); }
-.phone__card{
-  border:1px solid var(--hair);border-radius:14px;padding:14px;margin-bottom:10px;
-  background:var(--card);
-}
-.phone__card .lbl{ font-size:9.5px;letter-spacing:0.08em;color:var(--ash);text-transform:uppercase;font-variant:small-caps;margin-bottom:7px; }
-.phone__card .val{ font-size:18px;color:var(--vellum);font-variant-numeric:tabular-nums; }
-.phone__card .val small{ font-size:12px;color:var(--ash); }
-.phone__row{ display:flex;align-items:center;justify-content:space-between;font-size:12px;padding-block:6px;border-top:1px solid var(--hair); }
-.phone__row:first-of-type{ border-top:none; }
-.phone__row .who{ display:flex;align-items:center;gap:7px;color:var(--vellum); }
-.phone__row .who .av{ width:18px;height:18px;border-radius:50%;border:1px solid var(--hair-strong);display:flex;align-items:center;justify-content:center; }
-.phone__row .who .av [class*="ph-"]{ font-size:10px;color:var(--ash); }
-.phone__row .pct{ color:var(--gold);font-variant-numeric:tabular-nums; }
-.phone__btn{
-  margin-top:auto;background:var(--gold);color:#06080F;
-  text-align:center;border-radius:11px;padding:11px;font-size:13px;font-weight:600;
-}
-.phone__meter{ height:5px;border-radius:5px;background:rgba(234,238,246,0.08);margin-top:10px;overflow:hidden; }
-.phone__meter i{ display:block;height:100%;width:74%;background:var(--sage);border-radius:5px; }
-@media (max-width:820px){
-  .mobile__grid{ grid-template-columns:1fr;gap:40px; }
-  .phone{ order:-1; }
 }
 
 /* ============================================================
