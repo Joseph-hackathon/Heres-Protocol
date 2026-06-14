@@ -20,8 +20,7 @@ export function Hero() {
       <div className="hero__lower">
         <div>
           <p className="hero__sub reveal">
-            A <b>private vault on Solana</b>. Name your beneficiaries and an inactivity window once.
-            If your wallet goes quiet, your instructions settle automatically.
+            Set your terms once. If your wallet goes quiet, Heres settles them automatically.
           </p>
           <div className="hero__actions reveal">
             <Link className="btn btn--gold" href="/create">
@@ -31,7 +30,6 @@ export function Hero() {
               See how it works <ArrowRight className="ph-icon" aria-hidden />
             </a>
           </div>
-          <p className="hero__tagline reveal">Silence becomes truth.</p>
         </div>
 
         <aside className="hero__panel reveal" aria-label="Capsule liveness preview">

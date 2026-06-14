@@ -244,7 +244,7 @@ html.lenis{scroll-behavior:auto !important}
   position:relative;
   min-height:100svh;
   display:flex;flex-direction:column;
-  padding-top:128px;padding-bottom:clamp(72px,9vw,104px);
+  padding-top:168px;padding-bottom:clamp(72px,9vw,104px);
 }
 .hero__eyebrow{ margin-bottom:22px; }
 .hero__title{
@@ -306,14 +306,6 @@ html.lenis{scroll-behavior:auto !important}
 }
 .hero__panel-foot .k{ font-size:12px;color:var(--ash);letter-spacing:0.04em; }
 .hero__panel-foot .v{ font-size:15px;color:var(--vellum);font-variant-numeric:tabular-nums; }
-.hero__tagline{
-  margin-top:18px;
-  font-family:var(--serif);
-  font-style:italic;
-  font-size:17px;
-  color:var(--gold);
-  letter-spacing:0.01em;
-}
 @media (max-width:860px){
   .hero__lower{ grid-template-columns:1fr; align-items:start; }
   .hero__panel{ order:-0; }
