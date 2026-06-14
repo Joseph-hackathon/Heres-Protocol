@@ -11,7 +11,7 @@ const navLinks = [
 ]
 
 const socialLinks = [
-  { href: 'https://x.com/Heres_app', label: 'X (Twitter)', icon: 'x' },
+  { href: 'https://x.com/Heresprotocol', label: 'X (Twitter)', icon: 'x' },
 ]
 
 function XIcon({ className }: { className?: string }) {

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Copy, RefreshCw, Shield } from 'lucide-react'
+import { Check, Copy, RefreshCw, Shield } from 'lucide-react'
 import {
   getCapsuleByAddress,
   executeIntent,
@@ -111,7 +111,7 @@ type IntentParsed =
   }
 
 const maskAddress = (addr: string) =>
-  addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-8)}` : addr
+  addr.length > 16 ? `${addr.slice(0, 8)}...${addr.slice(-8)}` : addr
 
 function CopyButton({ value }: { value: string }) {
   const copy = () => navigator.clipboard?.writeText(value)
@@ -128,7 +128,7 @@ function CopyButton({ value }: { value: string }) {
 }
 
 function timeAgo(ms: number | null) {
-  if (!ms) return '—'
+  if (!ms) return '-'
   const diff = Math.max(0, Date.now() - ms)
   const m = Math.floor(diff / 60000)
   if (m < 1) return 'just now'
@@ -639,7 +639,7 @@ export default function CapsuleDetailPage() {
       <div className="min-h-screen bg-hero text-Heres-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <RefreshCw className="h-8 w-8 animate-spin text-Heres-accent" />
-          <p className="text-Heres-muted">Loading capsule…</p>
+          <p className="text-Heres-muted">Loading capsule...</p>
         </div>
       </div>
     )
@@ -909,7 +909,7 @@ export default function CapsuleDetailPage() {
                       ? `${creConfig.recipientEmailHash.slice(0, 16)}...`
                       : creConfig?.recipientEmail
                         ? 'legacy-email-onchain'
-                      : '—'}
+                      : '-'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
@@ -934,7 +934,7 @@ export default function CapsuleDetailPage() {
             </ServiceSection>
           )}
 
-          {/* Actions — status-based flow */}
+          {/* Actions - status-based flow */}
           {isOwner && (() => {
             const isExecuted = status === 'Executed' || (!capsule.isActive && capsule.executedAt)
             const isExpired = status === 'Expired'
@@ -1024,7 +1024,7 @@ export default function CapsuleDetailPage() {
                             active ? 'bg-Heres-accent/20 text-Heres-accent border border-Heres-accent/40' :
                             'bg-Heres-surface/50 text-Heres-muted border border-Heres-border'
                           }`}>
-                            {done ? '✓' : step.num}
+                            {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : step.num}
                           </div>
                           <div>
                             <p className={`text-xs font-medium ${done ? 'text-green-400' : active ? 'text-Heres-white' : 'text-Heres-muted'}`}>
@@ -1047,7 +1047,7 @@ export default function CapsuleDetailPage() {
                     title={!canExecute ? (isActive ? (targetDateMs != null ? 'No trigger condition met yet' : 'Inactivity period not elapsed') : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
                     className="rounded-lg border border-Heres-accent px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-accent/10 text-Heres-accent hover:bg-Heres-accent/20"
                   >
-                    {actionLoading === 'execute' ? 'Executing...' : isExecuted ? 'Executed ✓' : 'Execute Intent'}
+                    {actionLoading === 'execute' ? 'Executing...' : isExecuted ? 'Executed' : 'Execute Intent'}
                   </button>
                   <button
                     type="button"

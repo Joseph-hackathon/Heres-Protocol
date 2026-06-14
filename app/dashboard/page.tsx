@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
+  ArrowDownRight,
   ArrowUpRight,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Copy,
   Database,
@@ -388,7 +391,7 @@ export default function DashboardPage() {
     setZkPublicInputsHash(localStorage.getItem(erCommitKey) || localStorage.getItem(legacyInputsKey))
   }, [])
 
-  // Check if fee_config PDA exists (諛고룷 ...1...珥덇린...?щ?)
+  // Check if fee_config PDA exists (admin-only one-time setup)
   useEffect(() => {
     let cancelled = false
     const check = async () => {
@@ -418,7 +421,7 @@ export default function DashboardPage() {
     } catch (e: any) {
       const msg = e?.message || String(e)
       if (/already in use|AccountDidNotSerialize|0x0/i.test(msg)) {
-        setInitFeeError('?대? 珥덇린?붾맖 (Fee config already initialized).')
+        setInitFeeError('Fee config already initialized.')
         setFeeConfigExists(true)
       } else {
         setInitFeeError(msg)
@@ -984,7 +987,7 @@ export default function DashboardPage() {
             }
           />
 
-          {/* ?섏닔猷...ㅼ젙 珥덇린... Fee config媛 ?놁쓣 ?뚮쭔 ?쒖떆 (諛고룷 ...1?뚮쭔 ?꾩슂) */}
+          {/* Fee config setup (admin one-time): shown only when no fee config exists */}
           {wallet.connected && feeConfigExists === false && (
             <section className="dashboard-panel p-6 mb-6 border-Heres-accent/20">
               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -993,9 +996,9 @@ export default function DashboardPage() {
                     <Settings className="w-5 h-5 text-Heres-accent" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold text-Heres-white">?섏닔猷...ㅼ젙 (諛고룷 ...1...</h2>
+                    <h2 className="text-lg font-semibold text-Heres-white">Fee Config Setup</h2>
                     <p className="text-sm text-Heres-muted mt-0.5">
-                      Fee config媛 ?놁쑝硫...?踰덈쭔 ?ㅽ뻾?섏꽭... ?앹꽦 0.05 SOL, ?ㅽ뻾 3%.
+                      No fee config found. Run once to initialize. Create 0.05 SOL, execute 3%.
                     </p>
                   </div>
                 </div>
@@ -1005,19 +1008,19 @@ export default function DashboardPage() {
                   disabled={initFeePending}
                   className="rounded-lg border border-Heres-accent bg-Heres-accent/20 px-4 py-2 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/30 disabled:opacity-60"
                 >
-                  {initFeePending ? '泥섎━ 以?..' : 'Initialize Fee Config'}
+                  {initFeePending ? 'Processing...' : 'Initialize Fee Config'}
                 </button>
               </div>
               {initFeeTx && (
                 <p className="mt-3 text-sm text-Heres-accent">
-                  ?깃났:{' '}
+                  Success:{' '}
                   <a
                     href={getExplorerUrl('tx', initFeeTx)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline"
                   >
-                    ?몃옖...뀡 蹂닿린
+                    View transaction
                   </a>
                 </p>
               )}
@@ -1051,8 +1054,8 @@ export default function DashboardPage() {
                         <span className="text-2xl font-semibold text-white/80">
                           {card.metaValue}
                         </span>
-                        <span className="inline-flex items-center gap-1 text-lg font-semibold text-emerald-400">
-                          <ArrowUpRight className="h-4 w-4" />
+                        <span className={`inline-flex items-center gap-1 text-lg font-semibold ${card.delta.startsWith('-') ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {card.delta.startsWith('-') ? <ArrowDownRight className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                           {card.delta}
                         </span>
                       </div>
@@ -1075,7 +1078,7 @@ export default function DashboardPage() {
                       <path
                         d={card.linePath}
                         fill="none"
-                        stroke="rgba(34, 211, 238, 0.2)"
+                        stroke="rgba(45, 212, 232, 0.2)"
                         strokeWidth="5"
                         strokeLinecap="round"
                         filter={`url(#glow-${index})`}
@@ -1083,7 +1086,7 @@ export default function DashboardPage() {
                       <path
                         d={card.linePath}
                         fill="none"
-                        stroke={card.accent === 'purple' ? '#a78bfa' : '#22d3ee'}
+                        stroke="#2DD4E8"
                         strokeWidth="2.2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -1212,10 +1215,10 @@ export default function DashboardPage() {
                         {capsule.kind === 'event' && (capsule.tokenDelta != null || capsule.solDelta != null || capsule.proofBytes != null) && (
                           <div className="flex flex-wrap gap-3 text-[11px] text-Heres-muted">
                             {capsule.tokenDelta != null && (
-                              <span className="font-mono">Token ?: {capsule.tokenDelta}</span>
+                              <span className="font-mono">Token delta: {capsule.tokenDelta}</span>
                             )}
                             {capsule.solDelta != null && (
-                              <span className="font-mono">SOL ?: {capsule.solDelta.toFixed(4)}</span>
+                              <span className="font-mono">SOL delta: {capsule.solDelta.toFixed(4)}</span>
                             )}
                             {capsule.proofBytes != null && (
                               <span>PER (TEE) tx: {capsule.proofBytes} bytes</span>
@@ -1381,7 +1384,8 @@ export default function DashboardPage() {
                     disabled={currentPage === 1}
                     className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-3 py-1.5 disabled:opacity-40 hover:border-Heres-accent/40 transition"
                   >
-                    ...                  </button>
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
                   <span className="rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-1.5 text-Heres-white">
                     Page {currentPage} of {totalPages}
                   </span>
@@ -1391,7 +1395,8 @@ export default function DashboardPage() {
                     disabled={currentPage >= totalPages}
                     className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-3 py-1.5 disabled:opacity-40 hover:border-Heres-accent/40 transition"
                   >
-                    ...                  </button>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setCurrentPage(totalPages)}
