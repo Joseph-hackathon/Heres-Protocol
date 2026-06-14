@@ -176,7 +176,9 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
 
 /* ---------- WebGL aurora background (custom raw GLSL shader) ----------
    Returns a teardown on success, or null on failure (caller hides canvas). */
-function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): (() => void) | null {
+type AuroraController = { destroy: () => void; setScrollPaused: (v: boolean) => void }
+
+function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): AuroraController | null {
   const gl = (canvas.getContext('webgl', { antialias: false, alpha: true, premultipliedAlpha: false }) ||
     canvas.getContext('experimental-webgl', { antialias: false, alpha: true })) as WebGLRenderingContext | null
   if (!gl) return null
@@ -246,7 +248,9 @@ function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): (() => void) 
   const uTime = gl.getUniformLocation(prog, 'u_time')
   const uMouse = gl.getUniformLocation(prog, 'u_mouse')
 
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+  // The aurora is a low-frequency, heavily-smoothed field with no sharp detail,
+  // so rendering at 1x is visually identical to 1.5x but ~55% cheaper per frame.
+  const dpr = Math.min(window.devicePixelRatio || 1, 1)
   const mouse = { x: 0.78, y: 0.85 }
   const targetMouse = { x: 0.78, y: 0.85 }
 
@@ -271,6 +275,10 @@ function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): (() => void) 
   const startTime = performance.now()
   let rafId: number | null = null
   let programRunning = false
+  // When true, the RAF keeps ticking but we skip the GPU draw, so the shader
+  // costs nothing while the user is actively scrolling. The last frame stays on
+  // the canvas, so the frozen background is imperceptible mid-scroll.
+  let scrollPaused = false
   let lastFrame = 0
   const frameInterval = isMobile ? 1000 / 30 : 1000 / 60
 
@@ -284,12 +292,14 @@ function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): (() => void) 
       return
     }
     lastFrame = now
-    mouse.x += (targetMouse.x - mouse.x) * 0.05
-    mouse.y += (targetMouse.y - mouse.y) * 0.05
-    gl!.uniform2f(uRes, canvas.width, canvas.height)
-    gl!.uniform1f(uTime, (now - startTime) / 1000)
-    gl!.uniform2f(uMouse, mouse.x, mouse.y)
-    gl!.drawArrays(gl!.TRIANGLES, 0, 3)
+    if (!scrollPaused) {
+      mouse.x += (targetMouse.x - mouse.x) * 0.05
+      mouse.y += (targetMouse.y - mouse.y) * 0.05
+      gl!.uniform2f(uRes, canvas.width, canvas.height)
+      gl!.uniform1f(uTime, (now - startTime) / 1000)
+      gl!.uniform2f(uMouse, mouse.x, mouse.y)
+      gl!.drawArrays(gl!.TRIANGLES, 0, 3)
+    }
     rafId = requestAnimationFrame(render)
   }
   function start() {
@@ -323,14 +333,19 @@ function initAurora(canvas: HTMLCanvasElement, isMobile: boolean): (() => void) 
   canvas.classList.add('is-ready')
   start()
 
-  return () => {
-    stop()
-    window.removeEventListener('resize', resize)
-    window.removeEventListener('pointermove', onPointerMove)
-    document.removeEventListener('visibilitychange', onVisibility)
-    if (fio) fio.disconnect()
-    const ext = gl.getExtension('WEBGL_lose_context')
-    if (ext) ext.loseContext()
+  return {
+    destroy: () => {
+      stop()
+      window.removeEventListener('resize', resize)
+      window.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (fio) fio.disconnect()
+      const ext = gl.getExtension('WEBGL_lose_context')
+      if (ext) ext.loseContext()
+    },
+    setScrollPaused: (v: boolean) => {
+      scrollPaused = v
+    },
   }
 }
 
@@ -362,16 +377,16 @@ export function LandingClient() {
 
     // ---- WebGL aurora background (deferred past first paint) ----
     const canvas = document.getElementById('bg-canvas') as HTMLCanvasElement | null
-    let auroraTeardown: (() => void) | null = null
+    let auroraCtl: AuroraController | null = null
     const bootBackground = () => {
       if (prefersReduced || !canvas) return
       if (isMobile && lowCore) return
       try {
-        auroraTeardown = initAurora(canvas, isMobile)
+        auroraCtl = initAurora(canvas, isMobile)
       } catch {
-        auroraTeardown = null
+        auroraCtl = null
       }
-      if (!auroraTeardown && canvas) canvas.style.display = 'none'
+      if (!auroraCtl && canvas) canvas.style.display = 'none'
     }
     let idleId: number | null = null
     let bootTimeout: ReturnType<typeof setTimeout> | null = null
@@ -383,7 +398,7 @@ export function LandingClient() {
     cleanups.push(() => {
       if (idleId != null && 'cancelIdleCallback' in window) window.cancelIdleCallback(idleId)
       if (bootTimeout) clearTimeout(bootTimeout)
-      if (auroraTeardown) auroraTeardown()
+      if (auroraCtl) auroraCtl.destroy()
     })
 
     // ---- Liveness pulses ----
@@ -427,9 +442,19 @@ export function LandingClient() {
 
       let lenis: Lenis | null = null
       let tickerFn: ((time: number) => void) | null = null
+      let auroraResumeTimer: ReturnType<typeof setTimeout> | null = null
       if (!isMobile) {
         lenis = new Lenis({ duration: 1.15, easing: (t: number) => 1 - Math.pow(1 - t, 3), smoothWheel: true })
-        lenis.on('scroll', () => ScrollTrigger.update())
+        lenis.on('scroll', () => {
+          ScrollTrigger.update()
+          // Free the GPU for the scroll itself: pause the aurora while scrolling,
+          // resume a beat after it settles.
+          if (auroraCtl) {
+            auroraCtl.setScrollPaused(true)
+            if (auroraResumeTimer) clearTimeout(auroraResumeTimer)
+            auroraResumeTimer = setTimeout(() => auroraCtl?.setScrollPaused(false), 140)
+          }
+        })
         tickerFn = (time: number) => lenis!.raf(time * 1000)
         gsap.ticker.add(tickerFn)
         gsap.ticker.lagSmoothing(0)
@@ -494,6 +519,7 @@ export function LandingClient() {
         heroReveal.kill()
         triggers.forEach((t) => t.kill())
         if (tickerFn) gsap.ticker.remove(tickerFn)
+        if (auroraResumeTimer) clearTimeout(auroraResumeTimer)
         if (lenis) lenis.destroy()
         window.removeEventListener('load', onLoad)
         clearTimeout(refreshTimeout)
