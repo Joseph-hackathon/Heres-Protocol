@@ -261,7 +261,7 @@ html.lenis{scroll-behavior:auto !important}
   display:grid;
   grid-template-columns:1.05fr 0.95fr;
   gap:clamp(28px,5vw,72px);
-  align-items:end;
+  align-items:start;
   margin-top:clamp(28px,4vw,48px);
 }
 .hero__sub{ font-size:18px;line-height:1.62;color:var(--ash);max-width:46ch; }
