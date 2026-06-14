@@ -414,7 +414,7 @@ html.lenis,html.lenis body{height:auto}
    PRIVACY (the dense bento moment)
    ============================================================ */
 .privacy{ position:relative; }
-.privacy__head{ max-width:22ch;margin-bottom:clamp(36px,5vw,56px); }
+.privacy__head{ max-width:none;margin-bottom:clamp(36px,5vw,56px); }
 .privacy__head h2{ font-size:clamp(30px,4.4vw,50px); }
 .bento{
   display:grid;

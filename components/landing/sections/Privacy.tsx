@@ -7,7 +7,11 @@ export function Privacy() {
         <span className="eyebrow" style={{ marginBottom: 20, display: 'inline-flex' }}>
           Privacy
         </span>
-        <h2 id="privacy-heading">Private while you are alive. Clear when it matters.</h2>
+        <h2 id="privacy-heading">
+          Private while you are alive.
+          <br />
+          Clear when it matters.
+        </h2>
       </div>
 
       <div className="bento">

@@ -9,7 +9,6 @@ import { TrustStrip } from '@/components/landing/sections/TrustStrip'
 import { Gap } from '@/components/landing/sections/Gap'
 import { HowItWorks } from '@/components/landing/sections/HowItWorks'
 import { Privacy } from '@/components/landing/sections/Privacy'
-import { MobileSection } from '@/components/landing/sections/MobileSection'
 import { UseCases } from '@/components/landing/sections/UseCases'
 import { FinalCTA } from '@/components/landing/sections/FinalCTA'
 
@@ -39,8 +38,6 @@ export default function HomePage() {
         <HowItWorks />
         <hr className="rule" />
         <Privacy />
-        <hr className="rule" />
-        <MobileSection />
         <hr className="rule" />
         <UseCases />
         <hr className="rule" />
