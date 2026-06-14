@@ -568,9 +568,7 @@ html.lenis{scroll-behavior:auto !important}
   margin-top:clamp(40px,6vw,64px);padding-top:26px;border-top:1px solid var(--hair);
   flex-wrap:wrap;gap:16px;
 }
-.foot__motif{ font-family:var(--serif);font-style:italic;font-size:17px;color:var(--gold); }
 .foot__copy{ font-size:13px;color:var(--ash); }
-.foot__bottom-right{ display:flex;align-items:center;gap:18px;flex-wrap:wrap; }
 .foot__solana{
   display:inline-flex;align-items:center;gap:9px;
   padding:8px 14px;border-radius:10px;
