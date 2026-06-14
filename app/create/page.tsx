@@ -19,10 +19,10 @@ import {
   SOLANA_CONFIG,
   PLATFORM_FEE,
   MAX_CAPSULE_MODIFICATIONS,
-  getAssetMintEnvKey,
 } from '@/constants'
 import { daysToSeconds } from '@/utils/intent'
-import { getAssetConfig, getAssetMintPublicKey, isAssetConfigured, isValidAmountString, SUPPORTED_TOKEN_ASSETS, SupportedAssetSymbol } from '@/lib/assets'
+import { isValidAmountString } from '@/lib/assets'
+import { getVaultTokenAccounts, TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
 import {
@@ -46,6 +46,16 @@ export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?:
 // The lean program is Solana-only + proportional, so a UI beneficiary is just an address + a % share.
 // A stable id keeps React keys correct across add/remove (index keys mis-associate inputs on removal).
 type UiBeneficiary = Beneficiary & { id: string }
+
+// A fungible SPL token detected in the connected wallet (classic SPL or Token-2022), lockable as the
+// capsule asset. `mint`/`tokenProgram` are base58; `balanceUi` is the human-readable balance.
+type WalletToken = { mint: string; decimals: number; symbol: string; balanceUi: number; tokenProgram: string }
+
+// Best-effort display label for an arbitrary mint: a short truncation (devnet tokens rarely have a
+// resolvable symbol). The full mint is shown alongside so the user can verify the exact asset.
+function shortMint(mint: string): string {
+  return `${mint.slice(0, 4)}...${mint.slice(-4)}`
+}
 
 // Split 100% evenly across n recipients; the last absorbs the rounding remainder so the displayed
 // shares always total exactly 100 (and the derived share_bps total exactly 10000).
@@ -97,7 +107,11 @@ export default function CreatePage() {
   const { publicKey, connected } = wallet
   const [intent, setIntent] = useState('')
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
-  const [selectedTokenAsset, setSelectedTokenAsset] = useState<SupportedAssetSymbol>('SOL')
+  // Asset to lock: null = native SOL; otherwise the chosen SPL token's mint (auto-detected from the
+  // connected wallet, classic SPL or Token-2022). The vault accepts any token the wallet holds.
+  const [selectedAssetMint, setSelectedAssetMint] = useState<string | null>(null)
+  const [walletTokens, setWalletTokens] = useState<WalletToken[]>([])
+  const [tokensLoading, setTokensLoading] = useState(false)
   const beneficiaryIdRef = useRef(1)
   const [beneficiaries, setBeneficiaries] = useState<UiBeneficiary[]>([
     { id: 'b0', chain: 'solana', address: '', amount: '100', amountType: 'percentage', destinationChainSelector: '' }
@@ -247,9 +261,45 @@ export default function CreatePage() {
   }
 
   const supportsMinuteMode = SOLANA_CONFIG.NETWORK === 'devnet'
-  const tokenAssetConfig = getAssetConfig(selectedTokenAsset)
-  const tokenAssetUnit = tokenAssetConfig.symbol
-  const tokenAssetReady = isAssetConfigured(selectedTokenAsset)
+  // Resolve the chosen asset from the detected wallet tokens (null mint = native SOL).
+  const selectedToken = selectedAssetMint ? walletTokens.find((t) => t.mint === selectedAssetMint) ?? null : null
+  const assetUnit = selectedToken?.symbol ?? 'SOL'
+  const assetDecimals = selectedToken?.decimals ?? 9
+  const selectedMintPk = selectedToken ? new PublicKey(selectedToken.mint) : undefined
+
+  // Auto-detect the connected wallet's fungible tokens (both token programs) so the user can lock any
+  // of them. NFTs (decimals 0, amount 1) and zero balances are filtered out.
+  useEffect(() => {
+    if (capsuleType !== 'token' || !publicKey || !connected) {
+      setWalletTokens([])
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      setTokensLoading(true)
+      try {
+        const accts = await getVaultTokenAccounts(getSolanaConnection(), publicKey)
+        const tokens: WalletToken[] = accts
+          .filter((t) => t.amount > 0n && !(t.decimals === 0 && t.amount === 1n))
+          .map((t) => ({
+            mint: t.mint.toBase58(),
+            decimals: t.decimals,
+            symbol: shortMint(t.mint.toBase58()),
+            balanceUi: Number(t.amount) / Math.pow(10, t.decimals),
+            tokenProgram: t.tokenProgram.toBase58(),
+          }))
+          .sort((a, b) => b.balanceUi - a.balanceUi)
+        if (!cancelled) setWalletTokens(tokens)
+      } catch {
+        if (!cancelled) setWalletTokens([])
+      } finally {
+        if (!cancelled) setTokensLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [capsuleType, publicKey, connected])
 
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
@@ -331,9 +381,12 @@ export default function CreatePage() {
   }
 
   const validateBeneficiaries = (): boolean => {
-    if (!tokenAssetReady) {
-      setError(`${selectedTokenAsset} mint is not configured. Set ${getAssetMintEnvKey(selectedTokenAsset)} first.`)
-      return false
+    if (selectedToken) {
+      const amt = parseFloat(totalAmount)
+      if (Number.isFinite(amt) && amt > selectedToken.balanceUi) {
+        setError(`You only have ${selectedToken.balanceUi} ${selectedToken.symbol} in your wallet.`)
+        return false
+      }
     }
 
     // Format parity with the on-chain parser (audit M1): totalAmount is parsed by the program.
@@ -414,7 +467,7 @@ export default function CreatePage() {
 
     try {
       const inactivityValueNum = parseInt(inactivityDays, 10)
-      const selectedMint = getAssetMintPublicKey(selectedTokenAsset)
+      const selectedMint = selectedMintPk
 
       // ---- Off-chain CRE: encrypt the human intent statement and register it (decoupled from chain).
       // The lean on-chain capsule never stores the statement; only the beneficiary split lives on-chain.
@@ -475,7 +528,7 @@ export default function CreatePage() {
         throw new Error('Enter a valid total amount to fund the capsule.')
       }
       const depositBaseUnits = selectedMint
-        ? Math.round(totalAmountNum * Math.pow(10, tokenAssetConfig.decimals))
+        ? Math.round(totalAmountNum * Math.pow(10, assetDecimals))
         : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
 
       const inactivityPeriodSeconds = inactivityUnit === 'minutes'
@@ -567,8 +620,10 @@ export default function CreatePage() {
                 capsuleAddress: capsulePDA.toBase58(),
                 owner: publicKey.toBase58(),
                 recipientEmail: normalizedEmail,
-                assetSymbol: tokenAssetConfig.symbol,
-                assetLabel: tokenAssetConfig.label,
+                assetSymbol: assetUnit,
+                assetLabel: selectedToken ? `${selectedToken.symbol} (${selectedToken.mint})` : 'Solana',
+                assetMint: selectedToken?.mint ?? null,
+                assetDecimals,
                 totalAmount: capsuleType === 'token' ? totalAmount : undefined,
                 beneficiaryCount:
                   capsuleType === 'token'
@@ -738,7 +793,7 @@ export default function CreatePage() {
                 </span>
                 <span className="create-status-chip">
                   <span className="create-status-chip__dot" />
-                  {capsuleType === 'token' ? `Asset: ${tokenAssetUnit}` : capsuleType === 'nft' ? `NFTs: ${selectedNftMints.length}` : 'Asset pending'}
+                  {capsuleType === 'token' ? `Asset: ${assetUnit}` : capsuleType === 'nft' ? `NFTs: ${selectedNftMints.length}` : 'Asset pending'}
                 </span>
                 <span className="create-status-chip">
                   <span className="create-status-chip__dot" />
@@ -752,7 +807,7 @@ export default function CreatePage() {
                 <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
                   <ServiceMetaCard label="Asset" className="bg-Heres-surface/20 shadow-none">
                     <p className="text-[15px] font-semibold text-Heres-white">
-                      {capsuleType === 'token' ? `${tokenAssetUnit} capsule` : capsuleType === 'nft' ? 'NFT capsule' : 'Not selected'}
+                      {capsuleType === 'token' ? `${assetUnit} capsule` : capsuleType === 'nft' ? 'NFT capsule' : 'Not selected'}
                     </p>
                   </ServiceMetaCard>
                   <ServiceMetaCard label="Recipients" className="bg-Heres-surface/20 shadow-none">
@@ -900,39 +955,54 @@ export default function CreatePage() {
                 {capsuleType === 'token' && (
                   <div className="mt-5 space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Asset</label>
+                      <label className="mb-2 block text-sm text-Heres-muted">Asset to lock</label>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {SUPPORTED_TOKEN_ASSETS.map((asset) => {
-                          const configured = isAssetConfigured(asset.symbol)
-                          return (
-                            <button
-                              key={asset.symbol}
-                              type="button"
-                              onClick={() => configured && setSelectedTokenAsset(asset.symbol)}
-                              disabled={!configured}
-                              className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                                selectedTokenAsset === asset.symbol
-                                  ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
-                                  : configured
-                                    ? 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
-                                    : 'cursor-not-allowed border-Heres-border/60 bg-Heres-card/40 text-Heres-muted opacity-60'
-                              }`}
-                            >
-                              <p className="text-sm font-semibold">{asset.symbol}</p>
-                              <p className="text-xs text-Heres-muted">{asset.label}</p>
-                              {!configured && <p className="mt-1 text-[10px] uppercase tracking-wide text-amber-300">Env required</p>}
-                            </button>
-                          )
-                        })}
+                        {/* Native SOL is always available. */}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAssetMint(null)}
+                          className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                            selectedAssetMint === null
+                              ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
+                              : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
+                          }`}
+                        >
+                          <p className="text-sm font-semibold">SOL</p>
+                          <p className="text-xs text-Heres-muted">Native Solana</p>
+                        </button>
+                        {/* Any SPL / Token-2022 the connected wallet holds. */}
+                        {walletTokens.map((t) => (
+                          <button
+                            key={t.mint}
+                            type="button"
+                            onClick={() => setSelectedAssetMint(t.mint)}
+                            title={t.mint}
+                            className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                              selectedAssetMint === t.mint
+                                ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
+                                : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
+                            }`}
+                          >
+                            <p className="text-sm font-semibold">
+                              {t.symbol}
+                              {t.tokenProgram === TOKEN_2022_PROGRAM_ID.toBase58() && (
+                                <span className="ml-1.5 rounded bg-Heres-surface/80 px-1 py-0.5 text-[9px] uppercase tracking-wide text-Heres-muted">T-2022</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-Heres-muted">Balance: {t.balanceUi}</p>
+                          </button>
+                        ))}
                       </div>
+                      {tokensLoading && <p className="mt-2 text-xs text-Heres-muted">Scanning your wallet for tokens...</p>}
+                      {!tokensLoading && connected && walletTokens.length === 0 && (
+                        <p className="mt-2 text-xs text-Heres-muted">No SPL tokens found in your wallet - you can still lock SOL.</p>
+                      )}
+                      {!connected && (
+                        <p className="mt-2 text-xs text-Heres-muted">Connect your wallet to see the tokens you can lock.</p>
+                      )}
                     </div>
-                    {!tokenAssetReady && (
-                      <p className="text-xs text-amber-300">
-                        {selectedTokenAsset} requires <code className="font-mono">{getAssetMintEnvKey(selectedTokenAsset)}</code> to be set to a valid token mint for the active network.
-                      </p>
-                    )}
                     <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({tokenAssetUnit})</label>
+                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({assetUnit})</label>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -941,7 +1011,10 @@ export default function CreatePage() {
                         placeholder="0.0"
                         className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3.5 text-sm text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
                       />
-                      <p className="mt-3 text-sm text-Heres-muted">How much {tokenAssetUnit} to lock in the capsule. Each beneficiary receives their share of this.</p>
+                      <p className="mt-3 text-sm text-Heres-muted">
+                        How much {assetUnit} to lock in the capsule. Each beneficiary receives their share of this.
+                        {selectedToken && <> Available: <span className="text-Heres-white">{selectedToken.balanceUi} {assetUnit}</span>.</>}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1067,7 +1140,7 @@ export default function CreatePage() {
                           )}
                           {beneficiary.address && sharePct > 0 && total > 0 && (
                             <p className="text-xs text-Heres-muted">
-                              ~ <span className="font-semibold text-Heres-accent">{tokenAmount.toFixed(4)} {tokenAssetUnit}</span> ({sharePct}% of {total} {tokenAssetUnit})
+                              ~ <span className="font-semibold text-Heres-accent">{tokenAmount.toFixed(4)} {assetUnit}</span> ({sharePct}% of {total} {assetUnit})
                             </p>
                           )}
                         </div>

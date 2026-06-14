@@ -11,10 +11,13 @@ import {
   executeIntent,
   distributeAssets,
   undelegateCapsule,
+  recoverVault,
+  cancelCapsule,
   registerCapsuleOwnerForAutomation,
 } from '@/lib/solana'
 import { getOrMintTeeToken, getCachedTeeToken } from '@/lib/tee'
 import { getCapsuleVaultPDA } from '@/lib/program'
+import { getVaultTokenAccounts } from '@/lib/spl'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE, getExplorerUrl, getNetworkDisplayLabel } from '@/constants'
 import { formatDuration } from '@/utils/intent'
@@ -166,6 +169,10 @@ export default function CapsuleDetailPage() {
   // capsule stores only beneficiaries; the human-facing payload lives off-chain (CRE), so we fetch it
   // best-effort for display. Missing fields simply hide their UI.
   const [meta, setMeta] = useState<IntentParsed | null>(null)
+  // The mint actually locked in the vault (source of truth for recover/cancel). Read from chain - the
+  // vault is never delegated - so it works for ANY token the capsule holds (classic SPL or Token-2022).
+  // null = SOL-only vault. The SDK resolves the token program from the mint.
+  const [vaultSplMint, setVaultSplMint] = useState<PublicKey | null>(null)
   const [revealing, setRevealing] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)
 
@@ -222,6 +229,50 @@ export default function CapsuleDetailPage() {
     } catch (err: any) {
       console.error('[Undelegate] Error:', err)
       setActionResult({ type: 'error', message: err.message || 'Undelegation failed' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Owner escape hatch: pull all funds out of the Vault back to the wallet. Works even while the
+  // Switch is delegated (the Vault is never delegated). The capsule stays active and armed.
+  const handleRecoverVault = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule) return
+    if (!window.confirm('Withdraw all funds from this capsule back to your wallet? The capsule stays active - you can re-fund it with another deposit later.')) return
+    setActionLoading('recover')
+    setActionResult(null)
+    try {
+      const mint = vaultSplMint ?? undefined
+      const tx = await recoverVault(wallet as any, capsule.owner, mint)
+      // Refresh with the cached token only (don't force a signMessage just to refresh the balance).
+      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), getCachedTeeToken(capsule.owner) ?? undefined)
+      if (refreshed) setCapsule(refreshed)
+      setActionResult({ type: 'success', message: `Funds withdrawn to your wallet. TX: ${tx}` })
+    } catch (err: any) {
+      console.error('[Recover Vault] Error:', err)
+      setActionResult({ type: 'error', message: err.message || 'Withdrawal failed' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Owner teardown: refund all funds + reclaim account rent, then permanently close the capsule.
+  // Needs the Switch + BeneficiarySet undelegated to base first (Anchor's owner-check rejects a
+  // still-delegated account), so the button is gated on !isDelegated - undelegate from ER first.
+  const handleCancelCapsule = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule) return
+    if (!window.confirm('Cancel this capsule? This refunds all funds and account rent to your wallet and PERMANENTLY closes the capsule. This cannot be undone.')) return
+    setActionLoading('cancel')
+    setActionResult(null)
+    try {
+      const mint = vaultSplMint ?? undefined
+      const tx = await cancelCapsule(wallet as any, mint)
+      setActionResult({ type: 'success', message: `Capsule cancelled and assets reclaimed. TX: ${tx}` })
+      // The accounts are now closed; send the owner back to the list.
+      setTimeout(() => router.push('/capsules'), 2500)
+    } catch (err: any) {
+      console.error('[Cancel Capsule] Error:', err)
+      setActionResult({ type: 'error', message: err.message || 'Cancel failed' })
     } finally {
       setActionLoading(null)
     }
@@ -350,6 +401,28 @@ export default function CapsuleDetailPage() {
     })()
     return () => { cancelled = true }
   }, [address])
+
+  // Discover the SPL asset locked in the vault (if any) straight from chain, so recover/cancel target
+  // the real mint regardless of off-chain metadata. Single-asset model: take the first non-zero token.
+  useEffect(() => {
+    const owner = capsule?.owner
+    if (!owner) {
+      setVaultSplMint(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [vaultPDA] = getCapsuleVaultPDA(owner)
+        const tokens = await getVaultTokenAccounts(getSolanaConnection(), vaultPDA)
+        const held = tokens.find((t) => t.amount > 0n)
+        if (!cancelled) setVaultSplMint(held ? held.mint : null)
+      } catch {
+        if (!cancelled) setVaultSplMint(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [capsule?.owner?.toBase58()])
 
   useEffect(() => {
     if (!capsule?.owner || !capsule.executedAt) {
@@ -873,6 +946,11 @@ export default function CapsuleDetailPage() {
             const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
             const canDispatchCre = Boolean(isExecuted && isDistributed && isCreEnabled && !isCreDelivered)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
+            // Owner early-exit (pre-fire only). Recover works even while delegated; full cancel needs
+            // the accounts undelegated to base first, so it is gated on !isDelegated.
+            const preFire = Boolean(capsule.isActive)
+            const canRecover = preFire
+            const canCancel = preFire && !isDelegated
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
@@ -890,7 +968,7 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
-                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} Actions will become available once the capsule expires.
+                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} Execute and Distribute unlock once it expires; you can <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
                     </p>
                   )}
                   {canExecute && (
@@ -1014,6 +1092,29 @@ export default function CapsuleDetailPage() {
                     >
                       {creDispatchLoading ? 'Dispatching...' : 'Deliver Intent Statement'}
                     </button>
+                  )}
+                  {/* Owner early-exit (pre-fire): withdraw funds, or fully cancel + close. */}
+                  {preFire && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleRecoverVault}
+                        disabled={!canRecover || !!actionLoading}
+                        title="Withdraw all funds from the capsule back to your wallet. The capsule stays active and armed."
+                        className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                      >
+                        {actionLoading === 'recover' ? 'Withdrawing...' : 'Withdraw Funds'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelCapsule}
+                        disabled={!canCancel || !!actionLoading}
+                        title={!canCancel ? 'Undelegate from ER first (this settles the capsule to base), then cancel' : 'Refund all funds + account rent and permanently close the capsule'}
+                        className="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                      >
+                        {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Capsule'}
+                      </button>
+                    </>
                   )}
                 </div>
 
