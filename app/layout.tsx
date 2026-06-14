@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from 'next'
-import { Noto_Sans_KR, Oswald } from 'next/font/google'
+import { Noto_Sans_KR, Oswald, Newsreader, Hanken_Grotesk } from 'next/font/google'
 import './globals.css'
 import { Providers } from './providers'
 import { Navbar } from '@/components/Navbar'
 import { Footer } from '@/components/Footer'
+import { SiteChrome } from '@/components/SiteChrome'
 import { ServiceWorkerRegister } from '@/components/ServiceWorkerRegister'
 
 const notoSansKR = Noto_Sans_KR({
@@ -17,6 +18,22 @@ const oswald = Oswald({
   subsets: ['latin'],
   weight: ['500', '700'],
   variable: '--font-display',
+  display: 'swap',
+})
+
+// Marketing landing typefaces (Design 04 "Elevated"): editorial serif + grotesk.
+const newsreader = Newsreader({
+  subsets: ['latin'],
+  style: ['normal', 'italic'],
+  weight: ['300', '400', '500'],
+  variable: '--font-serif',
+  display: 'swap',
+})
+
+const hankenGrotesk = Hanken_Grotesk({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-grotesk',
   display: 'swap',
 })
 
@@ -53,7 +70,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={`${notoSansKR.variable} ${oswald.variable}`}>
+    <html lang="en" className={`${notoSansKR.variable} ${oswald.variable} ${newsreader.variable} ${hankenGrotesk.variable}`}>
       <head>
         <script
           type="application/ld+json"
@@ -79,9 +96,9 @@ export default function RootLayout({
       <body className="min-h-screen font-sans antialiased">
         <Providers>
           <ServiceWorkerRegister />
-          <Navbar />
-          <main className="min-h-screen">{children}</main>
-          <Footer />
+          <SiteChrome nav={<Navbar />} footer={<Footer />}>
+            {children}
+          </SiteChrome>
         </Providers>
       </body>
     </html>
