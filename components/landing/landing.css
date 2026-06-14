@@ -101,7 +101,8 @@ html.lenis,html.lenis body{height:auto}
 }
 
 /* real top-level elements sit above the background */
-.lp header, .lp main, .lp footer{position:relative;z-index:2;}
+/* lift content above the fixed background; the nav keeps its own position:fixed */
+.lp .page, .lp .foot{position:relative;z-index:2;}
 /* page sits above background */
 .page{position:relative;z-index:2}
 
@@ -236,9 +237,8 @@ html.lenis,html.lenis body{height:auto}
    ============================================================ */
 .hero{
   position:relative;
-  min-height:100svh;
-  display:flex;flex-direction:column;justify-content:center;
-  padding-top:104px;padding-bottom:52px;
+  display:flex;flex-direction:column;
+  padding-top:128px;padding-bottom:clamp(72px,9vw,104px);
 }
 .hero__eyebrow{ margin-bottom:22px; }
 .hero__title{
