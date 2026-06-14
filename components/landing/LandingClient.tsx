@@ -10,7 +10,7 @@ import Lenis from 'lenis'
    A breathing line that slows and flattens into stillness.
    amplitude is a single state value 0..1 (1 = fully alive).
    ============================================================ */
-type PulseOpts = { tick?: boolean; startAmp?: number }
+type PulseOpts = { tick?: boolean; startAmp?: number; rate?: number }
 type PulseController = {
   start: () => void
   stop: () => void
@@ -63,6 +63,8 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
   let amp = opts.startAmp != null ? opts.startAmp : 1
   let targetAmp = amp
   let speed = 1
+  // Base beat cadence (waveforms scrolled per second). Lower = slower heartbeat.
+  const rate = opts.rate != null ? opts.rate : 0.8
 
   function draw(now: number) {
     raf = null
@@ -86,7 +88,7 @@ function makePulse(canvas: HTMLCanvasElement | null, opts: PulseOpts): PulseCont
     // Beats spread across the width, scrolling in from the right at ~0.8/s; the
     // how-section scrub lowers `speed`, so beats slow before they flatline.
     const beats = Math.max(3, Math.round(W / 150))
-    const scroll = elapsed * 0.8 * speed
+    const scroll = elapsed * rate * speed
 
     ctx!.beginPath()
     ctx!.lineWidth = 1.6
@@ -427,6 +429,7 @@ export function LandingClient() {
     const heroPulse = makePulse(document.getElementById('heroPulse') as HTMLCanvasElement | null, {
       tick: true,
       startAmp: 1,
+      rate: 0.5,
     })
     const howPulse = makePulse(document.getElementById('howPulse') as HTMLCanvasElement | null, {
       tick: false,

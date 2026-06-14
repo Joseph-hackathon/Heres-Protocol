@@ -22,9 +22,8 @@ export function Privacy() {
           <h3>Your beneficiaries are nobody&apos;s business but yours.</h3>
           <p style={{ marginTop: 'auto' }}>
             On most chains, putting beneficiaries in a contract makes them <b>public the instant you
-            do it</b>. Heres keeps your beneficiary list sealed inside a Trusted Execution Environment.
-            No one can read it while you are alive. It is revealed only at the moment of settlement,
-            after your instructions have already been carried out.
+            do it</b>. Heres seals your list inside a Trusted Execution Environment, unreadable while
+            you are alive. It is revealed only at settlement, after your instructions have executed.
           </p>
         </div>
 

@@ -52,10 +52,6 @@ export function Hero() {
               <div className="k">Last sign of life</div>
               <div className="v tnum">2 hours ago</div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div className="k">Inactivity window</div>
-              <div className="v tnum">180 days</div>
-            </div>
           </div>
         </aside>
       </div>

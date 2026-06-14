@@ -23,9 +23,8 @@ export function HowItWorks() {
           <div className="step__body">
             <h3>Create your capsule</h3>
             <p>
-              Choose your assets, set who receives them and in what share, and set your{' '}
-              <b>inactivity window</b>: the longest stretch of wallet silence that should trigger
-              distribution.
+              Pick your assets, set who gets what share, and choose your <b>inactivity window</b>: how
+              long wallet silence should last before Heres acts.
             </p>
             <span className="step__icon">
               <Wallet className="ph-icon" aria-hidden />
@@ -39,8 +38,8 @@ export function HowItWorks() {
           <div className="step__body">
             <h3>Heres watches your wallet</h3>
             <p>
-              Every normal action, a swap, a transfer, anything, counts as a <b>sign of life</b>.
-              You never have to check in. Your on-chain activity is the signal.
+              Every action, a swap, a transfer, anything, counts as a <b>sign of life</b>. No
+              check-ins. Your on-chain activity is the signal.
             </p>
             <span className="step__icon">
               <Activity className="ph-icon" aria-hidden />
@@ -54,9 +53,8 @@ export function HowItWorks() {
           <div className="step__body">
             <h3>Silence triggers settlement</h3>
             <p>
-              If your wallet goes quiet past the window, your capsule <b>executes on Solana</b> and your
-              people receive what you set aside, in their wallets, automatically. Reappear during the
-              grace window and your capsule simply resets.
+              If your wallet stays quiet past the window, your capsule <b>executes on Solana</b> and your
+              people receive what you set aside, automatically. Reappear in the grace window and it resets.
             </p>
             <span className="step__icon">
               <HeartHandshake className="ph-icon" aria-hidden />
