@@ -8,24 +8,40 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // Legacy Heres.* names kept; values now resolve to the Quiet Ledger
+        // palette via channel vars (rgb(... / <alpha-value>) keeps opacity
+        // utilities like bg-Heres-card/60 working). Purple is retired to ash.
         Heres: {
-          bg: '#050816',
-          surface: '#0c1024',
-          card: '#111832',
-          border: 'rgba(34, 211, 238, 0.15)',
-          accent: '#22d3ee',
-          accentDim: 'rgba(34, 211, 238, 0.15)',
-          purple: '#a78bfa',
-          purpleDim: 'rgba(167, 139, 250, 0.2)',
-          cyan: '#22d3ee',
-          muted: '#7a8599',
-          white: '#f0f2f8',
-          brand: '#1E90FF',
+          bg: 'rgb(var(--ink-rgb) / <alpha-value>)',
+          surface: 'rgb(var(--surface-rgb) / <alpha-value>)',
+          card: 'rgb(var(--card-rgb) / <alpha-value>)',
+          border: 'var(--hair)',
+          accent: 'rgb(var(--gold-rgb) / <alpha-value>)',
+          accentDim: 'var(--gold-dim)',
+          purple: 'rgb(var(--ash-rgb) / <alpha-value>)',
+          purpleDim: 'rgb(var(--ash-rgb) / 0.18)',
+          cyan: 'rgb(var(--gold-rgb) / <alpha-value>)',
+          muted: 'rgb(var(--ash-rgb) / <alpha-value>)',
+          white: 'rgb(var(--vellum-rgb) / <alpha-value>)',
+          brand: 'rgb(var(--gold-rgb) / <alpha-value>)',
         },
+        // First-class Quiet Ledger tokens (names that do not collide with
+        // Tailwind defaults; brand = the cyan accent).
+        ink: 'rgb(var(--ink-rgb) / <alpha-value>)',
+        surface: 'rgb(var(--surface-rgb) / <alpha-value>)',
+        card: 'rgb(var(--card-rgb) / <alpha-value>)',
+        vellum: 'rgb(var(--vellum-rgb) / <alpha-value>)',
+        ash: 'rgb(var(--ash-rgb) / <alpha-value>)',
+        brand: 'rgb(var(--gold-rgb) / <alpha-value>)',
+        danger: 'rgb(var(--danger-rgb) / <alpha-value>)',
+        warn: 'rgb(var(--warn-rgb) / <alpha-value>)',
+        hair: 'var(--hair)',
       },
       fontFamily: {
         sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
         display: ['var(--font-display)', 'sans-serif'],
+        serif: ['var(--font-serif)', 'Georgia', 'serif'],
+        grotesk: ['var(--font-grotesk)', 'system-ui', 'sans-serif'],
       },
       animation: {
         'fade-in-up': 'fadeInUp 0.7s ease-out forwards',
