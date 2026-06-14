@@ -570,6 +570,17 @@ html.lenis{scroll-behavior:auto !important}
 }
 .foot__motif{ font-family:var(--serif);font-style:italic;font-size:17px;color:var(--gold); }
 .foot__copy{ font-size:13px;color:var(--ash); }
+.foot__bottom-right{ display:flex;align-items:center;gap:18px;flex-wrap:wrap; }
+.foot__solana{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:8px 14px;border-radius:10px;
+  border:1px solid var(--hair-strong);
+  background:rgba(234,238,246,0.02);
+  color:var(--vellum);font-size:13.5px;font-weight:500;letter-spacing:0.01em;
+  transition:border-color .3s var(--ease),background .3s var(--ease);
+}
+.foot__solana:hover{ border-color:var(--gold-soft);background:rgba(234,238,246,0.05); }
+.foot__solana img{ width:20px;height:18px;display:block; }
 @media (max-width:820px){
   .foot__grid{ grid-template-columns:1fr 1fr;gap:36px; }
   .foot__brand{ grid-column:span 2; }

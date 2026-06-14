@@ -61,7 +61,7 @@ export function MarketingFooter() {
               <a href="#">About</a>
             </li>
             <li>
-              <a href="https://x.com/Heres_app" target="_blank" rel="noopener noreferrer">
+              <a href="https://x.com/Heresprotocol" target="_blank" rel="noopener noreferrer">
                 X
               </a>
             </li>
@@ -74,7 +74,13 @@ export function MarketingFooter() {
 
       <div className="foot__bottom">
         <span className="foot__motif">Silence becomes truth.</span>
-        <span className="foot__copy tnum">Heres Protocol · 2026</span>
+        <div className="foot__bottom-right">
+          <a className="foot__solana" href="https://solana.com" target="_blank" rel="noopener noreferrer">
+            <Image src="/logos/solana.svg" alt="" width={20} height={18} unoptimized />
+            <span>Powered by Solana</span>
+          </a>
+          <span className="foot__copy tnum">Heres Protocol · 2026</span>
+        </div>
       </div>
     </footer>
   )
