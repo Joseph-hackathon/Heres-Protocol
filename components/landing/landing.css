@@ -154,17 +154,19 @@ html.lenis,html.lenis body{height:auto}
   transition:background .35s var(--ease),color .35s var(--ease),border-color .35s var(--ease),transform .35s var(--ease);
 }
 .btn:active{ transform:translateY(1px); }
-.btn--gold{
+/* scoped under .lp so the color beats the scoped `.lp a{color:inherit}` reset */
+.lp .btn--gold{
   background:var(--gold);
   color:#06080F;
+  font-weight:700;
 }
-.btn--gold:hover{ background:#5a82ff; }
-.btn--ghost{
+.lp .btn--gold:hover{ background:#5be1f2; }
+.lp .btn--ghost{
   background:transparent;
   color:var(--vellum);
   border:1px solid var(--hair-strong);
 }
-.btn--ghost:hover{ border-color:var(--gold-soft); color:var(--vellum); }
+.lp .btn--ghost:hover{ border-color:var(--gold-soft); color:var(--vellum); }
 .btn [class*="ph-"]{ font-size:18px; line-height:0; }
 
 /* ---------- Direction label ---------- */
@@ -236,14 +238,14 @@ html.lenis,html.lenis body{height:auto}
   position:relative;
   min-height:100svh;
   display:flex;flex-direction:column;justify-content:center;
-  padding-top:120px;padding-bottom:64px;
+  padding-top:104px;padding-bottom:52px;
 }
-.hero__eyebrow{ margin-bottom:30px; }
+.hero__eyebrow{ margin-bottom:22px; }
 .hero__title{
-  font-size:clamp(42px,8.2vw,104px);
-  line-height:1.02;
+  font-size:clamp(40px,6.6vw,84px);
+  line-height:1.04;
   letter-spacing:-0.02em;
-  max-width:16ch;
+  max-width:none;
   font-weight:300;
 }
 .hero__title .line{ display:block;overflow:hidden; }
@@ -254,7 +256,7 @@ html.lenis,html.lenis body{height:auto}
   grid-template-columns:1.05fr 0.95fr;
   gap:clamp(28px,5vw,72px);
   align-items:end;
-  margin-top:clamp(40px,6vw,68px);
+  margin-top:clamp(28px,4vw,48px);
 }
 .hero__sub{ font-size:18px;line-height:1.62;color:var(--ash);max-width:46ch; }
 .hero__sub b{ color:var(--vellum);font-weight:500; }
