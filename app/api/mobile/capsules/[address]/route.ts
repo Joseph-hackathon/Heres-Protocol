@@ -37,7 +37,10 @@ export async function GET(
       executedAt: capsule.executedAt ? capsule.executedAt * 1000 : null,
       nextInactivityDeadline: (capsule.lastActivity + capsule.inactivityPeriod) * 1000,
       isActive: capsule.isActive,
-      hasMint: Boolean(capsule.mint),
+      beneficiaries: capsule.beneficiaries.map((b) => ({
+        pubkey: b.pubkey.toBase58(),
+        shareBps: b.shareBps,
+      })),
     })
   } catch (error: any) {
     return NextResponse.json(

@@ -4,11 +4,12 @@ import { getProgramId, getSolanaConnection, getSolanaFallbackConnection } from '
 import { HELIUS_CONFIG, MAGICBLOCK_ER } from '@/constants'
 import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 import { getRegisteredOwners, registerCapsuleOwner } from '@/lib/capsule-registry'
-import { parseIntentPayload } from '@/utils/intent'
 import { debugLog, debugWarn } from '@/lib/log'
 import { loadDurableSnapshot, saveDurableSnapshot, persistDashboardIndex, loadSyncCheckpoint, saveSyncCheckpoint } from '@/lib/dashboard-store'
 import { getCapsulePDA, getCapsuleVaultPDA } from '@/lib/program'
 import { getDataFilePath } from '@/lib/runtime-paths'
+import { tryDecodeIntentCapsule } from '@/lib/lean-capsule'
+import type { IntentCapsule } from '@/types'
 
 export type DashboardCapsuleEvent = {
   signature: string
@@ -482,54 +483,6 @@ const getTokenDeltaFromMeta = (meta: any) => {
   return `${noticeSign(delta)}${delta.toFixed(4)} ${maskAddress(mint)}`
 }
 
-const decodeCapsuleAccount = (data: Uint8Array) => {
-  if (!data || data.length < 60) return null
-
-  const readI64 = (bytes: Uint8Array, start: number): bigint => {
-    let result = 0n
-    for (let i = 0; i < 8; i += 1) {
-      result |= BigInt(bytes[start + i]) << BigInt(i * 8)
-    }
-    if (result & (1n << 63n)) {
-      result = result - (1n << 64n)
-    }
-    return result
-  }
-
-  const readU32 = (bytes: Uint8Array, start: number): number =>
-    bytes[start] | (bytes[start + 1] << 8) | (bytes[start + 2] << 16) | (bytes[start + 3] << 24)
-
-  let offset = 8
-  const ownerBytes = data.slice(offset, offset + 32)
-  const owner = new PublicKey(ownerBytes)
-  offset += 32
-  const inactivityPeriod = Number(readI64(data, offset))
-  offset += 8
-  const lastActivity = Number(readI64(data, offset))
-  offset += 8
-  const intentDataLength = readU32(data, offset)
-  offset += 4
-  const intentDataBytes = data.slice(offset, offset + intentDataLength)
-  offset += intentDataLength
-  const isActive = data[offset] === 1
-  offset += 1
-  const hasExecutedAt = data[offset] === 1
-  offset += 1
-  let executedAt: number | null = null
-  if (hasExecutedAt) {
-    executedAt = Number(readI64(data, offset))
-  }
-
-  return {
-    owner,
-    inactivityPeriod,
-    lastActivity,
-    intentData: new Uint8Array(intentDataBytes),
-    isActive,
-    executedAt,
-  }
-}
-
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -677,7 +630,7 @@ async function fetchCapsulesFromRegistry() {
       owner: string
       inactivityPeriod: number
       lastActivity: number
-      intentData: Uint8Array
+      beneficiaries: IntentCapsule['beneficiaries']
       isActive: boolean
       executedAt: number | null
       isDelegated: boolean
@@ -741,7 +694,7 @@ async function fetchCapsulesFromRegistry() {
     try {
       const accountInfo = accountInfos[index]
       if (!accountInfo?.data) return null
-      const capsule = decodeCapsuleAccount(accountInfo.data)
+      const capsule = tryDecodeIntentCapsule(accountInfo.data)
       if (!capsule) return null
 
       return {
@@ -749,7 +702,7 @@ async function fetchCapsulesFromRegistry() {
         owner: entry.owner,
         inactivityPeriod: capsule.inactivityPeriod,
         lastActivity: capsule.lastActivity,
-        intentData: capsule.intentData,
+        beneficiaries: capsule.beneficiaries,
         isActive: capsule.isActive,
         executedAt: capsule.executedAt,
         isDelegated: accountInfo.owner.equals(delegationProgramId),
@@ -765,7 +718,7 @@ async function fetchCapsulesFromRegistry() {
     owner: string
     inactivityPeriod: number
     lastActivity: number
-    intentData: Uint8Array
+    beneficiaries: IntentCapsule['beneficiaries']
     isActive: boolean
     executedAt: number | null
     isDelegated: boolean
@@ -792,14 +745,14 @@ async function fetchCapsulesByProgramScan(connection: Connection, programId: Pub
   const decodedCapsules = accounts
     .map((account: any) => {
       try {
-        const decoded = decodeCapsuleAccount(account.account.data)
+        const decoded = tryDecodeIntentCapsule(account.account.data)
         if (!decoded) return null
         return {
           capsuleAddress: account.pubkey.toBase58(),
           owner: decoded.owner.toBase58(),
           inactivityPeriod: decoded.inactivityPeriod,
           lastActivity: decoded.lastActivity,
-          intentData: decoded.intentData,
+          beneficiaries: decoded.beneficiaries,
           isActive: decoded.isActive,
           executedAt: decoded.executedAt,
           isDelegated: account.account.owner.equals(delegationProgramId),
@@ -813,7 +766,7 @@ async function fetchCapsulesByProgramScan(connection: Connection, programId: Pub
       owner: string
       inactivityPeriod: number
       lastActivity: number
-      intentData: Uint8Array
+      beneficiaries: IntentCapsule['beneficiaries']
       isActive: boolean
       executedAt: number | null
       isDelegated: boolean
@@ -1211,7 +1164,7 @@ async function buildDashboardSnapshot(
     owner: string
     inactivityPeriod: number
     lastActivity: number
-    intentData: Uint8Array
+    beneficiaries: IntentCapsule['beneficiaries']
     isActive: boolean
     executedAt: number | null
     isDelegated: boolean
@@ -1254,12 +1207,7 @@ async function buildDashboardSnapshot(
       const events = (historyIndex?.capsuleEventsByCapsule[capsule.capsuleAddress] || []).sort(
         (a, b) => (b.blockTime || 0) - (a.blockTime || 0)
       )
-      const parsedIntent = parseIntentPayload(capsule.intentData)
-      const asset = inferAssetConfig(parsedIntent, null)
-      const totalAmount =
-        parsedIntent && 'totalAmount' in parsedIntent && typeof parsedIntent.totalAmount === 'string'
-          ? parsedIntent.totalAmount
-          : null
+      const asset = inferAssetConfig(null, null)
 
       return {
         id: capsule.capsuleAddress,
@@ -1270,7 +1218,7 @@ async function buildDashboardSnapshot(
         inactivitySeconds: capsule.inactivityPeriod,
         lastActivityMs,
         executedAtMs,
-        payloadSize: capsule.intentData.length,
+        payloadSize: null,
         signature: events[0]?.signature || null,
         isActive: capsule.isActive,
         isDelegated: capsule.isDelegated,
@@ -1280,7 +1228,7 @@ async function buildDashboardSnapshot(
         proofBytes: null,
         assetSymbol: asset.symbol,
         assetLabel: asset.label,
-        totalAmount,
+        totalAmount: null,
       }
     })
     .filter((row) => !(row.status === 'Active' && row.isActive === false))

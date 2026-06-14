@@ -1,15 +1,11 @@
 import { AnchorProvider, BN, Program } from '@coral-xyz/anchor'
-import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import idl from '@/idl/heres_program.json'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG } from '@/constants'
-import { getCapsulePDA, getCapsuleVaultPDA, getFeeConfigPDA } from '@/lib/program'
-import { encodeIntentData, daysToSeconds } from '@/utils/intent'
+import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA, getFeeConfigPDA, getRelayerPubkey } from '@/lib/program'
+import { daysToSeconds } from '@/utils/intent'
 import { isValidAmountString } from '@/lib/assets'
-import type { Beneficiary } from '@/types'
-
-const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 
 type DummyWallet = {
   publicKey: PublicKey
@@ -76,26 +72,11 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     throw new Error('Invalid inactivityDays')
   }
 
-  const beneficiaries: Beneficiary[] = [
-    {
-      chain: 'solana',
-      address: beneficiaryAddress.toBase58(),
-      amount: beneficiaryAmountStr,
-      amountType: 'fixed',
-    },
-  ]
-
-  const intentData = encodeIntentData({
-    intent: input.intent || 'Mobile capsule',
-    beneficiaries,
-    totalAmount: totalSolStr,
-    inactivityDays: input.inactivityDays,
-    delayDays: 0,
-  })
+  const lamports = Math.round(totalSolNum * LAMPORTS_PER_SOL)
 
   const program = getProgramForOwner(owner)
-  const programId = getProgramId()
   const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
   const [feeConfigPDA] = getFeeConfigPDA()
 
@@ -103,21 +84,42 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : owner
 
-  const ix = await program.methods
-    .createCapsule(new BN(inactivitySeconds), Buffer.from(intentData))
-    .accountsStrict({
+  // Lean flow as three base-layer instructions in one tx the mobile app signs once: create the Switch +
+  // BeneficiarySet (heartbeat_authority = relayer, so the off-chain liveness service can bump), set the
+  // single beneficiary at 100% (10000 bps), and fund the Vault. NOTE: this mobile path is still
+  // base-only - it does NOT delegate to the TEE, so the single beneficiary is set on the public base
+  // layer (known gap: gate or rework to the multi-step TEE flow before mobile ships).
+  const createIx = await program.methods
+    // Mobile path is inactivity-only for now (no target-date UI); pass null = no absolute trigger.
+    .createCapsule(new BN(inactivitySeconds), getRelayerPubkey(), null)
+    .accountsPartial({
       capsule: capsulePDA,
+      beneficiarySet: beneficiarySetPDA,
       vault: vaultPDA,
       owner,
       feeConfig: feeConfigPDA,
       platformFeeRecipient,
       systemProgram: SystemProgram.programId,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      // Anchor optional-account sentinel for "None".
-      mint: programId,
-      sourceTokenAccount: programId,
-      vaultTokenAccount: programId,
-      associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+    })
+    .instruction()
+
+  const updateIntentIx = await program.methods
+    .updateIntent([{ pubkey: beneficiaryAddress, shareBps: 10000, reserved: Array(14).fill(0) }])
+    .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
+    .instruction()
+
+  const depositIx = await program.methods
+    .deposit(new BN(lamports))
+    .accountsPartial({
+      capsule: capsulePDA,
+      vault: vaultPDA,
+      owner,
+      systemProgram: SystemProgram.programId,
+      tokenProgram: null,
+      associatedTokenProgram: null,
+      mint: null,
+      sourceTokenAccount: null,
+      vaultTokenAccount: null,
     } as any)
     .instruction()
 
@@ -125,7 +127,7 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
 
   const tx = new Transaction({ feePayer: owner, blockhash, lastValidBlockHeight })
-  tx.add(ix)
+  tx.add(createIx, updateIntentIx, depositIx)
 
   return {
     transactionBase64: txToBase64(tx),
@@ -144,9 +146,9 @@ export async function buildUpdateActivityUnsignedTx(ownerBase58: string): Promis
 
   const ix = await program.methods
     .updateActivity()
-    .accounts({
+    .accountsPartial({
       capsule: capsulePDA,
-      owner,
+      authority: owner,
     })
     .instruction()
 

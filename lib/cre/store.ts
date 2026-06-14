@@ -115,6 +115,21 @@ export function listCreSecrets(): CreSecretRecord[] {
   return Array.from(state.secrets.values())
 }
 
+/**
+ * Look up the most recently registered CRE secret for an owner. Used as the off-chain
+ * source of "is CRE enabled for this capsule" now that the lean on-chain capsule no
+ * longer carries an intent_data payload with a `cre`/`premium` config block.
+ */
+export function getCreSecretByOwner(owner: string): CreSecretRecord | null {
+  const state = getState()
+  let latest: CreSecretRecord | null = null
+  for (const secret of state.secrets.values()) {
+    if (secret.owner !== owner) continue
+    if (!latest || secret.updatedAt > latest.updatedAt) latest = secret
+  }
+  return latest
+}
+
 export function upsertCreReminder(reminder: CreReminderRecord): CreReminderRecord {
   const state = getState()
   state.reminders.set(reminder.reminderId, reminder)

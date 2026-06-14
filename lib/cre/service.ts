@@ -2,7 +2,6 @@ import 'server-only'
 
 import { createHmac, randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
-import { parseIntentPayload } from '@/utils/intent'
 import { safeEqualHex, sha256Hex } from '@/lib/cre/auth'
 import {
   DispatchCreDeliveryResult,
@@ -12,6 +11,7 @@ import {
 import {
   getDeliveryLedger,
   getCreSecret,
+  getCreSecretByOwner,
   listDeliveryByCapsule,
   listCreSecrets,
   upsertDeliveryLedger,
@@ -144,28 +144,17 @@ export async function dispatchCreDeliveryForCapsule(
   if (!capsule) return { ok: false, error: 'Capsule not found' }
   if (!capsule.executedAt) return { ok: true, skipped: true, reason: 'Capsule is not executed yet' }
 
-  const parsed = parseIntentPayload(capsule.intentData)
-  const cre =
-    parsed && typeof parsed === 'object'
-      ? ((parsed as { cre?: unknown }).cre ?? (parsed as { premium?: unknown }).premium)
-      : undefined
-  if (!cre || typeof cre !== 'object' || !(cre as { enabled?: boolean }).enabled) {
+  // The CRE config (secretRef/secretHash/recipientEmailHash) no longer lives on-chain
+  // (the lean capsule has no intent_data). It is registered off-chain via
+  // /api/intent-delivery/register, keyed by owner.
+  const registeredSecret = getCreSecretByOwner(capsule.owner.toBase58())
+  if (!registeredSecret) {
     return { ok: true, skipped: true, reason: 'CRE is not enabled' }
   }
-  const creConfig = cre as {
-    secretRef?: string
-    secretHash?: string
-    recipientEmailHash?: string
-    recipientEmail?: string
-  }
-  const legacyRecipientEmail =
-    typeof creConfig.recipientEmail === 'string'
-      ? creConfig.recipientEmail
-      : undefined
-  const creRecipientHash =
-    creConfig.recipientEmailHash || (legacyRecipientEmail ? computeRecipientHash(legacyRecipientEmail) : undefined)
-  if (!creConfig.secretRef || !creConfig.secretHash || !creRecipientHash) {
-    return { ok: false, error: 'CRE payload is incomplete' }
+  const creConfig = {
+    secretRef: registeredSecret.secretRef,
+    secretHash: registeredSecret.secretHash,
+    recipientEmailHash: registeredSecret.recipientEmailHash,
   }
 
   const idempotencyKey = createIdempotencyKey(capsule.capsuleAddress, capsule.executedAt)
@@ -225,7 +214,7 @@ export async function dispatchCreDeliveryForCapsule(
     return { ok: false, error: 'Secret hash mismatch', idempotencyKey, status: 'failed' }
   }
 
-  if (!safeEqualHex(secret.recipientEmailHash, creRecipientHash)) {
+  if (!safeEqualHex(secret.recipientEmailHash, creConfig.recipientEmailHash)) {
     upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
       owner: capsule.owner.toBase58(),
@@ -340,14 +329,10 @@ export async function reconcileCreDeliveries(): Promise<{
     const capsule = await fetchCapsuleStateByOwner(owner)
     if (!capsule?.executedAt) continue
 
-    const parsed = parseIntentPayload(capsule.intentData)
-    const cre =
-      parsed && typeof parsed === 'object'
-        ? ((parsed as { cre?: unknown }).cre ?? (parsed as { premium?: unknown }).premium)
-        : undefined
-    const creSecretRef = typeof cre === 'object' && cre ? (cre as { secretRef?: unknown }).secretRef : undefined
-    const creEnabled = typeof cre === 'object' && cre ? Boolean((cre as { enabled?: boolean }).enabled) : false
-    if (!creEnabled || typeof creSecretRef !== 'string' || creSecretRef !== secret.secretRef) continue
+    // CRE enabled is now determined off-chain: a registered secret exists for this owner.
+    // Only process the most recently registered secret per owner (matches dispatch's lookup).
+    const latest = getCreSecretByOwner(secret.owner)
+    if (!latest || latest.secretRef !== secret.secretRef) continue
 
     executedCreCapsules += 1
     const result = await dispatchCreDeliveryForCapsule(capsule.capsuleAddress)

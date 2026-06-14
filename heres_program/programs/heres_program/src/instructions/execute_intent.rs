@@ -1,9 +1,13 @@
-//! Execute the intent when the inactivity period elapses. Permissionless (no owner signature).
-//! Optimized for ER/TEE: only updates capsule state; distribution happens on the base layer.
+//! Fire the Switch when the inactivity period elapses OR the absolute target_date is reached
+//! (whichever comes first). Permissionless (no owner signature) and
+//! state-only: it flips is_active -> false and stamps executed_at. Funds never move here; payout
+//! happens on the base layer via distribute_assets after undelegation + the grace window.
+//!
+//! The Switch lives on a *regular* ER (no PER permission), so this references only the Switch. The
+//! MagicBlock ScheduleTask runs it autonomously on that ER.
 
 use anchor_lang::prelude::*;
 
-use crate::constants::PERMISSION_PROGRAM_ID;
 use crate::error::ErrorCode;
 use crate::events::IntentExecuted;
 use crate::state::IntentCapsule;
@@ -16,63 +20,33 @@ pub struct ExecuteIntent<'info> {
         bump = capsule.bump
     )]
     pub capsule: Box<Account<'info, IntentCapsule>>,
-
-    /// CHECK: Vault PDA
-    #[account(
-        mut,
-        seeds = [b"capsule_vault", capsule.owner.as_ref()],
-        bump = capsule.vault_bump
-    )]
-    pub vault: AccountInfo<'info>,
-
-    /// MagicBlock Permission Program
-    /// CHECK: Validated by address
-    #[account(address = PERMISSION_PROGRAM_ID)]
-    pub permission_program: AccountInfo<'info>,
-
-    /// CHECK: PDA for access control; seeds [b"permission", capsule]
-    #[account(
-        seeds = [b"permission", capsule.key().as_ref()],
-        bump,
-        seeds::program = PERMISSION_PROGRAM_ID
-    )]
-    pub permission: AccountInfo<'info>,
 }
 
-/// Execute the intent when inactivity period is met. Anyone can call (no owner signature required).
-/// This instruction is optimized for ER/TEE: it only updates the capsule state.
-/// Actual distribution happens on the base layer via distribute_assets.
+/// Fire the switch once the owner has been silent for inactivity_period. Anyone can call (this is
+/// the crank path); the MagicBlock ScheduleTask runs it autonomously on the ER.
 pub fn handler(ctx: Context<ExecuteIntent>) -> Result<()> {
     let capsule = &mut ctx.accounts.capsule;
     require!(capsule.is_active, ErrorCode::CapsuleInactive);
 
-    let current_time = Clock::get()?.unix_timestamp;
-    let time_since_activity = current_time - capsule.last_activity;
-
-    require!(
-        time_since_activity >= capsule.inactivity_period,
-        ErrorCode::InactivityPeriodNotMet
-    );
-
-    // FAIL-SAFE / AUTO-RESTART:
-    // If the execution is triggered but we want to "delay" it or if it's a re-occurring check,
-    // we could reset the timer instead.
-    // For now, we follow the standard execute -> deactivate flow.
+    let now = Clock::get()?.unix_timestamp;
+    // Fire on EITHER trigger, whichever comes first: the owner has been silent for inactivity_period,
+    // OR an absolute target_date has been reached (set => fires regardless of activity; None => silent).
+    let inactivity_due = now - capsule.last_activity >= capsule.inactivity_period;
+    let date_due = capsule.target_date.map_or(false, |t| now >= t);
+    require!(inactivity_due || date_due, ErrorCode::InactivityPeriodNotMet);
 
     capsule.is_active = false;
-    capsule.executed_at = Some(current_time);
+    capsule.executed_at = Some(now);
 
-    msg!("Intent executed (state updated) for capsule: {:?}", capsule.key());
+    msg!("Switch fired (state updated) for capsule: {:?}", capsule.key());
     emit!(IntentExecuted {
         capsule: capsule.key(),
         owner: capsule.owner,
-        executed_at: current_time,
+        executed_at: now,
     });
 
-    // NOTE: commit_and_undelegate cannot be in the same instruction as state changes
-    // because Solana runtime detects ExternalAccountDataModified when Magic program
-    // changes ownership metadata on accounts we already modified.
-    // Undelegation must be handled in a separate transaction after execution.
-
+    // commit_and_undelegate cannot share an instruction with these state changes: the runtime
+    // flags ExternalAccountDataModified when the Magic program rewrites ownership metadata on an
+    // account we already mutated. Undelegation is a separate crank tx (crank_undelegate).
     Ok(())
 }

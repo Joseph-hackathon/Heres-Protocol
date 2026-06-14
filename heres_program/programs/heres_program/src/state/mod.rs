@@ -1,13 +1,11 @@
-//! On-chain account state.
+//! On-chain account state. Workstream A model: 4 accounts (Switch + BeneficiarySet + Vault + FeeConfig).
 
-pub mod capsule_distribution;
+pub mod beneficiary_set;
 pub mod capsule_vault;
-pub mod distributor_config;
 pub mod fee_config;
 pub mod intent_capsule;
 
-pub use capsule_distribution::*;
+pub use beneficiary_set::*;
 pub use capsule_vault::*;
-pub use distributor_config::*;
 pub use fee_config::*;
 pub use intent_capsule::*;

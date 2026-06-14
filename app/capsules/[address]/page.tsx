@@ -11,12 +11,16 @@ import {
   executeIntent,
   distributeAssets,
   undelegateCapsule,
+  recoverVault,
+  cancelCapsule,
   registerCapsuleOwnerForAutomation,
 } from '@/lib/solana'
+import { getOrMintTeeToken, getCachedTeeToken } from '@/lib/tee'
 import { getCapsuleVaultPDA } from '@/lib/program'
+import { getVaultTokenAccounts } from '@/lib/spl'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE, getExplorerUrl, getNetworkDisplayLabel } from '@/constants'
-import { parseIntentPayload, formatDuration } from '@/utils/intent'
+import { formatDuration } from '@/utils/intent'
 import { buildCreSignedMessage } from '@/utils/creAuth'
 import { bytesToBase64 } from '@/utils/creCrypto'
 import { inferAssetConfig } from '@/lib/assets'
@@ -106,13 +110,6 @@ type IntentParsed =
     }
   }
 
-function parseIntentData(intentData: Uint8Array): IntentParsed | null {
-  const parsed = parseIntentPayload(intentData) as Record<string, unknown> | null
-  if (!parsed) return null
-  if (parsed.type === 'nft') return { type: 'nft', ...parsed } as IntentParsed
-  return { type: 'token', ...parsed } as IntentParsed
-}
-
 const maskAddress = (addr: string) =>
   addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-8)}` : addr
 
@@ -128,17 +125,6 @@ function CopyButton({ value }: { value: string }) {
       <Copy className="h-4 w-4" />
     </button>
   )
-}
-
-function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [
-      owner.toBuffer(),
-      new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA').toBuffer(),
-      mint.toBuffer(),
-    ],
-    new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
-  )[0]
 }
 
 function timeAgo(ms: number | null) {
@@ -179,6 +165,16 @@ export default function CapsuleDetailPage() {
   const [creDispatchLoading, setCreDispatchLoading] = useState(false)
   const [creDispatchResult, setCreDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [distributionComplete, setDistributionComplete] = useState(false)
+  // Off-chain capsule metadata (intent statement + CRE config + asset hints). The lean on-chain
+  // capsule stores only beneficiaries; the human-facing payload lives off-chain (CRE), so we fetch it
+  // best-effort for display. Missing fields simply hide their UI.
+  const [meta, setMeta] = useState<IntentParsed | null>(null)
+  // The mint actually locked in the vault (source of truth for recover/cancel). Read from chain - the
+  // vault is never delegated - so it works for ANY token the capsule holds (classic SPL or Token-2022).
+  // null = SOL-only vault. The SDK resolves the token program from the mint.
+  const [vaultSplMint, setVaultSplMint] = useState<PublicKey | null>(null)
+  const [revealing, setRevealing] = useState(false)
+  const [revealError, setRevealError] = useState<string | null>(null)
 
   const isOwner = Boolean(wallet.connected && wallet.publicKey && capsule?.owner && capsule.owner.equals(wallet.publicKey))
 
@@ -187,16 +183,9 @@ export default function CapsuleDetailPage() {
     setActionLoading('execute')
     setActionResult(null)
     try {
-      const beneficiaries = intentParsed?.type === 'token' && 'beneficiaries' in intentParsed && intentParsed.beneficiaries
-        ? intentParsed.beneficiaries.filter((b: any) => b.address?.trim()).map((b: any) => ({
-            chain: b.chain ?? 'solana',
-            address: b.address,
-            amount: b.amount,
-            amountType: b.amountType,
-          }))
-        : undefined
-      const mint = capsule.mint && !capsule.mint.equals(PublicKey.default) ? capsule.mint : undefined
-      const tx = await executeIntent(wallet as any, capsule.owner, beneficiaries, mint)
+      // Lean execute_intent is state-only and permissionless; beneficiaries live on-chain and are read
+      // by distribute_assets, so nothing extra is passed here.
+      const tx = await executeIntent(wallet as any, capsule.owner)
       setActionResult({ type: 'success', message: `Execute Intent TX: ${tx}` })
     } catch (err: any) {
       console.error('[Execute Intent] Error:', err)
@@ -211,16 +200,10 @@ export default function CapsuleDetailPage() {
     setActionLoading('distribute')
     setActionResult(null)
     try {
-      const beneficiaries = intentParsed?.type === 'token' && 'beneficiaries' in intentParsed && intentParsed.beneficiaries
-        ? intentParsed.beneficiaries.filter((b: any) => b.address?.trim()).map((b: any) => ({
-            chain: b.chain ?? 'solana',
-            address: b.address,
-            amount: b.amount,
-            amountType: b.amountType,
-          }))
-        : undefined
-      const mint = capsule.mint && !capsule.mint.equals(PublicKey.default) ? capsule.mint : undefined
-      const tx = await distributeAssets(wallet as any, capsule.owner, beneficiaries, mint)
+      if (!capsule.beneficiaries.length) throw new Error('Capsule has no beneficiaries set')
+      // Beneficiaries + shares are read from the on-chain capsule; distribute splits every vault asset
+      // by share_bps (SPL legs first, then the SOL leg).
+      const tx = await distributeAssets(wallet as any, capsule.owner, capsule.beneficiaries)
       setDistributionComplete(true)
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
     } catch (err: any) {
@@ -236,13 +219,60 @@ export default function CapsuleDetailPage() {
     setActionLoading('undelegate')
     setActionResult(null)
     try {
-      const tx = await undelegateCapsule(wallet as any, capsule.owner)
-      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress))
+      // The two-step undelegate reveals the private BeneficiarySet from the TEE, which needs the
+      // owner's auth token; reuse the session token (minted once) so there's no extra signMessage.
+      const token = await getOrMintTeeToken(wallet as any)
+      const tx = await undelegateCapsule(wallet as any, capsule.owner, token)
+      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
       setCapsule(refreshed)
       setActionResult({ type: 'success', message: `Undelegate TX: ${tx}` })
     } catch (err: any) {
       console.error('[Undelegate] Error:', err)
       setActionResult({ type: 'error', message: err.message || 'Undelegation failed' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Owner escape hatch: pull all funds out of the Vault back to the wallet. Works even while the
+  // Switch is delegated (the Vault is never delegated). The capsule stays active and armed.
+  const handleRecoverVault = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule) return
+    if (!window.confirm('Withdraw all funds from this capsule back to your wallet? The capsule stays active - you can re-fund it with another deposit later.')) return
+    setActionLoading('recover')
+    setActionResult(null)
+    try {
+      const mint = vaultSplMint ?? undefined
+      const tx = await recoverVault(wallet as any, capsule.owner, mint)
+      // Refresh with the cached token only (don't force a signMessage just to refresh the balance).
+      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), getCachedTeeToken(capsule.owner) ?? undefined)
+      if (refreshed) setCapsule(refreshed)
+      setActionResult({ type: 'success', message: `Funds withdrawn to your wallet. TX: ${tx}` })
+    } catch (err: any) {
+      console.error('[Recover Vault] Error:', err)
+      setActionResult({ type: 'error', message: err.message || 'Withdrawal failed' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Owner teardown: refund all funds + reclaim account rent, then permanently close the capsule.
+  // Needs the Switch + BeneficiarySet undelegated to base first (Anchor's owner-check rejects a
+  // still-delegated account), so the button is gated on !isDelegated - undelegate from ER first.
+  const handleCancelCapsule = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule) return
+    if (!window.confirm('Cancel this capsule? This refunds all funds and account rent to your wallet and PERMANENTLY closes the capsule. This cannot be undone.')) return
+    setActionLoading('cancel')
+    setActionResult(null)
+    try {
+      const mint = vaultSplMint ?? undefined
+      const tx = await cancelCapsule(wallet as any, mint)
+      setActionResult({ type: 'success', message: `Capsule cancelled and assets reclaimed. TX: ${tx}` })
+      // The accounts are now closed; send the owner back to the list.
+      setTimeout(() => router.push('/capsules'), 2500)
+    } catch (err: any) {
+      console.error('[Cancel Capsule] Error:', err)
+      setActionResult({ type: 'error', message: err.message || 'Cancel failed' })
     } finally {
       setActionLoading(null)
     }
@@ -298,14 +328,10 @@ export default function CapsuleDetailPage() {
     }
   }
 
-  const intentParsed = useMemo(() => {
-    if (!capsule?.intentData) return null
-    return parseIntentData(capsule.intentData)
-  }, [capsule?.intentData])
-
-  const isNft = intentParsed?.type === 'nft'
-  const isToken = intentParsed?.type === 'token'
-  const assetConfig = inferAssetConfig(intentParsed ?? undefined, capsule?.mint)
+  const intentParsed = meta
+  const isNft = meta?.type === 'nft'
+  const isToken = !isNft
+  const assetConfig = inferAssetConfig(meta ?? undefined)
   const priceChartBaseUrl = `https://api.coingecko.com/api/v3/coins/${assetConfig.coingeckoId}/market_chart?vs_currency=usd&days=`
   const priceLookupUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${assetConfig.coingeckoId}&vs_currencies=usd`
   const creConfig = intentParsed?.cre ?? intentParsed?.premium
@@ -327,7 +353,10 @@ export default function CapsuleDetailPage() {
     setError(null)
     try {
       const pubkey = new PublicKey(address)
-      getCapsuleByAddress(pubkey).then((data) => {
+      // Seed with a TEE token already cached for the connected wallet this session (e.g. minted during
+      // creation), so an owner sees live private state on first load without a fresh signMessage.
+      const cachedToken = wallet.publicKey ? getCachedTeeToken(wallet.publicKey) : undefined
+      getCapsuleByAddress(pubkey, cachedToken).then((data) => {
         if (cancelled) return
         setCapsule(data)
         if (!data) setError('Capsule not found')
@@ -344,6 +373,56 @@ export default function CapsuleDetailPage() {
     }
     return () => { cancelled = true }
   }, [address])
+
+  // Best-effort off-chain metadata (intent statement + CRE config). Decoupled from the on-chain
+  // capsule; failures are non-fatal and just leave the display fields empty.
+  useEffect(() => {
+    if (!address) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/capsules/${encodeURIComponent(address)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+        const m = (data?.meta ?? data) as Record<string, any>
+        setMeta({
+          type: m?.type === 'nft' ? 'nft' : 'token',
+          intent: m?.intent,
+          totalAmount: m?.totalAmount,
+          assetSymbol: m?.assetSymbol,
+          assetMint: m?.assetMint ?? null,
+          nftMints: m?.nftMints,
+          cre: m?.cre ?? m?.premium,
+        } as IntentParsed)
+      } catch {
+        // ignore - metadata is optional
+      }
+    })()
+    return () => { cancelled = true }
+  }, [address])
+
+  // Discover the SPL asset locked in the vault (if any) straight from chain, so recover/cancel target
+  // the real mint regardless of off-chain metadata. Single-asset model: take the first non-zero token.
+  useEffect(() => {
+    const owner = capsule?.owner
+    if (!owner) {
+      setVaultSplMint(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [vaultPDA] = getCapsuleVaultPDA(owner)
+        const tokens = await getVaultTokenAccounts(getSolanaConnection(), vaultPDA)
+        const held = tokens.find((t) => t.amount > 0n)
+        if (!cancelled) setVaultSplMint(held ? held.mint : null)
+      } catch {
+        if (!cancelled) setVaultSplMint(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [capsule?.owner?.toBase58()])
 
   useEffect(() => {
     if (!capsule?.owner || !capsule.executedAt) {
@@ -363,24 +442,24 @@ export default function CapsuleDetailPage() {
       try {
         const connection = getSolanaConnection()
         const [vaultPDA] = getCapsuleVaultPDA(capsule.owner)
-        const isNativeSol = !capsule.mint || capsule.mint.equals(PublicKey.default)
-        let distributed = false
-        if (isNativeSol) {
-          const [vaultInfo, rentExemptLamports] = await Promise.all([
-            connection.getAccountInfo(vaultPDA),
-            connection.getMinimumBalanceForRentExemption(9),
-          ])
-          const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
-          distributed = spendableLamports === 0
-        } else {
-          const mint = capsule.mint as PublicKey
-          const vaultAta = getAssociatedTokenAddress(mint, vaultPDA)
-          const ataInfo = await connection.getTokenAccountBalance(vaultAta).catch(() => null)
-          distributed = !ataInfo || Number(ataInfo.value.amount || '0') === 0
-        }
-        if (!cancelled) {
-          setDistributionComplete(distributed)
-        }
+        // Lean vault holds SOL plus any number of SPL token accounts. "Distributed" = no spendable SOL
+        // above rent AND every token account drained.
+        const [vaultInfo, rentExemptLamports, tokenAccts] = await Promise.all([
+          connection.getAccountInfo(vaultPDA),
+          connection.getMinimumBalanceForRentExemption(9),
+          connection
+            .getParsedTokenAccountsByOwner(vaultPDA, {
+              programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+            })
+            .catch(() => null),
+        ])
+        const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
+        const tokensDrained =
+          !tokenAccts ||
+          tokenAccts.value.every(
+            (t: any) => Number(t.account.data?.parsed?.info?.tokenAmount?.amount || '0') === 0
+          )
+        if (!cancelled) setDistributionComplete(spendableLamports === 0 && tokensDrained)
       } catch {
         if (!cancelled) {
           setDistributionComplete(false)
@@ -389,7 +468,7 @@ export default function CapsuleDetailPage() {
     })()
 
     return () => { cancelled = true }
-  }, [capsule?.owner, capsule?.executedAt, capsule?.mint, capsule?.accountOwner])
+  }, [capsule?.owner, capsule?.executedAt, capsule?.accountOwner])
 
   useEffect(() => {
     if (
@@ -582,15 +661,40 @@ export default function CapsuleDetailPage() {
     )
   }
 
+  // Effective due time = the earlier of the inactivity deadline and the optional fixed target date.
+  // The inactivity deadline slides forward on each heartbeat, so once it passes the fixed date the
+  // date becomes the binding trigger - mirrors the on-chain `inactivity_due || date_due` condition.
+  const inactivityDueTs = capsule.lastActivity + capsule.inactivityPeriod
+  const effectiveDueTs = capsule.targetDate != null ? Math.min(inactivityDueTs, capsule.targetDate) : inactivityDueTs
   const status = capsule.executedAt
     ? 'Executed'
     : !capsule.isActive
       ? 'Waiting'
-      : capsule.lastActivity + capsule.inactivityPeriod < Math.floor(Date.now() / 1000)
+      : effectiveDueTs < Math.floor(Date.now() / 1000)
         ? 'Expired'
         : 'Active'
   const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
   const lastUpdatedMs = capsule.lastActivity ? capsule.lastActivity * 1000 : null
+  const targetDateMs = capsule.targetDate != null ? capsule.targetDate * 1000 : null
+  // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
+  const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
+
+  // Mint (or reuse) a TEE auth token and re-read the live private state from the TEE node.
+  const handleReveal = async () => {
+    if (!capsule || !wallet.publicKey) return
+    setRevealing(true)
+    setRevealError(null)
+    try {
+      const token = await getOrMintTeeToken(wallet as any)
+      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
+      if (refreshed) setCapsule(refreshed)
+      else setRevealError('Could not read private state from the TEE.')
+    } catch (e: any) {
+      setRevealError(e?.message || 'Failed to authorize the TEE read.')
+    } finally {
+      setRevealing(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
@@ -600,7 +704,7 @@ export default function CapsuleDetailPage() {
             className="mb-6"
             eyebrow={<SectionEyebrow>Capsule Detail</SectionEyebrow>}
             title="Capsule"
-            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}`}
+            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}${targetDateMs != null ? ` · Fires by ${new Date(targetDateMs).toLocaleDateString()}` : ''}`}
             statusLine={`Updated ${timeAgo(lastUpdatedMs)}`}
             badges={
               <>
@@ -667,18 +771,22 @@ export default function CapsuleDetailPage() {
                 <CopyButton value={getProgramId().toBase58()} />
               </div>
             </ServiceMetaCard>
-            {capsule.mint && (
-              <ServiceMetaCard label="Token Mint">
-                <div className="flex items-center gap-1">
-                  <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.mint.toBase58()}>
-                    {maskAddress(capsule.mint.toBase58())}
-                  </p>
-                  <CopyButton value={capsule.mint.toBase58()} />
-                </div>
-              </ServiceMetaCard>
-            )}
-            <ServiceMetaCard label="Retries">
-              <p className="text-sm font-mono text-Heres-white">{(capsule as any).retryCount?.toString() || '0'}</p>
+            <ServiceMetaCard label="Beneficiaries">
+              <p className="text-sm font-mono text-Heres-white">
+                {capsule.beneficiaries.length > 0 ? `${capsule.beneficiaries.length} on-chain` : 'Not set'}
+              </p>
+            </ServiceMetaCard>
+            <ServiceMetaCard label="Trigger">
+              <p className="text-sm font-medium text-Heres-white">
+                {formatDuration(capsule.inactivityPeriod)} inactivity
+              </p>
+              {targetDateMs != null ? (
+                <p className="mt-0.5 text-xs text-Heres-accent">
+                  or fixed date {new Date(targetDateMs).toLocaleDateString()} (whichever first)
+                </p>
+              ) : (
+                <p className="mt-0.5 text-xs text-Heres-muted">No fixed date</p>
+              )}
             </ServiceMetaCard>
           </ServiceMetaGrid>
 
@@ -699,8 +807,20 @@ export default function CapsuleDetailPage() {
             <div className="rounded-xl border border-Heres-border/50 bg-Heres-surface/30 p-4 mb-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-Heres-accent mb-1">Where is private monitoring?</p>
               <p className="text-sm text-Heres-muted">
-                Private monitoring runs inside the TEE automatically after capsule creation. Conditions (inactivity, intent) are checked confidentially and are not visible on the public chain. To query private state, use TEE RPC with an auth token.
+                Private monitoring runs inside the TEE automatically after capsule creation. Conditions (inactivity, intent) are checked confidentially and are not visible on the public chain. The beneficiary list lives only inside the TEE while delegated; the owner can read it with a one-time auth signature.
               </p>
+              {privateStateHidden && (
+                <div className="mt-3">
+                  <button
+                    onClick={handleReveal}
+                    disabled={revealing}
+                    className="rounded-lg border border-Heres-accent/50 bg-Heres-accent/10 px-3 py-1.5 text-xs font-medium text-Heres-accent hover:bg-Heres-accent/20 disabled:opacity-50"
+                  >
+                    {revealing ? 'Authorizing TEE...' : 'Reveal private details'}
+                  </button>
+                  {revealError && <p className="mt-2 text-xs text-red-400">{revealError}</p>}
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
@@ -714,10 +834,10 @@ export default function CapsuleDetailPage() {
               <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Validator address</p>
                 <div className="flex items-center gap-1">
-                  <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={MAGICBLOCK_ER.ACTIVE_VALIDATOR}>
-                    {maskAddress(MAGICBLOCK_ER.ACTIVE_VALIDATOR)}
+                  <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={MAGICBLOCK_ER.VALIDATOR_TEE}>
+                    {maskAddress(MAGICBLOCK_ER.VALIDATOR_TEE)}
                   </p>
-                  <CopyButton value={MAGICBLOCK_ER.ACTIVE_VALIDATOR} />
+                  <CopyButton value={MAGICBLOCK_ER.VALIDATOR_TEE} />
                 </div>
               </div>
               <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
@@ -739,19 +859,32 @@ export default function CapsuleDetailPage() {
             </div>
           </ServiceSection>
 
-          <ServiceSection title="Intent" className="mb-6">
+          <ServiceSection title="Beneficiaries & Intent" className="mb-6">
             <p className="text-sm text-Heres-muted mb-4">
-              {intentParsed?.intent || 'No intent decoded'}
+              {intentParsed?.intent
+                || 'The human intent statement is encrypted off-chain and delivered to the beneficiary via CRE. Only the on-chain beneficiary split is shown here.'}
             </p>
-            {isToken && intentParsed && 'totalAmount' in intentParsed && intentParsed.totalAmount && (
-              <p className="text-sm text-Heres-accent">
-                Total amount: {intentParsed.totalAmount} {assetConfig.symbol}
-              </p>
-            )}
-            {isNft && intentParsed && 'nftMints' in intentParsed && intentParsed.nftMints && (
-              <p className="text-sm text-Heres-accent">
-                NFTs: {intentParsed.nftMints.length} item(s)
-              </p>
+            {capsule.beneficiaries.length > 0 ? (
+              <div className="space-y-2">
+                {capsule.beneficiaries.map((b, i) => (
+                  <div
+                    key={`${b.pubkey.toBase58()}-${i}`}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-1 min-w-0">
+                      <p className="text-sm font-mono text-Heres-white truncate" title={b.pubkey.toBase58()}>
+                        {maskAddress(b.pubkey.toBase58())}
+                      </p>
+                      <CopyButton value={b.pubkey.toBase58()} />
+                    </div>
+                    <span className="text-sm font-semibold text-Heres-accent tabular-nums shrink-0">
+                      {(b.shareBps / 100).toFixed(b.shareBps % 100 === 0 ? 0 : 2)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-Heres-muted">No beneficiaries set on-chain yet.</p>
             )}
           </ServiceSection>
 
@@ -813,6 +946,11 @@ export default function CapsuleDetailPage() {
             const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
             const canDispatchCre = Boolean(isExecuted && isDistributed && isCreEnabled && !isCreDelivered)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
+            // Owner early-exit (pre-fire only). Recover works even while delegated; full cancel needs
+            // the accounts undelegated to base first, so it is gated on !isDelegated.
+            const preFire = Boolean(capsule.isActive)
+            const canRecover = preFire
+            const canCancel = preFire && !isDelegated
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
@@ -830,12 +968,12 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
-                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. The inactivity period has not elapsed yet. Actions will become available once the capsule expires.
+                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} Execute and Distribute unlock once it expires; you can <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
                     </p>
                   )}
                   {canExecute && (
                     <p className="text-sm text-amber-400">
-                      Inactivity period has elapsed. You can now <strong>Execute Intent</strong> to deactivate the capsule, then distribute assets.
+                      {targetDateMs != null ? 'A trigger condition has been met' : 'Inactivity period has elapsed'}. You can now <strong>Execute Intent</strong> to deactivate the capsule, then distribute assets.
                     </p>
                   )}
                   {isExpired && !isExecuted && (
@@ -906,7 +1044,7 @@ export default function CapsuleDetailPage() {
                     type="button"
                     onClick={handleExecuteIntent}
                     disabled={!canExecute || !!actionLoading}
-                    title={!canExecute ? (isActive ? 'Inactivity period not elapsed' : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
+                    title={!canExecute ? (isActive ? (targetDateMs != null ? 'No trigger condition met yet' : 'Inactivity period not elapsed') : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
                     className="rounded-lg border border-Heres-accent px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-accent/10 text-Heres-accent hover:bg-Heres-accent/20"
                   >
                     {actionLoading === 'execute' ? 'Executing...' : isExecuted ? 'Executed ✓' : 'Execute Intent'}
@@ -954,6 +1092,29 @@ export default function CapsuleDetailPage() {
                     >
                       {creDispatchLoading ? 'Dispatching...' : 'Deliver Intent Statement'}
                     </button>
+                  )}
+                  {/* Owner early-exit (pre-fire): withdraw funds, or fully cancel + close. */}
+                  {preFire && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleRecoverVault}
+                        disabled={!canRecover || !!actionLoading}
+                        title="Withdraw all funds from the capsule back to your wallet. The capsule stays active and armed."
+                        className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                      >
+                        {actionLoading === 'recover' ? 'Withdrawing...' : 'Withdraw Funds'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelCapsule}
+                        disabled={!canCancel || !!actionLoading}
+                        title={!canCancel ? 'Undelegate from ER first (this settles the capsule to base), then cancel' : 'Refund all funds + account rent and permanently close the capsule'}
+                        className="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                      >
+                        {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Capsule'}
+                      </button>
+                    </>
                   )}
                 </div>
 

@@ -5,7 +5,8 @@
 import { PublicKey } from '@solana/web3.js'
 import { SupportedAssetSymbol } from '@/lib/assets'
 
-// Beneficiary types
+// Beneficiary types (UI input model). The lean on-chain program stores only Solana pubkeys with
+// proportional share_bps; EVM/CCIP + fixed-amount are UI-only and disabled until they return.
 export interface Beneficiary {
   chain: 'solana' | 'evm'
   address: string
@@ -14,16 +15,44 @@ export interface Beneficiary {
   destinationChainSelector?: string
 }
 
-// Intent Capsule types
+/** On-chain lean beneficiary: a Solana pubkey and its share of every distributed asset, in basis points. */
+export interface OnChainBeneficiary {
+  pubkey: PublicKey
+  shareBps: number
+  /** Per-entry reserved pad (future cross-chain heir field). Optional in the app; zero-filled on write. */
+  reserved?: number[]
+}
+
+/**
+ * The private beneficiary list (Workstream A: split out of the Switch into its own TEE-resident
+ * account). Set/edited via update_intent routed to the TEE; revealed to base before distribution.
+ */
+export interface BeneficiarySet {
+  owner: PublicKey
+  beneficiaries: OnChainBeneficiary[]
+}
+
+// Intent Capsule (lean program layout). The "Switch" carries dead-man's-switch LIVENESS only; the
+// private beneficiary list lives in a separate BeneficiarySet account (TEE). `beneficiaries` here is
+// a view-model field the read path (getCapsule) populates from a BeneficiarySet read - it is [] when
+// no set read happened or the TEE filtered it (no auth token). The vault holds SOL + any number of
+// SPL token accounts; the encrypted human "intent statement" lives off-chain (CRE).
 export interface IntentCapsule {
   owner: PublicKey
   inactivityPeriod: number
   lastActivity: number
-  intentData: Uint8Array
   isActive: boolean
   executedAt: number | null
+  bump?: number
+  vaultBump?: number
+  beneficiariesBump?: number
+  heartbeatAuthority?: PublicKey
+  /** Absolute unix ts (seconds) the switch fires regardless of activity; null = inactivity-only. */
+  targetDate?: number | null
+  /** Populated from a BeneficiarySet read (TEE w/ token, or base post-reveal); [] otherwise. */
+  beneficiaries: OnChainBeneficiary[]
+  /** Runtime owner of the account (program vs delegation program) - tells delegated vs settled-on-base. */
   accountOwner?: PublicKey
-  mint?: PublicKey
 }
 
 export interface CreIntentConfig {

@@ -1,5 +1,5 @@
 {
-  "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3",
+  "address": "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz",
   "metadata": {
     "name": "heres_program",
     "version": "0.1.0",
@@ -10,7 +10,7 @@
     {
       "name": "cancel_capsule",
       "docs": [
-        "Cancel an active capsule (owner-only): refund all locked assets and close the accounts."
+        "Cancel an active capsule (owner only): refund assets and close the accounts."
       ],
       "discriminator": [
         27,
@@ -45,6 +45,38 @@
                   117,
                   108,
                   101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
                 ]
               },
               {
@@ -95,8 +127,7 @@
         },
         {
           "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "optional": true
         },
         {
           "name": "mint",
@@ -116,98 +147,9 @@
       "args": []
     },
     {
-      "name": "configure_distributor",
-      "docs": [
-        "Set or update the protocol relayer/distributor for private distribution (admin only)."
-      ],
-      "discriminator": [
-        167,
-        87,
-        254,
-        85,
-        90,
-        209,
-        20,
-        182
-      ],
-      "accounts": [
-        {
-          "name": "distributor_config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  105,
-                  115,
-                  116,
-                  114,
-                  105,
-                  98,
-                  117,
-                  116,
-                  111,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "fee_config",
-          "docs": [
-            "Fee config singleton; its authority is the admin gate."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "authority",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "distributor",
-          "type": "pubkey"
-        }
-      ]
-    },
-    {
       "name": "crank_undelegate",
       "docs": [
-        "Commit ER state and undelegate capsule + vault back to the base layer (crank-callable)."
+        "Commit ER state and undelegate the Switch back to the base layer (crank-callable)."
       ],
       "discriminator": [
         48,
@@ -223,18 +165,155 @@
         {
           "name": "payer",
           "docs": [
-            "Anyone can call this (crank wallet)"
+            "Anyone can call this (crank wallet)."
           ],
           "writable": true,
           "signer": true
         },
         {
+          "name": "owner"
+        },
+        {
           "name": "capsule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "magic_context",
           "writable": true
         },
         {
-          "name": "vault",
+          "name": "magic_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "crank_undelegate_beneficiaries",
+      "docs": [
+        "Commit + undelegate the BeneficiarySet (and its permission) back to base: the privacy reveal,",
+        "gated on the owner OR an already-fired, base-committed Switch (crank-callable post-fire)."
+      ],
+      "discriminator": [
+        105,
+        113,
+        165,
+        65,
+        66,
+        62,
+        148,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Anyone can call this once the switch has fired (crank wallet); or the owner, to reveal early."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "switch",
+          "docs": [
+            "base (program-owned) for the dead-man path. Seeds [b\"intent_capsule\", owner]."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission",
           "writable": true
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
         },
         {
           "name": "magic_context",
@@ -249,7 +328,7 @@
     {
       "name": "create_capsule",
       "docs": [
-        "Initialize a new Intent Capsule (SOL/SPL locked in vault; anyone can execute when conditions are met)."
+        "Create the Switch + Vault for an owner (liveness + heartbeat authority + creation fee)."
       ],
       "discriminator": [
         195,
@@ -284,6 +363,38 @@
                   117,
                   108,
                   101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
                 ]
               },
               {
@@ -353,7 +464,7 @@
         {
           "name": "platform_fee_recipient",
           "docs": [
-            "Platform fee recipient (must match fee_config.fee_recipient when creation_fee_lamports > 0)"
+            "Platform fee recipient (must match fee_config.fee_recipient when creation_fee_lamports > 0)."
           ],
           "writable": true,
           "optional": true
@@ -361,114 +472,6 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "mint",
-          "optional": true
-        },
-        {
-          "name": "source_token_account",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "vault_token_account",
-          "writable": true,
-          "optional": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "vault"
-              },
-              {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
-        },
-        {
-          "name": "associated_token_program",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         }
       ],
       "args": [
@@ -477,15 +480,250 @@
           "type": "i64"
         },
         {
-          "name": "intent_data",
-          "type": "bytes"
+          "name": "heartbeat_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "target_date",
+          "type": {
+            "option": "i64"
+          }
         }
       ]
     },
     {
+      "name": "delegate_beneficiaries",
+      "docs": [
+        "Delegate the private BeneficiarySet to the TEE behind a PER permission (owner-only member)."
+      ],
+      "discriminator": [
+        190,
+        184,
+        64,
+        8,
+        34,
+        128,
+        120,
+        65
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "validator",
+          "optional": true
+        },
+        {
+          "name": "buffer_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                12,
+                221,
+                22,
+                198,
+                50,
+                128,
+                170,
+                223,
+                127,
+                83,
+                43,
+                97,
+                173,
+                8,
+                22,
+                120,
+                143,
+                101,
+                161,
+                85,
+                154,
+                64,
+                153,
+                210,
+                120,
+                135,
+                241,
+                97,
+                17,
+                129,
+                123,
+                179
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "magic_program"
+        },
+        {
+          "name": "delegation_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "buffer_permission",
+          "writable": true
+        },
+        {
+          "name": "delegation_record_permission",
+          "writable": true
+        },
+        {
+          "name": "delegation_metadata_permission",
+          "writable": true
+        },
+        {
+          "name": "owner_program",
+          "address": "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "delegate_capsule",
       "docs": [
-        "Delegate capsule + vault PDAs to the MagicBlock ER/PER."
+        "Delegate the Switch (liveness only) to a regular MagicBlock ER. Token-free heartbeats."
       ],
       "discriminator": [
         127,
@@ -535,38 +773,38 @@
             "program": {
               "kind": "const",
               "value": [
-                24,
-                174,
-                38,
-                240,
-                204,
-                200,
-                23,
-                222,
-                200,
-                132,
-                35,
-                156,
-                66,
-                48,
-                212,
-                105,
-                126,
-                89,
-                208,
-                91,
-                145,
-                5,
-                213,
-                169,
-                215,
-                234,
-                212,
-                205,
-                231,
-                252,
+                12,
+                221,
+                22,
+                198,
+                50,
+                128,
+                170,
+                223,
+                127,
+                83,
+                43,
+                97,
+                173,
+                8,
+                22,
+                120,
+                143,
+                101,
+                161,
+                85,
+                154,
                 64,
-                122
+                153,
+                210,
+                120,
+                135,
+                241,
+                97,
+                17,
+                129,
+                123,
+                179
               ]
             }
           }
@@ -674,134 +912,66 @@
           }
         },
         {
-          "name": "buffer_vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  98,
-                  117,
-                  102,
-                  102,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                24,
-                174,
-                38,
-                240,
-                204,
-                200,
-                23,
-                222,
-                200,
-                132,
-                35,
-                156,
-                66,
-                48,
-                212,
-                105,
-                126,
-                89,
-                208,
-                91,
-                145,
-                5,
-                213,
-                169,
-                215,
-                234,
-                212,
-                205,
-                231,
-                252,
-                64,
-                122
-              ]
-            }
-          }
+          "name": "magic_program"
         },
         {
-          "name": "delegation_record_vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  108,
-                  101,
-                  103,
-                  97,
-                  116,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              }
-            ],
-            "program": {
-              "kind": "account",
-              "path": "delegation_program"
-            }
-          }
+          "name": "delegation_program"
         },
         {
-          "name": "delegation_metadata_vault",
-          "writable": true,
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "owner_program",
+          "address": "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "docs": [
+        "Lock SOL or SPL into the Vault (repeatable; owner only)."
+      ],
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  100,
-                  101,
-                  108,
-                  101,
-                  103,
-                  97,
-                  116,
                   105,
-                  111,
                   110,
-                  45,
-                  109,
+                  116,
                   101,
+                  110,
                   116,
+                  95,
+                  99,
                   97,
-                  100,
-                  97,
-                  116,
-                  97
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
                 ]
               },
               {
                 "kind": "account",
-                "path": "vault"
+                "path": "owner"
               }
-            ],
-            "program": {
-              "kind": "account",
-              "path": "delegation_program"
-            }
+            ]
           }
         },
         {
@@ -835,26 +1005,102 @@
           }
         },
         {
-          "name": "magic_program"
-        },
-        {
-          "name": "delegation_program"
+          "name": "owner",
+          "writable": true,
+          "signer": true
         },
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         },
         {
-          "name": "owner_program",
-          "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3"
+          "name": "token_program",
+          "optional": true
+        },
+        {
+          "name": "associated_token_program",
+          "optional": true,
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "mint",
+          "optional": true
+        },
+        {
+          "name": "source_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "distribute_assets",
       "docs": [
-        "Distribute assets from the vault to beneficiaries (base layer, after execute_intent)."
+        "Distribute one asset from the Vault to beneficiaries by share_bps (base layer, post-grace)."
       ],
       "discriminator": [
         239,
@@ -869,7 +1115,6 @@
       "accounts": [
         {
           "name": "capsule",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -889,6 +1134,43 @@
                   117,
                   108,
                   101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "docs": [
+            "The (now-revealed) beneficiary list. Must already be committed back to base",
+            "(crank_undelegate_beneficiaries) - while delegated to the TEE this account is not program-owned",
+            "and Anchor's Account<> owner-check would reject it, which is exactly the privacy guarantee."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
                 ]
               },
               {
@@ -936,36 +1218,6 @@
         },
         {
           "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "fee_config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "platform_fee_recipient",
-          "docs": [
-            "Platform fee recipient"
-          ],
-          "writable": true,
           "optional": true
         },
         {
@@ -983,7 +1235,7 @@
     {
       "name": "execute_intent",
       "docs": [
-        "Execute the intent when the inactivity period is met (permissionless)."
+        "Fire the Switch when the inactivity period elapses (permissionless; state-only)."
       ],
       "discriminator": [
         53,
@@ -1027,107 +1279,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "permission_program",
-          "docs": [
-            "MagicBlock Permission Program"
-          ],
-          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
-        },
-        {
-          "name": "permission",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  101,
-                  114,
-                  109,
-                  105,
-                  115,
-                  115,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                136,
-                161,
-                10,
-                196,
-                33,
-                152,
-                1,
-                214,
-                246,
-                106,
-                29,
-                60,
-                6,
-                152,
-                192,
-                102,
-                169,
-                175,
-                212,
-                217,
-                180,
-                252,
-                231,
-                71,
-                151,
-                141,
-                209,
-                5,
-                168,
-                212,
-                103,
-                82
-              ]
-            }
-          }
         }
       ],
       "args": []
@@ -1135,7 +1286,7 @@
     {
       "name": "init_fee_config",
       "docs": [
-        "Initialize platform fee config (call once after deploy; only authority can update later)."
+        "Initialize the platform fee config (call once after deploy; authority = deployer)."
       ],
       "discriminator": [
         212,
@@ -1181,7 +1332,7 @@
           "docs": [
             "This program, used to resolve its ProgramData account."
           ],
-          "address": "2fLojZpdmXLeg2ZXRCXVsqiWnbpF2yFH1SVGS77UC8s3"
+          "address": "sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz"
         },
         {
           "name": "program_data",
@@ -1204,228 +1355,8 @@
         {
           "name": "creation_fee_lamports",
           "type": "u64"
-        },
-        {
-          "name": "execution_fee_bps",
-          "type": "u16"
         }
       ]
-    },
-    {
-      "name": "prepare_private_distribution",
-      "docs": [
-        "Prepare private distribution: move remaining vault funds to the distributor (crank-driven)."
-      ],
-      "discriminator": [
-        1,
-        79,
-        193,
-        26,
-        249,
-        87,
-        184,
-        178
-      ],
-      "accounts": [
-        {
-          "name": "capsule",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  105,
-                  110,
-                  116,
-                  101,
-                  110,
-                  116,
-                  95,
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "fee_config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "distributor_config",
-          "docs": [
-            "Pins the relayer the vault funds may move to. Admin-settable via `configure_distributor`,",
-            "decoupled from the fee admin so the hot relayer key can differ and rotate (Option B)."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  105,
-                  115,
-                  116,
-                  114,
-                  105,
-                  98,
-                  117,
-                  116,
-                  111,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "platform_fee_recipient",
-          "docs": [
-            "Platform fee recipient (SPL ATA for SPL, wallet for SOL)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "mint",
-          "optional": true
-        },
-        {
-          "name": "vault_token_account",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "distributor_token_account",
-          "docs": [
-            "The distributor's token account (SPL) receiving the remaining funds"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "distributor",
-          "docs": [
-            "The protocol distributor relayer (Option B). Funds move here only transiently before the",
-            "off-chain MagicBlock Private Payments leg fans them out privately to each beneficiary.",
-            "Pinned to the admin-configured `distributor_config.distributor` so it CANNOT be an",
-            "arbitrary caller draining the vault (audit C1), while still allowing the relayer to be a",
-            "dedicated, rotatable wallet distinct from the fee admin."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "distribution",
-          "docs": [
-            "Distribution state PDA — created on first private distribution."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  105,
-                  115,
-                  116,
-                  114,
-                  105,
-                  98,
-                  117,
-                  116,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule"
-              }
-            ]
-          }
-        }
-      ],
-      "args": []
     },
     {
       "name": "process_undelegation",
@@ -1465,9 +1396,121 @@
       ]
     },
     {
+      "name": "recover_vault",
+      "docs": [
+        "Owner escape hatch: recover one Vault asset while active, without touching the Switch."
+      ],
+      "discriminator": [
+        29,
+        128,
+        117,
+        128,
+        33,
+        206,
+        21,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "docs": [
+            "Account<IntentCapsule>) on purpose: while the Switch is delegated its owner is the delegation",
+            "program, so an Account<IntentCapsule> would fail Anchor's owner check - and the stuck-delegated",
+            "(dead validator) case is exactly what this escape hatch exists for. Authorization is the owner",
+            "signer + the owner-seeded vault, not this account."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "optional": true
+        },
+        {
+          "name": "mint",
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "owner_token_account",
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "recreate_capsule",
       "docs": [
-        "Recreate (reuse) an executed capsule with a new intent and freshly locked assets (owner-only)."
+        "Reuse an executed capsule by resetting its lifecycle in place (owner only)."
       ],
       "discriminator": [
         178,
@@ -1512,25 +1555,31 @@
           }
         },
         {
-          "name": "vault",
+          "name": "beneficiary_set",
+          "docs": [
+            "Reset alongside the Switch. Must be back on base (undelegated) - same as the Switch after a",
+            "completed distribution. Re-delegate + re-set beneficiaries via update_intent to re-arm privacy."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
+                  98,
                   101,
-                  95,
-                  118,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
                   97,
-                  117,
-                  108,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
                   116
                 ]
               },
@@ -1543,57 +1592,7 @@
         },
         {
           "name": "owner",
-          "writable": true,
           "signer": true
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "fee_config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "mint",
-          "optional": true
-        },
-        {
-          "name": "source_token_account",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "vault_token_account",
-          "docs": [
-            "The vault's ATA. Must already exist (created at the original create_capsule). For SPL",
-            "recreate, reuse the same mint so this ATA is present."
-          ],
-          "writable": true,
-          "optional": true
         }
       ],
       "args": [
@@ -1602,95 +1601,12 @@
           "type": "i64"
         },
         {
-          "name": "intent_data",
-          "type": "bytes"
+          "name": "target_date",
+          "type": {
+            "option": "i64"
+          }
         }
       ]
-    },
-    {
-      "name": "restart_timer",
-      "docs": [
-        "Reset the inactivity timer (fail-safe / auto-restart)."
-      ],
-      "discriminator": [
-        0,
-        224,
-        238,
-        171,
-        193,
-        30,
-        90,
-        33
-      ],
-      "accounts": [
-        {
-          "name": "capsule",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  105,
-                  110,
-                  116,
-                  101,
-                  110,
-                  116,
-                  95,
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "authority",
-          "docs": [
-            "Must be the capsule owner. Enforced in the handler against `capsule.owner`."
-          ],
-          "signer": true
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "sample_price",
-      "docs": [
-        "Read a Pyth Lazer / ephemeral oracle price feed (gated behind the `oracle` feature)."
-      ],
-      "discriminator": [
-        15,
-        172,
-        110,
-        234,
-        15,
-        105,
-        46,
-        55
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "price_update"
-        }
-      ],
-      "args": []
     },
     {
       "name": "schedule_execute_intent",
@@ -1714,7 +1630,7 @@
         {
           "name": "payer",
           "docs": [
-            "Payer who signs the schedule transaction (on PER/TEE RPC)"
+            "Payer who signs the schedule transaction (on the ER RPC)."
           ],
           "writable": true,
           "signer": true
@@ -1722,80 +1638,6 @@
         {
           "name": "capsule",
           "writable": true
-        },
-        {
-          "name": "vault",
-          "writable": true
-        },
-        {
-          "name": "permission_program",
-          "docs": [
-            "MagicBlock Permission Program"
-          ],
-          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
-        },
-        {
-          "name": "permission",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  101,
-                  114,
-                  109,
-                  105,
-                  115,
-                  115,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                136,
-                161,
-                10,
-                196,
-                33,
-                152,
-                1,
-                214,
-                246,
-                106,
-                29,
-                60,
-                6,
-                152,
-                192,
-                102,
-                169,
-                175,
-                212,
-                217,
-                180,
-                252,
-                231,
-                71,
-                151,
-                141,
-                209,
-                5,
-                168,
-                212,
-                103,
-                82
-              ]
-            }
-          }
         }
       ],
       "args": [
@@ -1810,127 +1652,9 @@
       ]
     },
     {
-      "name": "send_ccip_from_vault",
-      "docs": [
-        "Send a queued EVM beneficiary transfer through the CCIP Router from vault custody."
-      ],
-      "discriminator": [
-        40,
-        216,
-        105,
-        132,
-        83,
-        51,
-        109,
-        225
-      ],
-      "accounts": [
-        {
-          "name": "capsule",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  105,
-                  110,
-                  116,
-                  101,
-                  110,
-                  116,
-                  95,
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  97,
-                  112,
-                  115,
-                  117,
-                  108,
-                  101,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "capsule.owner",
-                "account": "IntentCapsule"
-              }
-            ]
-          }
-        },
-        {
-          "name": "fee_config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  102,
-                  101,
-                  101,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "ccip_router",
-          "docs": [
-            "Chainlink CCIP Router. Pinned by address: the vault PDA is signed into this program,",
-            "so an unconstrained router would let an attacker substitute a malicious program and",
-            "drain the SPL vault (audit C2)."
-          ],
-          "address": "Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C"
-        }
-      ],
-      "args": [
-        {
-          "name": "beneficiary_index",
-          "type": "u16"
-        }
-      ]
-    },
-    {
       "name": "update_activity",
       "docs": [
-        "Update last activity timestamp (called by Helius webhook or user)."
+        "Proof-of-life: bump last_activity or revive during grace (owner OR heartbeat authority)."
       ],
       "discriminator": [
         137,
@@ -1969,13 +1693,17 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
               }
             ]
           }
         },
         {
-          "name": "owner",
+          "name": "authority",
+          "docs": [
+            "Owner OR heartbeat_authority - enforced in the handler against the capsule."
+          ],
           "signer": true
         }
       ],
@@ -1984,7 +1712,7 @@
     {
       "name": "update_fee_config",
       "docs": [
-        "Update platform fee config (authority only)."
+        "Update the platform creation fee (authority only)."
       ],
       "discriminator": [
         104,
@@ -2029,17 +1757,13 @@
         {
           "name": "creation_fee_lamports",
           "type": "u64"
-        },
-        {
-          "name": "execution_fee_bps",
-          "type": "u16"
         }
       ]
     },
     {
       "name": "update_intent",
       "docs": [
-        "Update the intent data of an existing capsule."
+        "Set or replace the private beneficiary list (owner only; route via the PER once delegated)."
       ],
       "discriminator": [
         214,
@@ -2053,27 +1777,28 @@
       ],
       "accounts": [
         {
-          "name": "capsule",
+          "name": "beneficiary_set",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  105,
-                  110,
-                  116,
+                  98,
                   101,
                   110,
-                  116,
-                  95,
+                  101,
+                  102,
+                  105,
                   99,
+                  105,
                   97,
-                  112,
+                  114,
+                  121,
+                  95,
                   115,
-                  117,
-                  108,
-                  101
+                  101,
+                  116
                 ]
               },
               {
@@ -2090,24 +1815,30 @@
       ],
       "args": [
         {
-          "name": "new_intent_data",
-          "type": "bytes"
+          "name": "beneficiaries",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "Beneficiary"
+              }
+            }
+          }
         }
       ]
     }
   ],
   "accounts": [
     {
-      "name": "CapsuleDistribution",
+      "name": "BeneficiarySet",
       "discriminator": [
-        232,
-        187,
-        45,
-        186,
-        154,
-        74,
-        66,
-        221
+        223,
+        63,
+        178,
+        126,
+        234,
+        251,
+        111,
+        217
       ]
     },
     {
@@ -2121,19 +1852,6 @@
         88,
         13,
         247
-      ]
-    },
-    {
-      "name": "DistributorConfig",
-      "discriminator": [
-        1,
-        212,
-        77,
-        40,
-        77,
-        148,
-        78,
-        65
       ]
     },
     {
@@ -2165,29 +1883,16 @@
   ],
   "events": [
     {
-      "name": "CcipTransferRequested",
+      "name": "AssetsDistributed",
       "discriminator": [
+        117,
+        227,
+        91,
         160,
-        160,
-        225,
-        230,
-        173,
-        3,
-        59,
-        129
-      ]
-    },
-    {
-      "name": "CcipTransferSent",
-      "discriminator": [
-        217,
-        0,
-        139,
-        144,
-        143,
-        62,
-        107,
-        206
+        255,
+        218,
+        222,
+        100
       ]
     },
     {
@@ -2208,7 +1913,7 @@
     {
       "code": 6000,
       "name": "Unauthorized",
-      "msg": "Unauthorized: Only the owner can perform this action"
+      "msg": "Unauthorized: signer is neither the owner nor the heartbeat authority"
     },
     {
       "code": 6001,
@@ -2232,78 +1937,68 @@
     },
     {
       "code": 6005,
-      "name": "InvalidIntentData",
-      "msg": "Invalid intent data format"
+      "name": "InvalidInactivityPeriod",
+      "msg": "Inactivity period must be greater than zero"
     },
     {
       "code": 6006,
-      "name": "InvalidBeneficiaryAddress",
-      "msg": "Invalid beneficiary address"
+      "name": "InvalidTargetDate",
+      "msg": "Target date must be in the future"
     },
     {
       "code": 6007,
-      "name": "InvalidInstructionData",
-      "msg": "Invalid instruction data for crank"
+      "name": "GracePeriodNotElapsed",
+      "msg": "Grace period has not elapsed since execution"
     },
     {
       "code": 6008,
-      "name": "InvalidPriceFeed",
-      "msg": "Invalid or stale price feed"
-    },
-    {
-      "code": 6009,
       "name": "InvalidFeeConfig",
       "msg": "Invalid fee config or fee recipient"
     },
     {
-      "code": 6010,
+      "code": 6009,
       "name": "InvalidTokenAccount",
       "msg": "Invalid token account provided"
     },
     {
+      "code": 6010,
+      "name": "InvalidBeneficiaryAddress",
+      "msg": "Invalid beneficiary address"
+    },
+    {
       "code": 6011,
-      "name": "UnsupportedBeneficiaryChain",
-      "msg": "Unsupported beneficiary chain"
+      "name": "TooManyBeneficiaries",
+      "msg": "Too many beneficiaries (max 8)"
     },
     {
       "code": 6012,
-      "name": "InvalidCcipAccounts",
-      "msg": "Invalid CCIP account set provided"
+      "name": "InvalidShareSum",
+      "msg": "Beneficiary shares must sum to 10000 bps (100%)"
     },
     {
       "code": 6013,
-      "name": "CcipAlreadySent",
-      "msg": "CCIP transfer already sent for this beneficiary"
+      "name": "NoBeneficiaries",
+      "msg": "No beneficiaries set on the capsule"
     },
     {
       "code": 6014,
-      "name": "PrivateDistributionNotEnabled",
-      "msg": "Private distribution is not enabled for this capsule"
+      "name": "InvalidInstructionData",
+      "msg": "Invalid instruction data for crank"
     },
     {
       "code": 6015,
-      "name": "PrivateDistributionAlreadyDone",
-      "msg": "Private distribution already completed"
+      "name": "NothingToDistribute",
+      "msg": "Vault is empty; nothing to distribute or recover"
     },
     {
       "code": 6016,
-      "name": "AlreadyDistributed",
-      "msg": "Assets already distributed for this capsule"
-    },
-    {
-      "code": 6017,
-      "name": "InvalidDistributor",
-      "msg": "Distributor is not the authorized protocol distributor"
-    },
-    {
-      "code": 6018,
-      "name": "InvalidInactivityPeriod",
-      "msg": "Inactivity period must be greater than zero"
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero"
     }
   ],
   "types": [
     {
-      "name": "CapsuleDistribution",
+      "name": "AssetsDistributed",
       "type": {
         "kind": "struct",
         "fields": [
@@ -2312,12 +2007,96 @@
             "type": "pubkey"
           },
           {
-            "name": "is_private_distributed",
-            "type": "bool"
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "`Pubkey::default()` for native SOL, otherwise the SPL mint distributed in this call."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Beneficiary",
+      "docs": [
+        "One inheritance beneficiary and its share of every distributed asset, in basis points.",
+        "Shares across the set must sum to `BPS_DENOMINATOR` (10000 = 100%).",
+        "",
+        "`reserved` pads each entry for a future cross-chain-heir field (e.g. a 20-byte EVM address + a",
+        "chain tag, when the CCIP heir module returns). Per-element width is the ONE dimension that",
+        "account-level padding cannot cover, so we reserve it up front to avoid a later resize of every",
+        "BeneficiarySet."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                14
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "BeneficiarySet",
+      "docs": [
+        "Per-owner private beneficiary list. Delegated to the TEE from creation; carries no funds and no",
+        "liveness - the Switch owns liveness, the base Vault owns assets."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
           },
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "beneficiaries",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -2331,76 +2110,8 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "dummy",
+            "name": "version",
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CcipTransferRequested",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "capsule",
-            "type": "pubkey"
-          },
-          {
-            "name": "beneficiary_index",
-            "type": "u16"
-          },
-          {
-            "name": "evm_address",
-            "type": "string"
-          },
-          {
-            "name": "destination_chain_selector",
-            "type": "string"
-          },
-          {
-            "name": "amount_lamports",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "CcipTransferSent",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "capsule",
-            "type": "pubkey"
-          },
-          {
-            "name": "beneficiary_index",
-            "type": "u16"
-          },
-          {
-            "name": "evm_address",
-            "type": "string"
-          },
-          {
-            "name": "destination_chain_selector",
-            "type": "string"
-          },
-          {
-            "name": "amount_lamports",
-            "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "DistributorConfig",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "distributor",
-            "type": "pubkey"
           }
         ]
       }
@@ -2421,10 +2132,6 @@
           {
             "name": "creation_fee_lamports",
             "type": "u64"
-          },
-          {
-            "name": "execution_fee_bps",
-            "type": "u16"
           }
         ]
       }
@@ -2447,10 +2154,6 @@
             "type": "i64"
           },
           {
-            "name": "intent_data",
-            "type": "bytes"
-          },
-          {
             "name": "is_active",
             "type": "bool"
           },
@@ -2469,28 +2172,31 @@
             "type": "u8"
           },
           {
-            "name": "mint",
+            "name": "beneficiaries_bump",
+            "type": "u8"
+          },
+          {
+            "name": "heartbeat_authority",
             "type": "pubkey"
           },
           {
-            "name": "retry_count",
-            "type": "u64"
+            "name": "version",
+            "type": "u8"
           },
           {
-            "name": "ccip_sent_bitmap",
-            "type": "u16"
+            "name": "target_date",
+            "type": {
+              "option": "i64"
+            }
           },
           {
-            "name": "private_distributed",
-            "type": "bool"
-          },
-          {
-            "name": "locked_amount",
-            "type": "u64"
-          },
-          {
-            "name": "distributed",
-            "type": "bool"
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                55
+              ]
+            }
           }
         ]
       }

@@ -1,4 +1,7 @@
-//! Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals.
+//! Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals on the ER.
+//!
+//! The Switch is on a regular ER (no PER permission) and execute_intent is flip-only, so the
+//! scheduled inner ix references ONLY the Switch.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
@@ -8,10 +11,10 @@ use anchor_lang::solana_program::{
 use ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID;
 use magicblock_magic_program_api::{args::ScheduleTaskArgs, instruction::MagicBlockInstruction};
 
-use crate::constants::PERMISSION_PROGRAM_ID;
 use crate::error::ErrorCode;
 
-/// Discriminator for execute_intent (no args), from the IDL.
+/// Anchor discriminator for execute_intent (no args). Name-derived (sha256("global:execute_intent")),
+/// so it stays valid across program-id / deploy changes as long as the instruction keeps its name.
 const EXECUTE_INTENT_DISCRIMINATOR: [u8; 8] = [53, 130, 47, 154, 227, 220, 122, 212];
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -23,50 +26,25 @@ pub struct ScheduleExecuteIntentArgs {
 
 #[derive(Accounts)]
 pub struct ScheduleExecuteIntent<'info> {
-    /// CHECK: Magic program for CPI (MagicBlock crank scheduler)
+    /// CHECK: Magic program for the ScheduleTask CPI.
     pub magic_program: AccountInfo<'info>,
-    /// Payer who signs the schedule transaction (on PER/TEE RPC)
+    /// Payer who signs the schedule transaction (on the ER RPC).
     #[account(mut)]
     pub payer: Signer<'info>,
-    /// CHECK: Capsule PDA delegated to PER/ER.
+    /// CHECK: Switch PDA delegated to the regular ER.
     #[account(mut)]
     pub capsule: AccountInfo<'info>,
-    /// CHECK: Vault PDA
-    #[account(mut)]
-    pub vault: AccountInfo<'info>,
-    /// MagicBlock Permission Program
-    /// CHECK: Validated by address
-    #[account(address = PERMISSION_PROGRAM_ID)]
-    pub permission_program: AccountInfo<'info>,
-    /// CHECK: PDA for access control
-    #[account(
-        seeds = [b"permission", capsule.key().as_ref()],
-        bump,
-        seeds::program = PERMISSION_PROGRAM_ID
-    )]
-    pub permission: AccountInfo<'info>,
 }
 
-/// Schedule crank to run execute_intent at intervals (Magicblock ScheduleTask).
-/// Anyone can execute when conditions are met; this registers the task for the crank.
-pub fn handler(
-    ctx: Context<ScheduleExecuteIntent>,
-    args: ScheduleExecuteIntentArgs,
-) -> Result<()> {
-    msg!("Scheduling execute_intent on TEE for capsule: {:?}", ctx.accounts.capsule.key());
+/// Schedule a crank that runs execute_intent at intervals (MagicBlock ScheduleTask). The Vault is
+/// not delegated and execute_intent is flip-only, so the inner ix references only the Switch.
+pub fn handler(ctx: Context<ScheduleExecuteIntent>, args: ScheduleExecuteIntentArgs) -> Result<()> {
+    msg!("Scheduling execute_intent crank for capsule: {:?}", ctx.accounts.capsule.key());
 
-    // Accounts for the inner execute_intent instruction called by the ER crank.
-    // Only 4 required accounts — undelegation handled separately after execution.
-    let accounts = vec![
-        AccountMeta::new(ctx.accounts.capsule.key(), false),
-        AccountMeta::new(ctx.accounts.vault.key(), false),
-        AccountMeta::new_readonly(ctx.accounts.permission_program.key(), false),
-        AccountMeta::new_readonly(ctx.accounts.permission.key(), false),
-    ];
-
+    let inner_accounts = vec![AccountMeta::new(ctx.accounts.capsule.key(), false)];
     let execute_ix = Instruction {
         program_id: crate::ID,
-        accounts,
+        accounts: inner_accounts,
         data: EXECUTE_INTENT_DISCRIMINATOR.to_vec(),
     };
 
@@ -81,17 +59,13 @@ pub fn handler(
         ErrorCode::InvalidInstructionData
     })?;
 
-    // Magic Program's ScheduleTask CPI must include ALL accounts referenced
-    // by the inner execute_intent instruction, otherwise ER returns MissingAccount.
+    // The ScheduleTask CPI must include every account the inner execute_intent references.
     let schedule_ix = Instruction::new_with_bytes(
         MAGIC_PROGRAM_ID,
         &ix_data,
         vec![
             AccountMeta::new(ctx.accounts.payer.key(), true),
             AccountMeta::new(ctx.accounts.capsule.key(), false),
-            AccountMeta::new(ctx.accounts.vault.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.permission_program.key(), false),
-            AccountMeta::new_readonly(ctx.accounts.permission.key(), false),
         ],
     );
 
@@ -101,9 +75,6 @@ pub fn handler(
             ctx.accounts.magic_program.to_account_info(),
             ctx.accounts.payer.to_account_info(),
             ctx.accounts.capsule.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
-            ctx.accounts.permission_program.to_account_info(),
-            ctx.accounts.permission.to_account_info(),
         ],
         &[],
     )?;

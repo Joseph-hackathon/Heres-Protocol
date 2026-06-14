@@ -4,6 +4,16 @@
 
 import { PublicKey } from '@solana/web3.js'
 import { getProgramId } from '@/config/solana'
+import { SOLANA_CONFIG } from '@/constants'
+
+/**
+ * The protocol relayer pubkey (crank wallet). Default heartbeat_authority for new capsules: the
+ * off-chain liveness service signs update_activity as this key, and delegate_capsule makes it the
+ * interact-only TEE permission member. Must match the keypair behind CRANK_WALLET_PRIVATE_KEY.
+ */
+export function getRelayerPubkey(): PublicKey {
+  return new PublicKey(SOLANA_CONFIG.CRANK_WALLET_PUBLIC_KEY)
+}
 
 /**
  * Derive capsule PDA (Program Derived Address)
@@ -31,6 +41,21 @@ export function getFeeConfigPDA(): [PublicKey, number] {
 export function getCapsuleVaultPDA(owner: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from('capsule_vault'), owner.toBuffer()],
+    getProgramId()
+  )
+}
+
+/**
+ * Derive the BeneficiarySet PDA (seeds = ["beneficiary_set", owner]).
+ *
+ * Workstream A split the private beneficiary list out of the Switch into its own account so only it
+ * needs TEE delegation. The Switch (liveness) lives on a regular ER; this set is the single enclave-
+ * resident account. Set/edited via update_intent (routed to the TEE), revealed on the base layer via
+ * crank_undelegate_beneficiaries before distribution.
+ */
+export function getBeneficiarySetPDA(owner: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('beneficiary_set'), owner.toBuffer()],
     getProgramId()
   )
 }
@@ -66,12 +91,14 @@ export function getDelegationMetadataPDA(pda: PublicKey, delegationProgramId: Pu
 }
 
 /**
- * Derive Magicblock Permission PDA (seeds = ["permission", pda])
+ * Derive Magicblock Permission PDA (seeds = ["permission:", pda]).
  * Used for Private Ephemeral Rollups (PER) access control.
+ * NOTE: the SDK seed is "permission:" WITH the trailing colon (Permission::find_pda);
+ * the lean program derives it that way, so the colon is load-bearing.
  */
 export function getPermissionPDA(pda: PublicKey, permissionProgramId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from('permission'), pda.toBuffer()],
+    [Buffer.from('permission:'), pda.toBuffer()],
     permissionProgramId
   )
 }

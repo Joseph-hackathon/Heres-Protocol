@@ -8,16 +8,7 @@
         "start": "next start",
         "lint": "eslint .",
         "test:cre": "node --test --experimental-strip-types tests/cre-auth.test.mts",
-        "test": "npm run lint && npx tsc --noEmit && npm run test:cre",
-        "verify:er": "node scripts/test-er-delegation.mjs",
-        "verify:e2e": "node scripts/e2e-full-flow.mjs",
-        "verify:undelegate": "node scripts/test-base-intent-undelegate.mjs",
-        "verify:crank-undelegate": "node scripts/verify-crank-undelegate.mjs",
-        "verify:magicblock": "npm run verify:er && npm run verify:e2e && npm run verify:undelegate && npm run verify:crank-undelegate",
-        "cre:setup": "node scripts/setup_cre.mjs",
-        "cre:setup:mock": "node scripts/setup_cre.mjs --mode mock",
-        "cre:setup:real": "node scripts/setup_cre.mjs --mode real",
-        "worker:dashboard-index": "node scripts/dashboard-indexer.mjs"
+        "test": "npm run lint && npx tsc --noEmit && npm run test:cre"
     },
     "dependencies": {
         "@coral-xyz/anchor": "0.32.1",
@@ -41,7 +32,8 @@
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "recharts": "^3.7.0",
-        "resend": "^6.9.3"
+        "resend": "^6.9.3",
+        "tweetnacl": "^1.0.3"
     },
     "devDependencies": {
         "@types/node": "^20.19.35",

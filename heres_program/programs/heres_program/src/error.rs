@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Unauthorized: Only the owner can perform this action")]
+    #[msg("Unauthorized: signer is neither the owner nor the heartbeat authority")]
     Unauthorized,
     #[msg("Capsule is not active")]
     CapsuleInactive,
@@ -14,32 +14,28 @@ pub enum ErrorCode {
     CapsuleNotExecuted,
     #[msg("Inactivity period has not been met")]
     InactivityPeriodNotMet,
-    #[msg("Invalid intent data format")]
-    InvalidIntentData,
-    #[msg("Invalid beneficiary address")]
-    InvalidBeneficiaryAddress,
-    #[msg("Invalid instruction data for crank")]
-    InvalidInstructionData,
-    #[msg("Invalid or stale price feed")]
-    InvalidPriceFeed,
+    #[msg("Inactivity period must be greater than zero")]
+    InvalidInactivityPeriod,
+    #[msg("Target date must be in the future")]
+    InvalidTargetDate,
+    #[msg("Grace period has not elapsed since execution")]
+    GracePeriodNotElapsed,
     #[msg("Invalid fee config or fee recipient")]
     InvalidFeeConfig,
     #[msg("Invalid token account provided")]
     InvalidTokenAccount,
-    #[msg("Unsupported beneficiary chain")]
-    UnsupportedBeneficiaryChain,
-    #[msg("Invalid CCIP account set provided")]
-    InvalidCcipAccounts,
-    #[msg("CCIP transfer already sent for this beneficiary")]
-    CcipAlreadySent,
-    #[msg("Private distribution is not enabled for this capsule")]
-    PrivateDistributionNotEnabled,
-    #[msg("Private distribution already completed")]
-    PrivateDistributionAlreadyDone,
-    #[msg("Assets already distributed for this capsule")]
-    AlreadyDistributed,
-    #[msg("Distributor is not the authorized protocol distributor")]
-    InvalidDistributor,
-    #[msg("Inactivity period must be greater than zero")]
-    InvalidInactivityPeriod,
+    #[msg("Invalid beneficiary address")]
+    InvalidBeneficiaryAddress,
+    #[msg("Too many beneficiaries (max 8)")]
+    TooManyBeneficiaries,
+    #[msg("Beneficiary shares must sum to 10000 bps (100%)")]
+    InvalidShareSum,
+    #[msg("No beneficiaries set on the capsule")]
+    NoBeneficiaries,
+    #[msg("Invalid instruction data for crank")]
+    InvalidInstructionData,
+    #[msg("Vault is empty; nothing to distribute or recover")]
+    NothingToDistribute,
+    #[msg("Amount must be greater than zero")]
+    InvalidAmount,
 }

@@ -2,7 +2,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_CREATION_FEE_LAMPORTS, MAX_EXECUTION_FEE_BPS};
+use crate::constants::MAX_CREATION_FEE_LAMPORTS;
 use crate::error::ErrorCode;
 use crate::state::FeeConfig;
 
@@ -19,23 +19,11 @@ pub struct UpdateFeeConfig<'info> {
     pub authority: Signer<'info>,
 }
 
-/// Update platform fee config (authority only).
-pub fn handler(
-    ctx: Context<UpdateFeeConfig>,
-    creation_fee_lamports: u64,
-    execution_fee_bps: u16,
-) -> Result<()> {
-    // Cap the fee authority's reach (audit M2): execution fee <= 10%, creation fee <= 1 SOL.
-    require!(execution_fee_bps <= MAX_EXECUTION_FEE_BPS, ErrorCode::InvalidFeeConfig);
+/// Update the platform creation fee (authority only). Lean model: creation fee only (redesign D3).
+pub fn handler(ctx: Context<UpdateFeeConfig>, creation_fee_lamports: u64) -> Result<()> {
     require!(creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS, ErrorCode::InvalidFeeConfig);
     let config = &mut ctx.accounts.fee_config;
-    require!(config.authority == ctx.accounts.authority.key(), ErrorCode::Unauthorized);
     config.creation_fee_lamports = creation_fee_lamports;
-    config.execution_fee_bps = execution_fee_bps;
-    msg!(
-        "Fee config updated: creation_fee={}, execution_bps={}",
-        creation_fee_lamports,
-        execution_fee_bps
-    );
+    msg!("Fee config updated: creation_fee={}", creation_fee_lamports);
     Ok(())
 }

@@ -1,0 +1,47 @@
+# Heres lean program - tests
+
+Two-tier strategy, chosen because the program mixes time-gated base-layer logic with MagicBlock
+ER/PER CPIs that no local SVM can run.
+
+## 1. bankrun suite (`tests/heres.test.ts`) - primary, comprehensive
+
+Runs the exact compiled `.so` inside a local SVM (`solana-bankrun`) with a controllable `Clock`.
+This is the only way to test the time gates in milliseconds instead of real time:
+
+- `execute_intent` fires only after `inactivity_period` of silence.
+- `distribute_assets` is blocked until a 48h grace window elapses after firing.
+
+Run:
+
+```
+anchor build            # produces target/deploy/heres_program.so + the IDL
+yarn install
+yarn test               # copies the .so into tests/fixtures/ then runs ts-mocha
+```
+
+Covered (13 base-layer instructions + edge cases, 48 cases):
+
+| Area          | Instructions                              | Notable edge cases |
+|---------------|-------------------------------------------|--------------------|
+| fee config    | `update_fee_config`                       | non-authority rejected; fee cap (1 SOL) |
+| lifecycle     | `create_capsule`, `deposit`, `update_intent`, `cancel_capsule`, `recreate_capsule` | inactivity>0; one-per-owner; fee path + recipient validation; SOL + SPL deposit; cross-owner deposit blocked; share sum != 10000; >8 beneficiaries; default-pubkey beneficiary; deposit-after-fire |
+| firing        | `execute_intent`, `update_activity`       | fires before/after inactivity; double-fire; permissionless crank; owner vs heartbeat authority; grace-window revive vs post-grace reject |
+| distribution  | `distribute_assets`                       | active/grace gating; SOL + SPL split by share_bps; last-beneficiary remainder absorption; idempotent re-run; no-beneficiaries |
+| escape hatch  | `recover_vault`                           | SOL + SPL; pre-fire only; non-owner rejected |
+
+## 2. devnet (`scripts/init-fee-config.ts`) - what bankrun cannot reach
+
+bankrun loads the program **non-upgradeable** (no `ProgramData` account), so two things are covered
+against the live devnet deployment instead:
+
+- **`init_fee_config` + the C3 upgrade-authority gate.** `scripts/init-fee-config.ts` first proves a
+  non-authority signer is rejected, then initializes the singleton as the real upgrade authority.
+  Run with `yarn init-fee-config`.
+
+- **The 3 ER instructions** - `delegate_capsule`, `crank_undelegate`, `schedule_execute_intent`
+  (plus the macro-generated `process_undelegation`). These CPI into the MagicBlock delegation / magic
+  programs, which are not present in a local SVM. They were validated on devnet against a live
+  Ephemeral Rollup on 2026-06-11 (see `scripts/measure-scheduletask-cost.mjs`).
+
+This split is intentional: everything testable deterministically lives in bankrun; only the parts
+that genuinely require an upgradeable loader or live MagicBlock infra are devnet-only.

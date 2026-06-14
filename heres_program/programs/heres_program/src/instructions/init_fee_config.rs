@@ -2,7 +2,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_CREATION_FEE_LAMPORTS, MAX_EXECUTION_FEE_BPS};
+use crate::constants::MAX_CREATION_FEE_LAMPORTS;
 use crate::error::ErrorCode;
 use crate::state::FeeConfig;
 
@@ -33,26 +33,22 @@ pub struct InitFeeConfig<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Initialize platform fee config (call once after deploy; only authority can update later).
+/// Initialize the platform fee config. Lean model: creation fee only (redesign D3).
 pub fn handler(
     ctx: Context<InitFeeConfig>,
     fee_recipient: Pubkey,
     creation_fee_lamports: u64,
-    execution_fee_bps: u16,
 ) -> Result<()> {
-    // Cap the fee authority's reach (audit M2): execution fee <= 10%, creation fee <= 1 SOL.
-    require!(execution_fee_bps <= MAX_EXECUTION_FEE_BPS, ErrorCode::InvalidFeeConfig);
+    // Cap the fee authority's reach (audit M2): creation fee <= 1 SOL.
     require!(creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS, ErrorCode::InvalidFeeConfig);
     let config = &mut ctx.accounts.fee_config;
     config.authority = ctx.accounts.authority.key();
     config.fee_recipient = fee_recipient;
     config.creation_fee_lamports = creation_fee_lamports;
-    config.execution_fee_bps = execution_fee_bps;
     msg!(
-        "Fee config initialized: recipient={:?}, creation_fee={}, execution_bps={}",
+        "Fee config initialized: recipient={:?}, creation_fee={}",
         fee_recipient,
-        creation_fee_lamports,
-        execution_fee_bps
+        creation_fee_lamports
     );
     Ok(())
 }

@@ -1064,3 +1064,15 @@ a {
     transparent 100%
   );
 }
+
+/* Hide native number-input spinners app-wide (numeric values are validated in-app, the steppers
+   add visual noise and let users nudge values off-intent). Use inputMode="decimal" for the keypad. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
