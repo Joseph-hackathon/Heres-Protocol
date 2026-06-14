@@ -7,8 +7,8 @@
 //! SPL distribution finds the vault ATA already closed (fails -> natural no-op).
 
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::get_associated_token_address;
-use anchor_spl::token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::associated_token::get_associated_token_address_with_program_id;
+use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
 
 use crate::constants::{BPS_DENOMINATOR, GRACE_PERIOD};
 use crate::error::ErrorCode;
@@ -42,11 +42,11 @@ pub struct DistributeAssets<'info> {
 
     pub system_program: Program<'info, System>,
 
-    // SPL leg (omit for native SOL).
-    pub token_program: Option<Program<'info, Token>>,
-    pub mint: Option<Box<Account<'info, Mint>>>,
+    // SPL leg (omit for native SOL). Interface types accept classic SPL and Token-2022.
+    pub token_program: Option<Interface<'info, TokenInterface>>,
+    pub mint: Option<Box<InterfaceAccount<'info, Mint>>>,
     #[account(mut)]
-    pub vault_token_account: Option<Box<Account<'info, TokenAccount>>>,
+    pub vault_token_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
     // remaining_accounts: one recipient per beneficiary - SOL: the beneficiary's system account;
     // SPL: the beneficiary's ATA for `mint` (must already exist; the off-chain crank pre-creates them).
 }
@@ -72,9 +72,10 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
     if let Some(mint) = &ctx.accounts.mint {
         // ---- SPL asset ----
         let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program_id = token_program.key();
         let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
         require!(
-            vault_ata.key() == get_associated_token_address(&ctx.accounts.vault.key(), &mint.key()),
+            vault_ata.key() == get_associated_token_address_with_program_id(&ctx.accounts.vault.key(), &mint.key(), &token_program_id),
             ErrorCode::InvalidTokenAccount
         );
         let pool = vault_ata.amount;
@@ -90,21 +91,23 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             if to_send == 0 {
                 continue;
             }
-            let expected_ata = get_associated_token_address(&b.pubkey, &mint.key());
+            let expected_ata = get_associated_token_address_with_program_id(&b.pubkey, &mint.key(), &token_program_id);
             let recipient_ata = ctx
                 .remaining_accounts
                 .iter()
                 .find(|acc| acc.key() == expected_ata)
                 .ok_or(ErrorCode::InvalidBeneficiaryAddress)?;
 
-            let cpi_accounts = Transfer {
+            let cpi_accounts = TransferChecked {
                 from: vault_ata.to_account_info(),
+                mint: mint.to_account_info(),
                 to: recipient_ata.to_account_info(),
                 authority: ctx.accounts.vault.to_account_info(),
             };
-            token::transfer(
+            token_interface::transfer_checked(
                 CpiContext::new_with_signer(token_program.to_account_info(), cpi_accounts, signer_seeds),
                 to_send,
+                mint.decimals,
             )?;
             distributed = distributed.saturating_add(to_send);
         }
@@ -115,7 +118,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             destination: ctx.accounts.vault.to_account_info(),
             authority: ctx.accounts.vault.to_account_info(),
         };
-        token::close_account(CpiContext::new_with_signer(
+        token_interface::close_account(CpiContext::new_with_signer(
             token_program.to_account_info(),
             close_accounts,
             signer_seeds,

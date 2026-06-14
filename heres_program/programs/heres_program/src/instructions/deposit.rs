@@ -5,7 +5,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
 use crate::error::ErrorCode;
 use crate::state::{CapsuleVault, IntentCapsule};
@@ -31,19 +31,21 @@ pub struct Deposit<'info> {
 
     pub system_program: Program<'info, System>,
 
-    // SPL deposit path (all optional; omit for native SOL).
-    pub token_program: Option<Program<'info, Token>>,
+    // SPL deposit path (all optional; omit for native SOL). Interface types accept both the classic
+    // SPL Token program and Token-2022; the ATA is bound to whichever token program is passed.
+    pub token_program: Option<Interface<'info, TokenInterface>>,
     pub associated_token_program: Option<Program<'info, AssociatedToken>>,
-    pub mint: Option<Box<Account<'info, Mint>>>,
+    pub mint: Option<Box<InterfaceAccount<'info, Mint>>>,
     #[account(mut)]
-    pub source_token_account: Option<Box<Account<'info, TokenAccount>>>,
+    pub source_token_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
     #[account(
         init_if_needed,
         payer = owner,
         associated_token::mint = mint,
         associated_token::authority = vault,
+        associated_token::token_program = token_program,
     )]
-    pub vault_token_account: Option<Box<Account<'info, TokenAccount>>>,
+    pub vault_token_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 }
 
 /// Lock `amount` of an asset into the Vault. Owner only; capsule must be active.
@@ -57,12 +59,18 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
         require!(to_ata.mint == mint.key(), ErrorCode::InvalidTokenAccount);
 
-        let cpi_accounts = Transfer {
+        // transfer_checked (mint + decimals) is required by Token-2022 and supported by classic SPL.
+        let cpi_accounts = TransferChecked {
             from: from_ata.to_account_info(),
+            mint: mint.to_account_info(),
             to: to_ata.to_account_info(),
             authority: ctx.accounts.owner.to_account_info(),
         };
-        token::transfer(CpiContext::new(token_program.to_account_info(), cpi_accounts), amount)?;
+        token_interface::transfer_checked(
+            CpiContext::new(token_program.to_account_info(), cpi_accounts),
+            amount,
+            mint.decimals,
+        )?;
         msg!("Deposited {} of mint {:?} into vault", amount, mint.key());
     } else {
         let cpi_accounts = system_program::Transfer {

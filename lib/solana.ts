@@ -31,9 +31,14 @@ import { debugLog } from '@/lib/log'
 import { decodeIntentCapsule, tryDecodeIntentCapsule, tryDecodeBeneficiarySet } from '@/lib/lean-capsule'
 import { getTeeAuthToken, getCachedTeeToken, setCachedTeeToken } from '@/lib/tee'
 import type { IntentCapsule, OnChainBeneficiary } from '@/types'
-
-const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID as SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+  ataFor,
+  resolveTokenProgram,
+  buildCreateAtaIx,
+  getVaultTokenAccounts,
+} from '@/lib/spl'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -42,33 +47,6 @@ const MAGIC_CONTEXT_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_CONTEXT)
 const BUFFER_SEED_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.BUFFER_SEED_PROGRAM_ID)
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
-    SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID
-  )[0]
-}
-
-function buildCreateAssociatedTokenAccountInstruction(
-  payer: PublicKey,
-  ata: PublicKey,
-  owner: PublicKey,
-  mint: PublicKey
-): TransactionInstruction {
-  return new TransactionInstruction({
-    programId: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
-    keys: [
-      { pubkey: payer, isSigner: true, isWritable: true },
-      { pubkey: ata, isSigner: false, isWritable: true },
-      { pubkey: owner, isSigner: false, isWritable: false },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.alloc(0),
-  })
-}
 
 /** Default crank cadence mirrors the configured MagicBlock ER schedule interval. */
 export const CRANK_DEFAULT_INTERVAL_MS = MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS
@@ -420,17 +398,18 @@ export async function deposit(
   const [vaultPDA] = getCapsuleVaultPDA(owner)
   const amt = amount instanceof BN ? amount : new BN(amount)
 
+  const tokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram,
         associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
         mint,
-        sourceTokenAccount: getAssociatedTokenAddress(mint, owner),
-        vaultTokenAccount: getAssociatedTokenAddress(mint, vaultPDA),
+        sourceTokenAccount: ataFor(mint, owner, tokenProgram!),
+        vaultTokenAccount: ataFor(mint, vaultPDA, tokenProgram!),
       }
     : {
         capsule: capsulePDA,
@@ -726,17 +705,18 @@ export async function createDelegatedCapsule(
         .instruction()
 
   // ---- base ix 2: deposit (fund the Vault; never delegated) ----
+  const depositTokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
   const depositAccounts: any = mint
     ? {
         capsule: capsulePDA,
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: depositTokenProgram,
         associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
         mint,
-        sourceTokenAccount: getAssociatedTokenAddress(mint, owner),
-        vaultTokenAccount: getAssociatedTokenAddress(mint, vaultPDA),
+        sourceTokenAccount: ataFor(mint, owner, depositTokenProgram!),
+        vaultTokenAccount: ataFor(mint, vaultPDA, depositTokenProgram!),
       }
     : {
         capsule: capsulePDA,
@@ -891,20 +871,17 @@ export async function distributeAssets(
 
   let lastSig = ''
 
-  // 1. SPL legs first.
-  const tokenAccts = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
-  for (const { pubkey: vaultAta, account } of tokenAccts.value) {
-    const tokenInfo = (account.data as any).parsed?.info
-    if (!tokenInfo) continue
-    if (BigInt(tokenInfo.tokenAmount.amount) === 0n) continue
-    const mint = new PublicKey(tokenInfo.mint)
+  // 1. SPL legs first - scan BOTH token programs (classic SPL + Token-2022).
+  const vaultTokens = await getVaultTokenAccounts(connection, vaultPDA)
+  for (const { ata: vaultAta, mint, amount, tokenProgram } of vaultTokens) {
+    if (amount === 0n) continue
 
     const preIxs: TransactionInstruction[] = []
     const remaining = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
     for (const b of beneficiaries) {
-      const bAta = getAssociatedTokenAddress(mint, b.pubkey)
+      const bAta = ataFor(mint, b.pubkey, tokenProgram)
       const exists = await connection.getAccountInfo(bAta)
-      if (!exists) preIxs.push(buildCreateAssociatedTokenAccountInstruction(wallet.publicKey, bAta, b.pubkey, mint))
+      if (!exists) preIxs.push(buildCreateAtaIx(wallet.publicKey, bAta, b.pubkey, mint, tokenProgram))
       remaining.push({ pubkey: bAta, isSigner: false, isWritable: true })
     }
 
@@ -915,7 +892,7 @@ export async function distributeAssets(
         beneficiarySet: beneficiarySetPDA,
         vault: vaultPDA,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram,
         mint,
         vaultTokenAccount: vaultAta,
       })
@@ -1331,16 +1308,17 @@ export async function recoverVault(
   const [capsulePDA] = getCapsulePDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
 
+  const tokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram,
         mint,
-        vaultTokenAccount: getAssociatedTokenAddress(mint, vaultPDA),
-        ownerTokenAccount: getAssociatedTokenAddress(mint, owner),
+        vaultTokenAccount: ataFor(mint, vaultPDA, tokenProgram!),
+        ownerTokenAccount: ataFor(mint, owner, tokenProgram!),
       }
     : {
         capsule: capsulePDA,
@@ -1370,6 +1348,7 @@ export async function cancelCapsule(wallet: WalletContextState, mint?: PublicKey
   const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
 
+  const tokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
@@ -1377,10 +1356,10 @@ export async function cancelCapsule(wallet: WalletContextState, mint?: PublicKey
         vault: vaultPDA,
         owner,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram,
         mint,
-        vaultTokenAccount: getAssociatedTokenAddress(mint, vaultPDA),
-        ownerTokenAccount: getAssociatedTokenAddress(mint, owner),
+        vaultTokenAccount: ataFor(mint, vaultPDA, tokenProgram!),
+        ownerTokenAccount: ataFor(mint, owner, tokenProgram!),
       }
     : {
         capsule: capsulePDA,

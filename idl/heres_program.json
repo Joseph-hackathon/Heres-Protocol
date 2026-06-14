@@ -127,8 +127,7 @@
         },
         {
           "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "optional": true
         },
         {
           "name": "mint",
@@ -1016,8 +1015,7 @@
         },
         {
           "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "optional": true
         },
         {
           "name": "associated_token_program",
@@ -1044,41 +1042,8 @@
                 "path": "vault"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "token_program"
               },
               {
                 "kind": "account",
@@ -1253,8 +1218,7 @@
         },
         {
           "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "optional": true
         },
         {
           "name": "mint",
@@ -1524,8 +1488,7 @@
         },
         {
           "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "optional": true
         },
         {
           "name": "mint",

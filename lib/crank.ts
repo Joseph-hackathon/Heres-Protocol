@@ -17,9 +17,7 @@ import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA } from './progr
 import { decodeBeneficiarySet } from './lean-capsule'
 import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
 import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
-
-const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+import { ataFor, buildCreateAtaIx, getVaultTokenAccounts } from '@/lib/spl'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -62,28 +60,6 @@ async function getCrankTeeToken(crankKeypair: Keypair, forceRefresh = false): Pr
 function teeRpcUrl(token: string): string {
   if (process.env.CRANK_TEE_RPC_URL) return process.env.CRANK_TEE_RPC_URL
   return `${PER_TEE.RPC_URL}?token=${token}`
-}
-
-function ata(mint: PublicKey, owner: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  )[0]
-}
-
-function createAtaIx(payer: PublicKey, ataAddr: PublicKey, owner: PublicKey, mint: PublicKey): TransactionInstruction {
-  return new TransactionInstruction({
-    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
-    keys: [
-      { pubkey: payer, isSigner: true, isWritable: true },
-      { pubkey: ataAddr, isSigner: false, isWritable: true },
-      { pubkey: owner, isSigner: false, isWritable: false },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.alloc(0),
-  })
 }
 
 function makeWallet(keypair: Keypair): Wallet {
@@ -294,20 +270,17 @@ async function distributeAll(
   const [vaultPDA] = getCapsuleVaultPDA(owner)
   const recipients = beneficiaries
 
-  // 1. SPL legs first.
-  const tokenAccts = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
-  for (const { pubkey: vaultAta, account } of tokenAccts.value) {
-    const tokenInfo = (account.data as any).parsed?.info
-    if (!tokenInfo) continue
-    if (BigInt(tokenInfo.tokenAmount.amount) === 0n) continue
-    const mint = new PublicKey(tokenInfo.mint)
+  // 1. SPL legs first - scan BOTH token programs (classic SPL + Token-2022).
+  const vaultTokens = await getVaultTokenAccounts(connection, vaultPDA)
+  for (const { ata: vaultAta, mint, amount, tokenProgram } of vaultTokens) {
+    if (amount === 0n) continue
 
     const preIxs: TransactionInstruction[] = []
     const remaining = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
     for (const b of recipients) {
-      const bAta = ata(mint, b.pubkey)
+      const bAta = ataFor(mint, b.pubkey, tokenProgram)
       const exists = await connection.getAccountInfo(bAta)
-      if (!exists) preIxs.push(createAtaIx(keypair.publicKey, bAta, b.pubkey, mint))
+      if (!exists) preIxs.push(buildCreateAtaIx(keypair.publicKey, bAta, b.pubkey, mint, tokenProgram))
       remaining.push({ pubkey: bAta, isSigner: false, isWritable: true })
     }
 
@@ -318,7 +291,7 @@ async function distributeAll(
         beneficiarySet: benSetPDA,
         vault: vaultPDA,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram,
         mint,
         vaultTokenAccount: vaultAta,
       })
@@ -352,14 +325,12 @@ async function distributeAll(
     }
   }
 
-  // 3. Drained?
+  // 3. Drained? Check both token programs.
   const finalVault = await connection.getAccountInfo(vaultPDA)
-  const finalTokens = await connection.getParsedTokenAccountsByOwner(vaultPDA, { programId: TOKEN_PROGRAM_ID })
+  const finalTokens = await getVaultTokenAccounts(connection, vaultPDA)
   const rentFloor = finalVault ? await connection.getMinimumBalanceForRentExemption(finalVault.data.length) : 0
   const solDrained = !finalVault || finalVault.lamports <= rentFloor
-  const tokensDrained = finalTokens.value.every(
-    (t) => BigInt((t.account.data as any).parsed.info.tokenAmount.amount) === 0n
-  )
+  const tokensDrained = finalTokens.every((t) => t.amount === 0n)
   return solDrained && tokensDrained
 }
 
