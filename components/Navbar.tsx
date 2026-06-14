@@ -62,11 +62,11 @@ export function Navbar() {
     <header className="nav-glass">
       <div className="mx-auto flex h-full max-w-7xl items-center justify-between gap-4 px-3 pr-4 sm:px-6 sm:pr-6 lg:px-8">
         <div className="flex min-w-0 flex-1 items-center gap-4 lg:gap-8">
-          <Link href="/" className="flex shrink-0 items-center gap-2 sm:gap-2.5">
-            <Image src="/logo-white.png?v=3" alt="Heres" width={52} height={52} className="h-9 w-auto sm:h-11" priority unoptimized />
-            <div className="min-w-0">
-              <span className="block truncate text-lg font-black uppercase tracking-[0.08em] text-Heres-white sm:text-xl">Heres</span>
-            </div>
+          <Link href="/" aria-label="Heres home" className="flex shrink-0 items-center gap-[11px]">
+            <Image src="/logo-white-icon.png" alt="" width={30} height={30} className="h-[30px] w-[30px]" priority unoptimized />
+            <span className="font-serif text-[23px] leading-none text-vellum">
+              Here<b className="font-normal text-Heres-accent">s</b>
+            </span>
           </Link>
 
           <nav className="hidden items-center gap-5 lg:flex">
