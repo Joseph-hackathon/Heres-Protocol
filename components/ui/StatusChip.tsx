@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Activity, CheckCircle2, Clock, Lock, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
+import { Activity, CheckCircle2, Circle, Clock, Lock, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
 import { cn } from './utils'
 
 /**
@@ -42,11 +42,15 @@ const ALIASES: Record<string, CapsuleStatus> = {
   inactive: 'waiting',
 }
 
-function resolve(status: string): CapsuleStatus {
+// Neutral fallback for statuses outside the known set (e.g. event-feed words
+// like Created/Updated/Activity/Verified). Shows the raw word, not "Waiting".
+const NEUTRAL: StatusMeta = { label: '', icon: Circle, className: 'text-ash border-hair bg-white/5' }
+
+function resolve(status: string): CapsuleStatus | null {
   const key = status.toLowerCase()
   if (key in STATUS) return key as CapsuleStatus
   if (key in ALIASES) return ALIASES[key]
-  return 'waiting'
+  return null
 }
 
 export function StatusChip({
@@ -58,8 +62,10 @@ export function StatusChip({
   label?: string
   className?: string
 }) {
-  const meta = STATUS[resolve(status)]
+  const key = resolve(status)
+  const meta = key ? STATUS[key] : NEUTRAL
   const Icon = meta.icon
+  const text = label ?? (key ? meta.label : status)
   return (
     <span
       className={cn(
@@ -68,8 +74,8 @@ export function StatusChip({
         className
       )}
     >
-      <Icon className={cn('h-3.5 w-3.5', meta.pulse && 'animate-pulse', status.toLowerCase() === 'pending' && 'animate-spin')} aria-hidden />
-      {label ?? meta.label}
+      <Icon className={cn('h-3.5 w-3.5', meta.pulse && 'animate-pulse', key === 'pending' && 'animate-spin')} aria-hidden />
+      {text}
     </span>
   )
 }
