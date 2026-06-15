@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
 import { isValidEmail } from '@/utils/validation'
-import { registerCreSecret } from '@/lib/cre/service'
-import { sha256Hex, verifyCreSignedRequest } from '@/lib/cre/auth'
+import { registerIntentSecret } from '@/lib/intent-delivery/service'
+import { sha256Hex, verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
 
 type RegisterRequestBody = {
   owner?: string
   recipientEmail?: string
-  encryptedPayload?: string
+  // Plaintext intent statement. Encrypted at rest server-side; never stored or
+  // logged in the clear. Sent over TLS and bound by the wallet signature below.
+  message?: string
   timestamp?: number
   signature?: string
 }
+
+// Plaintext statement bound by the owner signature; capped to a sane size.
+const MAX_MESSAGE_LENGTH = 20_000
 
 export async function POST(request: NextRequest) {
   let body: RegisterRequestBody
@@ -22,13 +27,13 @@ export async function POST(request: NextRequest) {
 
   const owner = body.owner?.trim()
   const recipientEmail = body.recipientEmail?.trim().toLowerCase()
-  const encryptedPayload = body.encryptedPayload?.trim()
+  const message = typeof body.message === 'string' ? body.message : undefined
   const timestamp = Number(body.timestamp)
   const signature = body.signature?.trim()
 
-  if (!owner || !recipientEmail || !encryptedPayload || !signature || !Number.isFinite(timestamp)) {
+  if (!owner || !recipientEmail || !message || !message.trim() || !signature || !Number.isFinite(timestamp)) {
     return NextResponse.json(
-      { error: 'owner, recipientEmail, encryptedPayload, timestamp, signature are required' },
+      { error: 'owner, recipientEmail, message, timestamp, signature are required' },
       { status: 400 }
     )
   }
@@ -43,19 +48,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid recipient email' }, { status: 400 })
   }
 
-  if (encryptedPayload.length > 32_000) {
-    return NextResponse.json({ error: 'Encrypted payload is too large' }, { status: 400 })
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return NextResponse.json({ error: 'Intent statement is too large' }, { status: 400 })
   }
 
   const recipientEmailHash = sha256Hex(recipientEmail)
-  const encryptedPayloadHash = sha256Hex(encryptedPayload)
-  const isValidSignature = verifyCreSignedRequest({
+  const messageHash = sha256Hex(message)
+  const isValidSignature = verifyIntentSignedRequest({
     action: 'register-secret',
     owner,
     timestamp,
     signatureBase64: signature,
     recipientEmailHash,
-    encryptedPayloadHash,
+    messageHash,
   })
   if (!isValidSignature) {
     return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
@@ -63,14 +68,10 @@ export async function POST(request: NextRequest) {
 
   let registered
   try {
-    registered = registerCreSecret({
-      owner,
-      recipientEmail,
-      encryptedPayload,
-    })
+    registered = await registerIntentSecret({ owner, recipientEmail, message })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to register CRE secret'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const errMessage = error instanceof Error ? error.message : 'Failed to register intent statement'
+    return NextResponse.json({ error: errMessage }, { status: 500 })
   }
 
   return NextResponse.json({

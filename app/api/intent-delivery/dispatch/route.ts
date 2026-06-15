@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
-import { dispatchCreDeliveryForCapsule } from '@/lib/cre/service'
-import { verifyCreSignedRequest } from '@/lib/cre/auth'
-import { fetchCapsuleStateByAddress } from '@/lib/cre/solana'
+import { dispatchIntentDeliveryForCapsule } from '@/lib/intent-delivery/service'
+import { verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
+import { fetchCapsuleStateByAddress } from '@/lib/intent-delivery/solana'
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,10 +16,10 @@ export async function POST(request: NextRequest) {
     const capsuleAddress = body.capsule?.trim()
     const owner = body.owner?.trim()
     const timestamp = Number(body.timestamp)
-    const signature = request.headers.get('x-cre-signature')?.trim()
+    const signature = request.headers.get('x-intent-signature')?.trim()
 
     if (!capsuleAddress || !owner || !signature || !Number.isFinite(timestamp)) {
-      return NextResponse.json({ error: 'capsule, owner, timestamp, x-cre-signature are required' }, { status: 400 })
+      return NextResponse.json({ error: 'capsule, owner, timestamp, x-intent-signature are required' }, { status: 400 })
     }
 
     let capsulePubkey: PublicKey
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const isValidSignature = verifyCreSignedRequest({
+    const isValidSignature = verifyIntentSignedRequest({
       action: 'dispatch',
       owner,
       capsuleAddress,
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
     }
 
-    const result = await dispatchCreDeliveryForCapsule(capsuleAddress)
+    const result = await dispatchIntentDeliveryForCapsule(capsuleAddress)
     if (result.ok || result.skipped) {
       return NextResponse.json({ ok: true, status: result.skipped ? 'skipped' : 'dispatched' })
     }

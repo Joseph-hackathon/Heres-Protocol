@@ -26,8 +26,8 @@ import {
 import { daysToSeconds } from '@/utils/intent'
 import { isValidAmountString } from '@/lib/assets'
 import { getVaultTokenAccounts, TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
-import { buildCreSignedMessage } from '@/utils/creAuth'
-import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
+import { buildIntentSignedMessage } from '@/utils/intentAuth'
+import { bytesToBase64, sha256Hex } from '@/utils/intentClient'
 import {
   isValidBeneficiaryAddress,
   validateBeneficiaryAddresses,
@@ -138,9 +138,8 @@ export default function CreatePage() {
   const [nftRecipients, setNftRecipients] = useState<{ address: string }[]>([{ address: '' }])
   const [nftAssignments, setNftAssignments] = useState<Record<string, number>>({})
   // Intent Statement email delivery (CRE)
-  const [creEmail, setCreEmail] = useState('')
-  const [creUnlockCode, setCreUnlockCode] = useState('')
-  const [creReminderEnabled, setCreReminderEnabled] = useState(true)
+  const [intentEmail, setIntentEmail] = useState('')
+  const [intentReminderEnabled, setIntentReminderEnabled] = useState(true)
 
   // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
   useEffect(() => {
@@ -450,12 +449,8 @@ export default function CreatePage() {
       setError('This wallet does not support message signing, which is required for encrypted intent delivery.')
       return
     }
-    if (!isValidEmail(creEmail)) {
+    if (!isValidEmail(intentEmail)) {
       setError('Enter a valid representative email address.')
-      return
-    }
-    if (creUnlockCode.trim().length < 6) {
-      setError('Set an access code with at least 6 characters.')
       return
     }
 
@@ -469,17 +464,17 @@ export default function CreatePage() {
 
       // ---- Off-chain CRE: encrypt the human intent statement and register it (decoupled from chain).
       // The lean on-chain capsule never stores the statement; only the beneficiary split lives on-chain.
-      const normalizedEmail = creEmail.trim().toLowerCase()
-      const encryptedPayload = await encryptPrivateMessage(intent.trim(), creUnlockCode)
+      const normalizedEmail = intentEmail.trim().toLowerCase()
+      const intentMessage = intent.trim()
       const recipientEmailHash = await sha256Hex(normalizedEmail)
-      const encryptedPayloadHash = await sha256Hex(encryptedPayload)
+      const messageHash = await sha256Hex(intentMessage)
       const timestamp = Date.now()
-      const signatureMessage = buildCreSignedMessage({
+      const signatureMessage = buildIntentSignedMessage({
         action: 'register-secret',
         owner: publicKey.toBase58(),
         timestamp,
         recipientEmailHash,
-        encryptedPayloadHash,
+        messageHash,
       })
       const signatureBytes = await signMessage(new TextEncoder().encode(signatureMessage))
       const signature = bytesToBase64(signatureBytes)
@@ -490,7 +485,7 @@ export default function CreatePage() {
         body: JSON.stringify({
           owner: publicKey.toBase58(),
           recipientEmail: normalizedEmail,
-          encryptedPayload,
+          message: intentMessage,
           timestamp,
           signature,
         }),
@@ -598,10 +593,10 @@ export default function CreatePage() {
 
       if (publicKey) {
         const [capsulePDA] = getCapsulePDA(publicKey)
-        if (creReminderEnabled) {
+        if (intentReminderEnabled) {
           try {
             const reminderTimestamp = Date.now()
-            const reminderSignatureMessage = buildCreSignedMessage({
+            const reminderSignatureMessage = buildIntentSignedMessage({
               action: 'register-reminder',
               owner: publicKey.toBase58(),
               capsuleAddress: capsulePDA.toBase58(),
@@ -737,7 +732,7 @@ export default function CreatePage() {
     : capsuleType === 'nft'
       ? selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()) && Boolean(inactivityDays)
       : false
-  const hasIntentDetails = Boolean(intent.trim() && isValidEmail(creEmail) && creUnlockCode.trim().length >= 6)
+  const hasIntentDetails = Boolean(intent.trim() && isValidEmail(intentEmail))
   const canCompleteAsset = hasAssetSelection
   const canCompleteBeneficiaries = hasBeneficiaryDetails
   const canCompleteIntent = hasIntentDetails
@@ -750,8 +745,7 @@ export default function CreatePage() {
     !isPending &&
     modifyCount < MAX_CAPSULE_MODIFICATIONS &&
     wallet.signMessage &&
-    isValidEmail(creEmail) &&
-    creUnlockCode.trim().length >= 6 &&
+    isValidEmail(intentEmail) &&
     inactivityDays &&
     parseInt(inactivityDays) > 0 &&
     (
@@ -1311,43 +1305,31 @@ export default function CreatePage() {
                   </div>
                 )}
                 <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
-                  <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Encrypted Delivery</p>
-                  <p className="mb-4 text-sm text-Heres-white">Choose who receives the encrypted intent statement after execution is confirmed.</p>
+                  <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Intent Delivery</p>
+                  <p className="mb-4 text-sm text-Heres-white">Choose who receives your intent statement once execution is confirmed. The statement is encrypted at rest and delivered to them by email - no access code to share or lose.</p>
                   <div className="space-y-4">
                     <Field
                       label="Representative Email"
-                      error={creEmail && !isValidEmail(creEmail) ? 'Enter a valid email address' : undefined}
+                      error={intentEmail && !isValidEmail(intentEmail) ? 'Enter a valid email address' : undefined}
                     >
                       <Input
                         type="email"
-                        value={creEmail}
-                        onChange={(e) => setCreEmail(e.target.value)}
+                        value={intentEmail}
+                        onChange={(e) => setIntentEmail(e.target.value)}
                         placeholder="executor@example.com"
-                      />
-                    </Field>
-                    <Field
-                      label="Access Code"
-                      hint="This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload."
-                      error={creUnlockCode && creUnlockCode.trim().length < 6 ? 'At least 6 characters required' : undefined}
-                    >
-                      <Input
-                        type="password"
-                        value={creUnlockCode}
-                        onChange={(e) => setCreUnlockCode(e.target.value)}
-                        placeholder="At least 6 characters"
                       />
                     </Field>
                     <label className="flex items-start gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-4 py-3">
                       <input
                         type="checkbox"
-                        checked={creReminderEnabled}
-                        onChange={(e) => setCreReminderEnabled(e.target.checked)}
+                        checked={intentReminderEnabled}
+                        onChange={(e) => setIntentReminderEnabled(e.target.checked)}
                         className="mt-1 h-4 w-4 rounded border-Heres-border bg-Heres-surface text-Heres-accent focus:ring-Heres-accent/40"
                       />
                       <span className="space-y-1">
                         <span className="block text-sm font-medium text-Heres-white">Send recurring reminder emails before execution</span>
                         <span className="block text-xs text-Heres-muted">
-                          Heres will use Chainlink CRE to remind the representative about this capsule on a monthly cadence until the capsule is executed or deactivated.
+                          Heres will email the representative about this capsule on a monthly cadence until it is executed or deactivated.
                         </span>
                       </span>
                     </label>
@@ -1422,7 +1404,7 @@ export default function CreatePage() {
                           { label: 'Asset selected', ok: hasAssetSelection },
                           { label: 'Beneficiaries and timing configured', ok: hasBeneficiaryDetails },
                           { label: 'Intent statement written', ok: hasIntentDetails },
-                          { label: 'Representative email valid', ok: isValidEmail(creEmail) },
+                          { label: 'Representative email valid', ok: isValidEmail(intentEmail) },
                         ].map((item) => (
                           <div key={item.label} className="flex items-center justify-between gap-4 rounded-xl border border-Heres-border bg-Heres-card/50 px-4 py-3">
                             <span className="text-Heres-white">{item.label}</span>
@@ -1453,12 +1435,12 @@ export default function CreatePage() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Representative</span>
-                        <span className="max-w-[180px] truncate font-medium text-Heres-white">{creEmail || 'Pending'}</span>
+                        <span className="max-w-[180px] truncate font-medium text-Heres-white">{intentEmail || 'Pending'}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Reminder Emails</span>
-                        <span className={`font-medium ${creReminderEnabled ? 'text-Heres-accent' : 'text-Heres-muted'}`}>
-                          {creReminderEnabled ? 'Enabled' : 'Off'}
+                        <span className={`font-medium ${intentReminderEnabled ? 'text-Heres-accent' : 'text-Heres-muted'}`}>
+                          {intentReminderEnabled ? 'Enabled' : 'Off'}
                         </span>
                       </div>
                       <div className="border-t border-Heres-border pt-4">
@@ -1592,13 +1574,13 @@ export default function CreatePage() {
                   </div>
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
                     <p className="mb-1 text-xs text-Heres-accent">Intent Statement Delivery</p>
-                    <p className="text-Heres-white">An encrypted intent statement package will be sent to {creEmail || 'representative email'} when execution is confirmed.</p>
+                    <p className="text-Heres-white">An encrypted intent statement package will be sent to {intentEmail || 'representative email'} when execution is confirmed.</p>
                   </div>
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
                     <p className="mb-1 text-xs text-Heres-accent">Reminder Cadence</p>
                     <p className="text-Heres-white">
-                      {creReminderEnabled
-                        ? `Monthly reminder emails will continue to ${creEmail || 'the representative'} until the capsule executes or is deactivated.`
+                      {intentReminderEnabled
+                        ? `Monthly reminder emails will continue to ${intentEmail || 'the representative'} until the capsule executes or is deactivated.`
                         : 'Recurring reminder emails are disabled for this capsule.'}
                     </p>
                   </div>

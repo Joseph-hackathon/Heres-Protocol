@@ -14,26 +14,20 @@ declare namespace NodeJS {
     INDEXER_BASE_URL?: string
     DATABASE_URL?: string
     HELIUS_WEBHOOK_AUTH_TOKEN?: string
-    CHAINLINK_CRE_WEBHOOK_URL?: string
-    CHAINLINK_CRE_API_KEY?: string
-    CHAINLINK_CRE_SIGNING_SECRET?: string
-    CHAINLINK_CRE_CALLBACK_SECRET?: string
-    CHAINLINK_CRE_REMINDER_WEBHOOK_URL?: string
-    CHAINLINK_CRE_REMINDER_API_KEY?: string
-    CHAINLINK_CRE_REMINDER_SIGNING_SECRET?: string
-    CHAINLINK_CRE_REMINDER_CALLBACK_SECRET?: string
-    MOCK_CRE_AUTO_CALLBACK?: string
-    MOCK_CRE_FORCE_FAIL?: string
-    MOCK_CRE_CALLBACK_BASE_URL?: string
-    CRE_REMINDER_DISPATCH_SECRET?: string
-    CRE_REMINDER_INTERVAL_DAYS?: string
+    // Self-hosted intent-delivery engine (replaces Chainlink CRE).
+    INTENT_AT_REST_KEY?: string
+    RESEND_API_KEY?: string
+    RESEND_FROM?: string
+    NEXT_PUBLIC_APP_URL?: string
+    INTENT_REMINDER_DISPATCH_SECRET?: string
+    INTENT_REMINDER_INTERVAL_DAYS?: string
     OPS_ALERT_WEBHOOK_URL?: string
     CRON_SECRET?: string
     DASHBOARD_PREWARM_TOKEN?: string
     DASHBOARD_PREWARM_ENABLED?: string
     DASHBOARD_PREWARM_PAGES?: string
-    CRE_DISPATCH_SECRET?: string
-    CRE_STORE_PATH?: string
+    INTENT_DISPATCH_SECRET?: string
+    INTENT_STORE_PATH?: string
     UPSTASH_REDIS_REST_URL?: string
     UPSTASH_REDIS_REST_TOKEN?: string
   }

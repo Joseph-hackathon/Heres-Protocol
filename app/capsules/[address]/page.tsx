@@ -21,8 +21,8 @@ import { getVaultTokenAccounts } from '@/lib/spl'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE, getExplorerUrl, getNetworkDisplayLabel } from '@/constants'
 import { formatDuration } from '@/utils/intent'
-import { buildCreSignedMessage } from '@/utils/creAuth'
-import { bytesToBase64 } from '@/utils/creCrypto'
+import { buildIntentSignedMessage } from '@/utils/intentAuth'
+import { bytesToBase64 } from '@/utils/intentClient'
 import { inferAssetConfig } from '@/lib/assets'
 import {
   XAxis,
@@ -135,18 +135,18 @@ export default function CapsuleDetailPage() {
   const [currentSolPrice, setCurrentSolPrice] = useState<number | null>(null)
   const [displayedSolPrice, setDisplayedSolPrice] = useState<number>(0)
   const displayedPriceRef = useRef(0)
-  const [creDeliveryStatus, setCreDeliveryStatus] = useState<{
+  const [intentDeliveryStatus, setIntentDeliveryStatus] = useState<{
     status: string
     updatedAt: number
     idempotencyKey: string
     lastError?: string
   } | null>(null)
-  const [creDeliveryLoading, setCreDeliveryLoading] = useState(false)
-  const [creDeliveryError, setCreDeliveryError] = useState<string | null>(null)
+  const [intentDeliveryLoading, setIntentDeliveryLoading] = useState(false)
+  const [intentDeliveryError, setIntentDeliveryError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-  const [creDispatchLoading, setCreDispatchLoading] = useState(false)
-  const [creDispatchResult, setCreDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [intentDispatchLoading, setIntentDispatchLoading] = useState(false)
+  const [intentDispatchResult, setIntentDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [distributionComplete, setDistributionComplete] = useState(false)
   // Off-chain capsule metadata (intent statement + CRE config + asset hints). The lean on-chain
   // capsule stores only beneficiaries; the human-facing payload lives off-chain (CRE), so we fetch it
@@ -303,14 +303,14 @@ export default function CapsuleDetailPage() {
     }
   }
 
-  const handleCreDispatch = async () => {
+  const handleIntentDispatch = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule || !wallet.signMessage) return
-    setCreDispatchLoading(true)
-    setCreDispatchResult(null)
+    setIntentDispatchLoading(true)
+    setIntentDispatchResult(null)
     try {
       const owner = wallet.publicKey.toBase58()
       const timestamp = Date.now()
-      const message = buildCreSignedMessage({
+      const message = buildIntentSignedMessage({
         action: 'dispatch',
         owner,
         capsuleAddress: capsule.capsuleAddress,
@@ -319,19 +319,19 @@ export default function CapsuleDetailPage() {
       const signature = bytesToBase64(await wallet.signMessage(new TextEncoder().encode(message)))
       const res = await fetch('/api/intent-delivery/dispatch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-cre-signature': signature },
+        headers: { 'Content-Type': 'application/json', 'x-intent-signature': signature },
         body: JSON.stringify({ capsule: capsule.capsuleAddress, owner, timestamp }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'CRE dispatch failed')
-      setCreDispatchResult({ type: 'success', message: `Intent Statement delivery dispatched (${data.status || 'queued'})` })
+      setIntentDispatchResult({ type: 'success', message: `Intent Statement delivery dispatched (${data.status || 'queued'})` })
       toast({ message: 'Intent Statement delivery dispatched.', variant: 'success' })
     } catch (err: any) {
       const msg = normalizeTxError(err)
-      setCreDispatchResult({ type: 'error', message: err.message || 'CRE dispatch failed' })
+      setIntentDispatchResult({ type: 'error', message: err.message || 'CRE dispatch failed' })
       toast({ message: msg, variant: 'error' })
     } finally {
-      setCreDispatchLoading(false)
+      setIntentDispatchLoading(false)
     }
   }
 
@@ -341,12 +341,12 @@ export default function CapsuleDetailPage() {
   const assetConfig = inferAssetConfig(meta ?? undefined)
   const priceChartBaseUrl = `https://api.coingecko.com/api/v3/coins/${assetConfig.coingeckoId}/market_chart?vs_currency=usd&days=`
   const priceLookupUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${assetConfig.coingeckoId}&vs_currencies=usd`
-  const creConfig = intentParsed?.cre ?? intentParsed?.premium
-  const isCreEnabled = Boolean(
-    creConfig?.enabled &&
-    creConfig.secretRef &&
-    creConfig.secretHash &&
-    (creConfig.recipientEmailHash || creConfig.recipientEmail)
+  const intentConfig = intentParsed?.cre ?? intentParsed?.premium
+  const isIntentEnabled = Boolean(
+    intentConfig?.enabled &&
+    intentConfig.secretRef &&
+    intentConfig.secretHash &&
+    (intentConfig.recipientEmailHash || intentConfig.recipientEmail)
   )
 
   useEffect(() => {
@@ -480,30 +480,30 @@ export default function CapsuleDetailPage() {
   useEffect(() => {
     if (
       !capsule?.capsuleAddress ||
-      !isCreEnabled ||
+      !isIntentEnabled ||
       !wallet.connected ||
       !wallet.publicKey ||
       !wallet.signMessage ||
       !isOwner
     ) {
-      setCreDeliveryStatus(null)
-      setCreDeliveryError(null)
+      setIntentDeliveryStatus(null)
+      setIntentDeliveryError(null)
       return
     }
 
     let cancelled = false
-    setCreDeliveryLoading(true)
-    setCreDeliveryError(null)
+    setIntentDeliveryLoading(true)
+    setIntentDeliveryError(null)
     const walletPublicKey = wallet.publicKey
     if (!walletPublicKey) {
-      setCreDeliveryLoading(false)
-      setCreDeliveryError('Wallet public key is unavailable.')
+      setIntentDeliveryLoading(false)
+      setIntentDeliveryError('Wallet public key is unavailable.')
       return
     }
     const signMessage = wallet.signMessage
     if (!signMessage) {
-      setCreDeliveryLoading(false)
-      setCreDeliveryError('Wallet does not support message signing for Intent Statement delivery status lookup.')
+      setIntentDeliveryLoading(false)
+      setIntentDeliveryError('Wallet does not support message signing for Intent Statement delivery status lookup.')
       return
     }
 
@@ -532,7 +532,7 @@ export default function CapsuleDetailPage() {
 
         if (!signature) {
           timestamp = Date.now()
-          const message = buildCreSignedMessage({
+          const message = buildIntentSignedMessage({
             action: 'delivery-status',
             owner,
             capsuleAddress: capsule.capsuleAddress,
@@ -548,7 +548,7 @@ export default function CapsuleDetailPage() {
           timestamp: String(timestamp),
         })
         const res = await fetch(`/api/intent-delivery/status?${params.toString()}`, {
-          headers: { 'x-cre-signature': signature },
+          headers: { 'x-intent-signature': signature },
         })
         const data = await res.json()
         if (!res.ok) {
@@ -556,17 +556,17 @@ export default function CapsuleDetailPage() {
         }
         if (cancelled) return
         const latest = Array.isArray(data.entries) ? data.entries[0] : null
-        setCreDeliveryStatus(latest ?? null)
+        setIntentDeliveryStatus(latest ?? null)
       } catch (err) {
         if (cancelled) return
-        setCreDeliveryError(err instanceof Error ? err.message : String(err))
+        setIntentDeliveryError(err instanceof Error ? err.message : String(err))
       } finally {
-        if (!cancelled) setCreDeliveryLoading(false)
+        if (!cancelled) setIntentDeliveryLoading(false)
       }
     })()
 
     return () => { cancelled = true }
-  }, [capsule?.capsuleAddress, isCreEnabled, wallet.connected, wallet.publicKey, wallet.signMessage, isOwner])
+  }, [capsule?.capsuleAddress, isIntentEnabled, wallet.connected, wallet.publicKey, wallet.signMessage, isOwner])
 
   // Token price chart from CoinGecko (with range filter)
   const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
@@ -890,7 +890,7 @@ export default function CapsuleDetailPage() {
             )}
           </ServiceSection>
 
-          {isCreEnabled && (
+          {isIntentEnabled && (
             <ServiceSection
               title="Intent Statement Delivery"
               description="Off-chain encrypted Intent Statement package delivery powered by CRE orchestration."
@@ -901,37 +901,37 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Channel</p>
                   <p className="text-sm text-Heres-white">
-                    {(creConfig?.deliveryChannel || 'email').toUpperCase()}
+                    {(intentConfig?.deliveryChannel || 'email').toUpperCase()}
                   </p>
                 </div>
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Recipient Commitment</p>
                   <p className="text-sm text-Heres-white font-mono">
-                    {creConfig?.recipientEmailHash
-                      ? `${creConfig.recipientEmailHash.slice(0, 16)}...`
-                      : creConfig?.recipientEmail
+                    {intentConfig?.recipientEmailHash
+                      ? `${intentConfig.recipientEmailHash.slice(0, 16)}...`
+                      : intentConfig?.recipientEmail
                         ? 'legacy-email-onchain'
                       : '-'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Delivery Status</p>
-                  {creDeliveryLoading ? (
+                  {intentDeliveryLoading ? (
                     <p className="text-sm text-Heres-muted">Loading...</p>
                   ) : !wallet.connected ? (
                     <p className="text-sm text-Heres-muted">Connect wallet</p>
                   ) : !isOwner ? (
                     <p className="text-sm text-Heres-muted">Owner auth required</p>
                   ) : (
-                    <p className="text-sm text-Heres-accent">{creDeliveryStatus?.status || 'pending'}</p>
+                    <p className="text-sm text-Heres-accent">{intentDeliveryStatus?.status || 'pending'}</p>
                   )}
                 </div>
               </div>
-              {creDeliveryStatus?.lastError && (
-                <p className="text-xs text-amber-400 mt-3">{creDeliveryStatus.lastError}</p>
+              {intentDeliveryStatus?.lastError && (
+                <p className="text-xs text-amber-400 mt-3">{intentDeliveryStatus.lastError}</p>
               )}
-              {creDeliveryError && (
-                <p className="text-xs text-red-400 mt-3">{creDeliveryError}</p>
+              {intentDeliveryError && (
+                <p className="text-xs text-red-400 mt-3">{intentDeliveryError}</p>
               )}
             </ServiceSection>
           )}
@@ -941,12 +941,12 @@ export default function CapsuleDetailPage() {
             const isExecuted = status === 'Executed' || (!capsule.isActive && capsule.executedAt)
             const isExpired = status === 'Expired'
             const isActive = status === 'Active'
-            const isCreDelivered = creDeliveryStatus?.status === 'delivered'
+            const isIntentDelivered = intentDeliveryStatus?.status === 'delivered'
             const isDistributed = Boolean(isExecuted && distributionComplete)
             const canExecute = isExpired && !isExecuted
             const canUndelegate = Boolean(isDelegated)
             const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
-            const canDispatchCre = Boolean(isExecuted && isDistributed && isCreEnabled && !isCreDelivered)
+            const canDispatchCre = Boolean(isExecuted && isDistributed && isIntentEnabled && !isIntentDelivered)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
             // Owner early-exit (pre-fire only). Recover works even while delegated; full cancel needs
             // the accounts undelegated to base first, so it is gated on !isDelegated.
@@ -957,9 +957,9 @@ export default function CapsuleDetailPage() {
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
               { num: 2, label: 'Distribute Assets', desc: `Transfer ${assetConfig.symbol}/tokens to beneficiaries` },
-              ...(isCreEnabled ? [{ num: 3, label: 'Deliver Intent Statement', desc: 'Dispatch encrypted intent via CRE' }] : []),
+              ...(isIntentEnabled ? [{ num: 3, label: 'Deliver Intent Statement', desc: 'Dispatch encrypted intent via CRE' }] : []),
             ]
-            const allDone = Boolean(isExecuted && isDistributed && (!isCreEnabled || isCreDelivered))
+            const allDone = Boolean(isExecuted && isDistributed && (!isIntentEnabled || isIntentDelivered))
 
             // Determine current step (1-based)
             const currentStep = allDone ? steps.length + 1 : canDispatchCre ? 3 : isExecuted ? 2 : canExecute ? 1 : 0
@@ -988,19 +988,19 @@ export default function CapsuleDetailPage() {
                       Capsule executed on ER. <strong>Undelegate from ER</strong> first, then distribute assets on the base layer.
                     </p>
                   )}
-                  {isDistributed && isCreEnabled && !isCreDelivered && (
+                  {isDistributed && isIntentEnabled && !isIntentDelivered && (
                     <p className="text-sm text-Heres-accent">
                       Assets already reached the beneficiary. Proceed to <strong>Deliver Intent Statement</strong> via CRE.
                     </p>
                   )}
                   {isExecuted && !isDistributed && !allDone && !isDelegated && (
                     <p className="text-sm text-Heres-accent">
-                      Capsule executed. Proceed to <strong>Distribute Assets</strong>{isCreEnabled ? ' and then dispatch Intent Statement delivery via CRE.' : '.'}
+                      Capsule executed. Proceed to <strong>Distribute Assets</strong>{isIntentEnabled ? ' and then dispatch Intent Statement delivery via CRE.' : '.'}
                     </p>
                   )}
                   {allDone && (
                     <p className="text-sm text-green-400">
-                      {isCreEnabled
+                      {isIntentEnabled
                         ? 'All steps complete. Assets distributed and intent statement delivered.'
                         : 'All steps complete. Assets distributed to the beneficiary.'}
                     </p>
@@ -1088,13 +1088,13 @@ export default function CapsuleDetailPage() {
                   >
                     Undelegate from ER
                   </Button>
-                  {isCreEnabled && (
+                  {isIntentEnabled && (
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={handleCreDispatch}
-                      disabled={!canDispatchCre || creDispatchLoading || !!actionLoading}
-                      loading={creDispatchLoading}
+                      onClick={handleIntentDispatch}
+                      disabled={!canDispatchCre || intentDispatchLoading || !!actionLoading}
+                      loading={intentDispatchLoading}
                       title={!canDispatchCre ? 'Execute intent first' : 'Dispatch encrypted intent statement via CRE'}
                     >
                       Deliver Intent Statement
@@ -1137,13 +1137,13 @@ export default function CapsuleDetailPage() {
                     {actionResult.message}
                   </div>
                 )}
-                {creDispatchResult && (
+                {intentDispatchResult && (
                   <div className={`mt-3 rounded-lg border p-3 text-sm break-all ${
-                    creDispatchResult.type === 'success'
+                    intentDispatchResult.type === 'success'
                       ? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
                       : 'border-red-500/30 bg-red-500/10 text-red-400'
                   }`}>
-                    {creDispatchResult.message}
+                    {intentDispatchResult.message}
                   </div>
                 )}
               </ServiceSection>

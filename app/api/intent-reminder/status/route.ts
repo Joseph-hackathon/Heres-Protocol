@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
-import { getReminderStatus } from '@/lib/cre/reminder-service'
-import { verifyCreSignedRequest } from '@/lib/cre/auth'
-import { fetchCapsuleStateByAddress } from '@/lib/cre/solana'
+import { getReminderStatus } from '@/lib/intent-delivery/reminder-service'
+import { verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
+import { fetchCapsuleStateByAddress } from '@/lib/intent-delivery/solana'
 
 export async function GET(request: NextRequest) {
   const capsuleAddress = request.nextUrl.searchParams.get('capsule')?.trim()
   const owner = request.nextUrl.searchParams.get('owner')?.trim()
   const timestamp = Number(request.nextUrl.searchParams.get('timestamp'))
-  const signature = request.headers.get('x-cre-signature')?.trim()
+  const signature = request.headers.get('x-intent-signature')?.trim()
 
   if (!capsuleAddress) {
     return NextResponse.json({ error: 'capsule query parameter is required' }, { status: 400 })
   }
   if (!owner || !signature || !Number.isFinite(timestamp)) {
-    return NextResponse.json({ error: 'owner, timestamp, x-cre-signature are required' }, { status: 400 })
+    return NextResponse.json({ error: 'owner, timestamp, x-intent-signature are required' }, { status: 400 })
   }
 
   let capsulePubkey: PublicKey
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const isValidSignature = verifyCreSignedRequest({
+  const isValidSignature = verifyIntentSignedRequest({
     action: 'reminder-status',
     owner,
     capsuleAddress,
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid or expired signature' }, { status: 401 })
   }
 
-  const { reminder, deliveries } = getReminderStatus(capsuleAddress)
+  const { reminder, deliveries } = await getReminderStatus(capsuleAddress)
   return NextResponse.json({
     ok: true,
     reminder: reminder

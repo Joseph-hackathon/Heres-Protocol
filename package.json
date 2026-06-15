@@ -7,8 +7,8 @@
         "build": "next build --webpack",
         "start": "next start",
         "lint": "eslint .",
-        "test:cre": "node --test --experimental-strip-types tests/cre-auth.test.mts",
-        "test": "npm run lint && npx tsc --noEmit && npm run test:cre"
+        "test:intent": "node --test --experimental-strip-types tests/intent-auth.test.mts tests/intent-delivery.test.mts",
+        "test": "npm run lint && npx tsc --noEmit && npm run test:intent"
     },
     "dependencies": {
         "@coral-xyz/anchor": "0.32.1",
