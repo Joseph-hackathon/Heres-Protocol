@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 
   let registered
   try {
-    registered = registerCreReminder({
+    registered = await registerCreReminder({
       capsuleAddress,
       owner,
       recipientEmail,

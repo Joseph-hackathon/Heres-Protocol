@@ -14,17 +14,11 @@ declare namespace NodeJS {
     INDEXER_BASE_URL?: string
     DATABASE_URL?: string
     HELIUS_WEBHOOK_AUTH_TOKEN?: string
-    CHAINLINK_CRE_WEBHOOK_URL?: string
-    CHAINLINK_CRE_API_KEY?: string
-    CHAINLINK_CRE_SIGNING_SECRET?: string
-    CHAINLINK_CRE_CALLBACK_SECRET?: string
-    CHAINLINK_CRE_REMINDER_WEBHOOK_URL?: string
-    CHAINLINK_CRE_REMINDER_API_KEY?: string
-    CHAINLINK_CRE_REMINDER_SIGNING_SECRET?: string
-    CHAINLINK_CRE_REMINDER_CALLBACK_SECRET?: string
-    MOCK_CRE_AUTO_CALLBACK?: string
-    MOCK_CRE_FORCE_FAIL?: string
-    MOCK_CRE_CALLBACK_BASE_URL?: string
+    // Self-hosted intent-delivery engine (replaces Chainlink CRE).
+    CRE_AT_REST_KEY?: string
+    RESEND_API_KEY?: string
+    RESEND_FROM?: string
+    NEXT_PUBLIC_APP_URL?: string
     CRE_REMINDER_DISPATCH_SECRET?: string
     CRE_REMINDER_INTERVAL_DAYS?: string
     OPS_ALERT_WEBHOOK_URL?: string

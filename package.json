@@ -7,7 +7,7 @@
         "build": "next build --webpack",
         "start": "next start",
         "lint": "eslint .",
-        "test:cre": "node --test --experimental-strip-types tests/cre-auth.test.mts",
+        "test:cre": "node --test --experimental-strip-types tests/cre-auth.test.mts tests/cre-delivery.test.mts",
         "test": "npm run lint && npx tsc --noEmit && npm run test:cre"
     },
     "dependencies": {

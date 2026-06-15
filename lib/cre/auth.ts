@@ -13,7 +13,7 @@ type VerifyCreRequestInput = {
   signatureBase64: string
   capsuleAddress?: string
   recipientEmailHash?: string
-  encryptedPayloadHash?: string
+  messageHash?: string
 }
 
 function verifySolanaMessageSignature(owner: string, message: string, signatureBase64: string): boolean {
@@ -55,7 +55,7 @@ export function verifyCreSignedRequest(input: VerifyCreRequestInput): boolean {
     timestamp: input.timestamp,
     capsuleAddress: input.capsuleAddress,
     recipientEmailHash: input.recipientEmailHash,
-    encryptedPayloadHash: input.encryptedPayloadHash,
+    messageHash: input.messageHash,
   })
   return verifySolanaMessageSignature(input.owner, message, input.signatureBase64)
 }

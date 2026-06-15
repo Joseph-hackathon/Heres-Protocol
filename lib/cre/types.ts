@@ -1,6 +1,9 @@
-export type CreDeliveryStatus = 'pending' | 'dispatched' | 'delivered' | 'failed'
+// 'dead_letter' = retries exhausted; the engine stops retrying and alerts ops.
+// 'dispatched' is retained for back-compat but the self-hosted path sends mail
+// inline, so success lands as 'delivered' directly.
+export type CreDeliveryStatus = 'pending' | 'dispatched' | 'delivered' | 'failed' | 'dead_letter'
 export type CreReminderStatus = 'active' | 'paused' | 'stopped'
-export type CreReminderDeliveryStatus = 'pending' | 'dispatched' | 'delivered' | 'failed'
+export type CreReminderDeliveryStatus = 'pending' | 'dispatched' | 'delivered' | 'failed' | 'dead_letter'
 
 export interface CreSecretRecord {
   secretRef: string
@@ -23,6 +26,8 @@ export interface CreDeliveryLedgerRecord {
   secretRef: string
   status: CreDeliveryStatus
   attempts: number
+  // Epoch ms before which a 'failed' record should not be retried (backoff gate).
+  nextAttemptAt?: number
   providerMessageId?: string
   lastError?: string
   createdAt: number
@@ -59,6 +64,7 @@ export interface CreReminderDeliveryRecord {
   scheduledAt: number
   status: CreReminderDeliveryStatus
   attempts: number
+  nextAttemptAt?: number
   providerMessageId?: string
   lastError?: string
   createdAt: number

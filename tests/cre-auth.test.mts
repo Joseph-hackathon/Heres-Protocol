@@ -11,7 +11,7 @@ test('buildCreSignedMessage is deterministic and scoped by action', () => {
     owner: 'owner1',
     timestamp: 123,
     recipientEmailHash: 'aa',
-    encryptedPayloadHash: 'bb',
+    messageHash: 'bb',
   })
   const b = buildCreSignedMessage({
     action: 'delivery-status',
@@ -45,7 +45,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
     owner,
     timestamp,
     recipientEmailHash: sha256Hex('alice@example.com'),
-    encryptedPayloadHash: sha256Hex('{"ciphertext":"x"}'),
+    messageHash: sha256Hex('{"ciphertext":"x"}'),
   })
   const signature = sign(null, Buffer.from(message, 'utf8'), privateKey).toString('base64')
 
@@ -55,7 +55,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
     timestamp,
     signatureBase64: signature,
     recipientEmailHash: sha256Hex('alice@example.com'),
-    encryptedPayloadHash: sha256Hex('{"ciphertext":"x"}'),
+    messageHash: sha256Hex('{"ciphertext":"x"}'),
   })
   assert.equal(valid, true)
 
@@ -65,7 +65,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
     timestamp,
     signatureBase64: signature,
     recipientEmailHash: sha256Hex('mallory@example.com'),
-    encryptedPayloadHash: sha256Hex('{"ciphertext":"x"}'),
+    messageHash: sha256Hex('{"ciphertext":"x"}'),
   })
   assert.equal(tampered, false)
 
@@ -75,7 +75,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
     timestamp: timestamp - 10 * 60 * 1000,
     signatureBase64: signature,
     recipientEmailHash: sha256Hex('alice@example.com'),
-    encryptedPayloadHash: sha256Hex('{"ciphertext":"x"}'),
+    messageHash: sha256Hex('{"ciphertext":"x"}'),
   })
   assert.equal(expired, false)
 })

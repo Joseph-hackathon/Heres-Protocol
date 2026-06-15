@@ -1,8 +1,0 @@
-*.env
-node_modules/
-*.wasm
-*.js
-!main.ts
-.cre_build_tmp*
-.workflow-temp-*
-bun.lock

@@ -11,7 +11,7 @@ type BuildSignedMessageInput = {
   timestamp: number
   capsuleAddress?: string
   recipientEmailHash?: string
-  encryptedPayloadHash?: string
+  messageHash?: string
 }
 
 export function buildCreSignedMessage(input: BuildSignedMessageInput): string {
@@ -28,8 +28,8 @@ export function buildCreSignedMessage(input: BuildSignedMessageInput): string {
   if (input.recipientEmailHash) {
     parts.push(`recipientEmailHash:${input.recipientEmailHash.trim().toLowerCase()}`)
   }
-  if (input.encryptedPayloadHash) {
-    parts.push(`encryptedPayloadHash:${input.encryptedPayloadHash.trim().toLowerCase()}`)
+  if (input.messageHash) {
+    parts.push(`messageHash:${input.messageHash.trim().toLowerCase()}`)
   }
 
   return parts.join('\n')

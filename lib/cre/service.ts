@@ -1,14 +1,15 @@
 import 'server-only'
 
-import { createHmac, randomUUID } from 'crypto'
+import { randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
-import { safeEqualHex, sha256Hex } from '@/lib/cre/auth'
+import { sha256Hex } from '@/lib/cre/auth'
+import { encryptAtRest, decryptAtRest } from '@/lib/cre/at-rest'
+import { sendEmail } from '@/lib/cre/email'
+import { renderIntentEmail } from '@/lib/cre/email-templates'
+import { DispatchCreDeliveryResult, CreDeliveryLedgerRecord } from '@/lib/cre/types'
 import {
-  DispatchCreDeliveryResult,
-  CreDeliveryLedgerRecord,
-  CreDeliveryStatus,
-} from '@/lib/cre/types'
-import {
+  acquireDeliveryLock,
+  releaseDeliveryLock,
   getDeliveryLedger,
   getCreSecret,
   getCreSecretByOwner,
@@ -19,19 +20,19 @@ import {
 } from '@/lib/cre/store'
 import { fetchCapsuleStateByAddress, fetchCapsuleStateByOwner } from '@/lib/cre/solana'
 
+// Reliability knobs for the self-hosted delivery engine.
+const MAX_ATTEMPTS = 8
+const LOCK_TTL_SECONDS = 120
+const BASE_BACKOFF_MS = 5 * 60 * 1000 // 5 minutes
+const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000 // 24 hours
+
 type RegisterSecretInput = {
   owner: string
   recipientEmail: string
-  encryptedPayload: string
-}
-
-type CallbackInput = {
-  idempotencyKey?: string
-  capsuleAddress: string
-  executedAt: number
-  status: 'delivered' | 'failed'
-  providerMessageId?: string
-  error?: string
+  // Plaintext intent statement. The server encrypts it at rest; the previous
+  // client-side, access-code-derived ciphertext is gone (undecryptable once the
+  // owner is silent - see lib/cre/at-rest.ts).
+  message: string
 }
 
 function normalizeEmail(email: string): string {
@@ -44,16 +45,12 @@ function getRequiredEnv(name: string): string | null {
   return value.trim()
 }
 
-function computeSecretHash(payload: string): string {
-  return sha256Hex(payload)
-}
-
-function computeRecipientHash(email: string): string {
-  return sha256Hex(normalizeEmail(email))
-}
-
 function createIdempotencyKey(capsuleAddress: string, executedAt: number): string {
   return `${capsuleAddress}:${executedAt}`
+}
+
+function backoffMs(attempts: number): number {
+  return Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** Math.max(0, attempts - 1))
 }
 
 async function notifyOps(message: string): Promise<void> {
@@ -66,60 +63,28 @@ async function notifyOps(message: string): Promise<void> {
       body: JSON.stringify({ text: message }),
     })
   } catch {
-    // Avoid throwing from alerting path.
+    // Never throw from the alerting path.
   }
 }
 
-async function callChainlinkWorkflow(payload: {
-  idempotencyKey: string
-  capsuleAddress: string
-  owner: string
-  executedAt: number
-  recipientEmail: string
-  secretRef: string
-  secretHash: string
-  encryptedPayload: string
-}): Promise<void> {
-  const webhook = getRequiredEnv('CHAINLINK_CRE_WEBHOOK_URL')
-  if (!webhook) throw new Error('CHAINLINK_CRE_WEBHOOK_URL is not configured')
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const apiKey = getRequiredEnv('CHAINLINK_CRE_API_KEY')
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-
-  const signingSecret = getRequiredEnv('CHAINLINK_CRE_SIGNING_SECRET')
-  if (signingSecret) {
-    const signature = createHmac('sha256', signingSecret).update(JSON.stringify(payload)).digest('hex')
-    headers['x-cre-signature'] = signature
-  }
-
-  const response = await fetch(webhook, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
-
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`CRE webhook error ${response.status}: ${body}`)
-  }
-}
-
-export function registerCreSecret(input: RegisterSecretInput): {
+export async function registerCreSecret(input: RegisterSecretInput): Promise<{
   secretRef: string
   secretHash: string
   recipientEmailHash: string
-} {
+}> {
   const normalizedEmail = normalizeEmail(input.recipientEmail)
-  const recipientEmailHash = computeRecipientHash(normalizedEmail)
+  const recipientEmailHash = sha256Hex(normalizedEmail)
   const secretRef = `sec_${randomUUID().replace(/-/g, '')}`
-  const secretHash = computeSecretHash(input.encryptedPayload)
+  // Encrypt the statement at rest with a server-held key, then store only the
+  // ciphertext. secretHash is an integrity tag over the stored ciphertext.
+  const encryptedPayload = encryptAtRest(input.message)
+  const secretHash = sha256Hex(encryptedPayload)
   const now = Date.now()
 
-  upsertCreSecret({
+  await upsertCreSecret({
     secretRef,
     secretHash,
-    encryptedPayload: input.encryptedPayload,
+    encryptedPayload,
     owner: input.owner,
     recipientEmail: normalizedEmail,
     recipientEmailHash,
@@ -144,166 +109,153 @@ export async function dispatchCreDeliveryForCapsule(
   if (!capsule) return { ok: false, error: 'Capsule not found' }
   if (!capsule.executedAt) return { ok: true, skipped: true, reason: 'Capsule is not executed yet' }
 
-  // The CRE config (secretRef/secretHash/recipientEmailHash) no longer lives on-chain
-  // (the lean capsule has no intent_data). It is registered off-chain via
-  // /api/intent-delivery/register, keyed by owner.
-  const registeredSecret = getCreSecretByOwner(capsule.owner.toBase58())
+  // Intent delivery is enabled off-chain: a registered secret exists for the
+  // capsule owner (the lean on-chain capsule carries no intent_data).
+  const ownerStr = capsule.owner.toBase58()
+  const registeredSecret = await getCreSecretByOwner(ownerStr)
   if (!registeredSecret) {
-    return { ok: true, skipped: true, reason: 'CRE is not enabled' }
-  }
-  const creConfig = {
-    secretRef: registeredSecret.secretRef,
-    secretHash: registeredSecret.secretHash,
-    recipientEmailHash: registeredSecret.recipientEmailHash,
+    return { ok: true, skipped: true, reason: 'Intent delivery is not enabled' }
   }
 
   const idempotencyKey = createIdempotencyKey(capsule.capsuleAddress, capsule.executedAt)
-  const existing = getDeliveryLedger(idempotencyKey)
-  if (existing && (existing.status === 'dispatched' || existing.status === 'delivered' || existing.status === 'pending')) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: `Already ${existing.status}`,
-      idempotencyKey,
-      status: existing.status,
-      providerMessageId: existing.providerMessageId,
-    }
+
+  // Atomic claim so concurrent cron invocations cannot double-send.
+  const claimed = await acquireDeliveryLock(idempotencyKey, LOCK_TTL_SECONDS)
+  if (!claimed) {
+    return { ok: true, skipped: true, reason: 'Delivery in progress', idempotencyKey }
   }
-
-  const secret = getCreSecret(creConfig.secretRef)
-  const nextAttempts = (existing?.attempts ?? 0) + 1
-
-  if (!secret) {
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      secretRef: creConfig.secretRef,
-      status: 'failed',
-      attempts: nextAttempts,
-      lastError: 'Secret ref not found in registry',
-    })
-    return { ok: false, error: 'Secret ref not found in registry', idempotencyKey, status: 'failed' }
-  }
-
-  if (secret.owner !== capsule.owner.toBase58()) {
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      recipientEmail: secret.recipientEmail,
-      secretRef: creConfig.secretRef,
-      status: 'failed',
-      attempts: nextAttempts,
-      lastError: 'Secret owner does not match capsule owner',
-    })
-    return { ok: false, error: 'Secret owner does not match capsule owner', idempotencyKey, status: 'failed' }
-  }
-
-  if (!safeEqualHex(secret.secretHash, creConfig.secretHash)) {
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      recipientEmail: secret.recipientEmail,
-      secretRef: creConfig.secretRef,
-      status: 'failed',
-      attempts: nextAttempts,
-      lastError: 'Secret hash mismatch',
-    })
-    return { ok: false, error: 'Secret hash mismatch', idempotencyKey, status: 'failed' }
-  }
-
-  if (!safeEqualHex(secret.recipientEmailHash, creConfig.recipientEmailHash)) {
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      recipientEmail: secret.recipientEmail,
-      secretRef: creConfig.secretRef,
-      status: 'failed',
-      attempts: nextAttempts,
-      lastError: 'Recipient email hash mismatch',
-    })
-    return { ok: false, error: 'Recipient email hash mismatch', idempotencyKey, status: 'failed' }
-  }
-
-  upsertDeliveryLedger(idempotencyKey, {
-    capsuleAddress: capsule.capsuleAddress,
-    owner: capsule.owner.toBase58(),
-    executedAt: capsule.executedAt,
-    recipientEmail: secret.recipientEmail,
-    secretRef: creConfig.secretRef,
-    status: 'pending',
-    attempts: nextAttempts,
-  })
 
   try {
-    await callChainlinkWorkflow({
-      idempotencyKey,
-      recipientEmail: secret.recipientEmail,
+    const existing = await getDeliveryLedger(idempotencyKey)
+    if (existing && (existing.status === 'delivered' || existing.status === 'dispatched')) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: `Already ${existing.status}`,
+        idempotencyKey,
+        status: existing.status,
+        providerMessageId: existing.providerMessageId,
+      }
+    }
+    if (existing && existing.status === 'dead_letter') {
+      return { ok: true, skipped: true, reason: 'Delivery dead-lettered', idempotencyKey, status: 'dead_letter' }
+    }
+    if (existing && existing.status === 'failed' && existing.nextAttemptAt && Date.now() < existing.nextAttemptAt) {
+      return { ok: true, skipped: true, reason: 'Backing off before retry', idempotencyKey, status: 'failed' }
+    }
+
+    const secret = await getCreSecret(registeredSecret.secretRef)
+    const attempts = (existing?.attempts ?? 0) + 1
+
+    if (!secret) {
+      await upsertDeliveryLedger(idempotencyKey, {
+        capsuleAddress: capsule.capsuleAddress,
+        owner: ownerStr,
+        executedAt: capsule.executedAt,
+        secretRef: registeredSecret.secretRef,
+        status: 'failed',
+        attempts,
+        nextAttemptAt: Date.now() + backoffMs(attempts),
+        lastError: 'Secret ref not found in store',
+      })
+      return { ok: false, error: 'Secret ref not found in store', idempotencyKey, status: 'failed' }
+    }
+
+    if (secret.owner !== ownerStr) {
+      await upsertDeliveryLedger(idempotencyKey, {
+        capsuleAddress: capsule.capsuleAddress,
+        owner: ownerStr,
+        executedAt: capsule.executedAt,
+        recipientEmail: secret.recipientEmail,
+        secretRef: registeredSecret.secretRef,
+        status: 'dead_letter',
+        attempts,
+        lastError: 'Secret owner does not match capsule owner',
+      })
+      await notifyOps(`[Heres Intent] Owner mismatch for ${capsule.capsuleAddress}; dead-lettered`)
+      return { ok: false, error: 'Secret owner does not match capsule owner', idempotencyKey, status: 'dead_letter' }
+    }
+
+    await upsertDeliveryLedger(idempotencyKey, {
       capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      secretRef: creConfig.secretRef,
-      secretHash: creConfig.secretHash,
-      encryptedPayload: secret.encryptedPayload,
-    })
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
+      owner: ownerStr,
       executedAt: capsule.executedAt,
       recipientEmail: secret.recipientEmail,
-      secretRef: creConfig.secretRef,
-      status: 'dispatched',
-      attempts: nextAttempts,
+      secretRef: registeredSecret.secretRef,
+      status: 'pending',
+      attempts,
     })
-    return { ok: true, idempotencyKey, status: 'dispatched' }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    upsertDeliveryLedger(idempotencyKey, {
-      capsuleAddress: capsule.capsuleAddress,
-      owner: capsule.owner.toBase58(),
-      executedAt: capsule.executedAt,
-      recipientEmail: secret.recipientEmail,
-      secretRef: creConfig.secretRef,
-      status: 'failed',
-      attempts: nextAttempts,
-      lastError: message,
-    })
-    await notifyOps(`[Heres Intent Statement] Delivery failed: ${capsule.capsuleAddress} (${message})`)
-    return { ok: false, error: message, idempotencyKey, status: 'failed' }
+
+    // Decrypt at rest. A failure here is permanent (wrong key / corrupt blob),
+    // so dead-letter immediately rather than burning retries.
+    let message: string
+    try {
+      message = decryptAtRest(secret.encryptedPayload)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      await upsertDeliveryLedger(idempotencyKey, {
+        capsuleAddress: capsule.capsuleAddress,
+        owner: ownerStr,
+        executedAt: capsule.executedAt,
+        recipientEmail: secret.recipientEmail,
+        secretRef: registeredSecret.secretRef,
+        status: 'dead_letter',
+        attempts,
+        lastError: `At-rest decrypt failed: ${detail}`,
+      })
+      await notifyOps(`[Heres Intent] At-rest decrypt failed for ${capsule.capsuleAddress}; dead-lettered`)
+      return { ok: false, error: 'At-rest decrypt failed', idempotencyKey, status: 'dead_letter' }
+    }
+
+    try {
+      const { subject, html, text } = renderIntentEmail({
+        message,
+        capsuleAddress: capsule.capsuleAddress,
+      })
+      const { providerMessageId } = await sendEmail({ to: secret.recipientEmail, subject, html, text })
+      await upsertDeliveryLedger(idempotencyKey, {
+        capsuleAddress: capsule.capsuleAddress,
+        owner: ownerStr,
+        executedAt: capsule.executedAt,
+        recipientEmail: secret.recipientEmail,
+        secretRef: registeredSecret.secretRef,
+        status: 'delivered',
+        attempts,
+        providerMessageId,
+      })
+      return { ok: true, idempotencyKey, status: 'delivered', providerMessageId }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      const exhausted = attempts >= MAX_ATTEMPTS
+      await upsertDeliveryLedger(idempotencyKey, {
+        capsuleAddress: capsule.capsuleAddress,
+        owner: ownerStr,
+        executedAt: capsule.executedAt,
+        recipientEmail: secret.recipientEmail,
+        secretRef: registeredSecret.secretRef,
+        status: exhausted ? 'dead_letter' : 'failed',
+        attempts,
+        nextAttemptAt: exhausted ? undefined : Date.now() + backoffMs(attempts),
+        lastError: detail,
+      })
+      if (exhausted) {
+        await notifyOps(
+          `[Heres Intent] Delivery dead-lettered after ${attempts} attempts: ${capsule.capsuleAddress} (${detail})`
+        )
+      }
+      return {
+        ok: false,
+        error: detail,
+        idempotencyKey,
+        status: exhausted ? 'dead_letter' : 'failed',
+      }
+    }
+  } finally {
+    await releaseDeliveryLock(idempotencyKey)
   }
 }
 
-export function applyCreDeliveryCallback(input: CallbackInput): CreDeliveryLedgerRecord {
-  const idempotencyKey =
-    input.idempotencyKey || createIdempotencyKey(input.capsuleAddress, Number(input.executedAt))
-  const existing = getDeliveryLedger(idempotencyKey)
-
-  return upsertDeliveryLedger(idempotencyKey, {
-    capsuleAddress: input.capsuleAddress,
-    owner: existing?.owner,
-    executedAt: Number(input.executedAt),
-    recipientEmail: existing?.recipientEmail,
-    secretRef: existing?.secretRef,
-    status: input.status as CreDeliveryStatus,
-    attempts: existing?.attempts ?? 0,
-    providerMessageId: input.providerMessageId,
-    lastError: input.error,
-  })
-}
-
-export function verifyCreCallbackSignature(rawBody: string, signature: string | null): boolean {
-  const secret = getRequiredEnv('CHAINLINK_CRE_CALLBACK_SECRET')
-  if (!secret) return true
-  if (!signature) return false
-
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
-  return safeEqualHex(expected, signature)
-}
-
-export function getDeliveryStatus(capsuleAddress: string): CreDeliveryLedgerRecord[] {
+export async function getDeliveryStatus(capsuleAddress: string): Promise<CreDeliveryLedgerRecord[]> {
   return listDeliveryByCapsule(capsuleAddress)
 }
 
@@ -313,7 +265,7 @@ export async function reconcileCreDeliveries(): Promise<{
   dispatched: number
   failed: number
 }> {
-  const secrets = listCreSecrets()
+  const secrets = await listCreSecrets()
   let executedCreCapsules = 0
   let dispatched = 0
   let failed = 0
@@ -329,9 +281,8 @@ export async function reconcileCreDeliveries(): Promise<{
     const capsule = await fetchCapsuleStateByOwner(owner)
     if (!capsule?.executedAt) continue
 
-    // CRE enabled is now determined off-chain: a registered secret exists for this owner.
-    // Only process the most recently registered secret per owner (matches dispatch's lookup).
-    const latest = getCreSecretByOwner(secret.owner)
+    // Only act on the most recently registered secret per owner (matches dispatch).
+    const latest = await getCreSecretByOwner(secret.owner)
     if (!latest || latest.secretRef !== secret.secretRef) continue
 
     executedCreCapsules += 1
@@ -340,10 +291,5 @@ export async function reconcileCreDeliveries(): Promise<{
     if (!result.ok) failed += 1
   }
 
-  return {
-    scanned: secrets.length,
-    executedCreCapsules,
-    dispatched,
-    failed,
-  }
+  return { scanned: secrets.length, executedCreCapsules, dispatched, failed }
 }

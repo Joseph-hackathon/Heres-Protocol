@@ -27,7 +27,7 @@ import { daysToSeconds } from '@/utils/intent'
 import { isValidAmountString } from '@/lib/assets'
 import { getVaultTokenAccounts, TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
 import { buildCreSignedMessage } from '@/utils/creAuth'
-import { bytesToBase64, encryptPrivateMessage, sha256Hex } from '@/utils/creCrypto'
+import { bytesToBase64, sha256Hex } from '@/utils/creCrypto'
 import {
   isValidBeneficiaryAddress,
   validateBeneficiaryAddresses,
@@ -139,7 +139,6 @@ export default function CreatePage() {
   const [nftAssignments, setNftAssignments] = useState<Record<string, number>>({})
   // Intent Statement email delivery (CRE)
   const [creEmail, setCreEmail] = useState('')
-  const [creUnlockCode, setCreUnlockCode] = useState('')
   const [creReminderEnabled, setCreReminderEnabled] = useState(true)
 
   // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC)
@@ -454,10 +453,6 @@ export default function CreatePage() {
       setError('Enter a valid representative email address.')
       return
     }
-    if (creUnlockCode.trim().length < 6) {
-      setError('Set an access code with at least 6 characters.')
-      return
-    }
 
     const signMessage = wallet.signMessage
 
@@ -470,16 +465,16 @@ export default function CreatePage() {
       // ---- Off-chain CRE: encrypt the human intent statement and register it (decoupled from chain).
       // The lean on-chain capsule never stores the statement; only the beneficiary split lives on-chain.
       const normalizedEmail = creEmail.trim().toLowerCase()
-      const encryptedPayload = await encryptPrivateMessage(intent.trim(), creUnlockCode)
+      const intentMessage = intent.trim()
       const recipientEmailHash = await sha256Hex(normalizedEmail)
-      const encryptedPayloadHash = await sha256Hex(encryptedPayload)
+      const messageHash = await sha256Hex(intentMessage)
       const timestamp = Date.now()
       const signatureMessage = buildCreSignedMessage({
         action: 'register-secret',
         owner: publicKey.toBase58(),
         timestamp,
         recipientEmailHash,
-        encryptedPayloadHash,
+        messageHash,
       })
       const signatureBytes = await signMessage(new TextEncoder().encode(signatureMessage))
       const signature = bytesToBase64(signatureBytes)
@@ -490,7 +485,7 @@ export default function CreatePage() {
         body: JSON.stringify({
           owner: publicKey.toBase58(),
           recipientEmail: normalizedEmail,
-          encryptedPayload,
+          message: intentMessage,
           timestamp,
           signature,
         }),
@@ -737,7 +732,7 @@ export default function CreatePage() {
     : capsuleType === 'nft'
       ? selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()) && Boolean(inactivityDays)
       : false
-  const hasIntentDetails = Boolean(intent.trim() && isValidEmail(creEmail) && creUnlockCode.trim().length >= 6)
+  const hasIntentDetails = Boolean(intent.trim() && isValidEmail(creEmail))
   const canCompleteAsset = hasAssetSelection
   const canCompleteBeneficiaries = hasBeneficiaryDetails
   const canCompleteIntent = hasIntentDetails
@@ -751,7 +746,6 @@ export default function CreatePage() {
     modifyCount < MAX_CAPSULE_MODIFICATIONS &&
     wallet.signMessage &&
     isValidEmail(creEmail) &&
-    creUnlockCode.trim().length >= 6 &&
     inactivityDays &&
     parseInt(inactivityDays) > 0 &&
     (
@@ -1311,8 +1305,8 @@ export default function CreatePage() {
                   </div>
                 )}
                 <div className="rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
-                  <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Encrypted Delivery</p>
-                  <p className="mb-4 text-sm text-Heres-white">Choose who receives the encrypted intent statement after execution is confirmed.</p>
+                  <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Intent Delivery</p>
+                  <p className="mb-4 text-sm text-Heres-white">Choose who receives your intent statement once execution is confirmed. The statement is encrypted at rest and delivered to them by email - no access code to share or lose.</p>
                   <div className="space-y-4">
                     <Field
                       label="Representative Email"
@@ -1325,18 +1319,6 @@ export default function CreatePage() {
                         placeholder="executor@example.com"
                       />
                     </Field>
-                    <Field
-                      label="Access Code"
-                      hint="This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload."
-                      error={creUnlockCode && creUnlockCode.trim().length < 6 ? 'At least 6 characters required' : undefined}
-                    >
-                      <Input
-                        type="password"
-                        value={creUnlockCode}
-                        onChange={(e) => setCreUnlockCode(e.target.value)}
-                        placeholder="At least 6 characters"
-                      />
-                    </Field>
                     <label className="flex items-start gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-4 py-3">
                       <input
                         type="checkbox"
@@ -1347,7 +1329,7 @@ export default function CreatePage() {
                       <span className="space-y-1">
                         <span className="block text-sm font-medium text-Heres-white">Send recurring reminder emails before execution</span>
                         <span className="block text-xs text-Heres-muted">
-                          Heres will use Chainlink CRE to remind the representative about this capsule on a monthly cadence until the capsule is executed or deactivated.
+                          Heres will email the representative about this capsule on a monthly cadence until it is executed or deactivated.
                         </span>
                       </span>
                     </label>
