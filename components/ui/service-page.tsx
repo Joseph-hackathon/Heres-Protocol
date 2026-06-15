@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 
 function cn(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ')
@@ -164,7 +165,7 @@ export function ServiceAccordionSection({
           <h2 className="mt-1 text-[1.05rem] font-semibold text-Heres-white">{title}</h2>
           {description ? <p className="mt-1 text-[13px] text-Heres-muted">{description}</p> : null}
         </div>
-        <div className="text-Heres-muted">{open ? '−' : '+'}</div>
+        <div className="text-Heres-muted">{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</div>
       </button>
       {open ? (
         <div className="border-t border-Heres-border px-5 pb-4 pt-3 sm:px-6">{children}</div>

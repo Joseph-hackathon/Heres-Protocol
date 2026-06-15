@@ -3,7 +3,7 @@ import { Noto_Sans_KR, Oswald, Newsreader, Hanken_Grotesk } from 'next/font/goog
 import './globals.css'
 import { Providers } from './providers'
 import { Navbar } from '@/components/Navbar'
-import { Footer } from '@/components/Footer'
+import { SiteFooter } from '@/components/layout/SiteFooter'
 import { SiteChrome } from '@/components/SiteChrome'
 import { ServiceWorkerRegister } from '@/components/ServiceWorkerRegister'
 
@@ -38,7 +38,7 @@ const hankenGrotesk = Hanken_Grotesk({
 })
 
 export const viewport: Viewport = {
-  themeColor: '#1E90FF',
+  themeColor: '#2DD4E8',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
@@ -96,7 +96,7 @@ export default function RootLayout({
       <body className="min-h-screen font-sans antialiased">
         <Providers>
           <ServiceWorkerRegister />
-          <SiteChrome nav={<Navbar />} footer={<Footer />}>
+          <SiteChrome nav={<Navbar />} footer={<SiteFooter />}>
             {children}
           </SiteChrome>
         </Providers>

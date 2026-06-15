@@ -7,6 +7,7 @@ import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adap
 import { useCallback, useMemo, ReactNode } from 'react'
 import { HELIUS_CONFIG, SOLANA_CONFIG } from '@/constants'
 import { debugWarn } from '@/lib/log'
+import { ToastProvider } from '@/components/ui'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
 // Benign wallet lifecycle events: the user disconnected/switched accounts from the
@@ -58,7 +59,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect onError={onError}>
         <WalletModalProvider>
-          {children}
+          <ToastProvider>{children}</ToastProvider>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

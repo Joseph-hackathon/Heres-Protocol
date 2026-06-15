@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Copy, RefreshCw, Shield } from 'lucide-react'
+import { Check, RefreshCw, Shield } from 'lucide-react'
 import {
   getCapsuleByAddress,
   executeIntent,
@@ -34,6 +34,16 @@ import {
   AreaChart,
 } from 'recharts'
 import { SectionEyebrow, ServiceMetaCard, ServiceMetaGrid, ServicePageHeader, ServiceSection } from '@/components/ui/service-page'
+import {
+  Button,
+  CopyButton,
+  StatusChip,
+  AddressPill,
+  ConfirmDialog,
+  useToast,
+} from '@/components/ui'
+import { maskAddress, timeAgo } from '@/lib/format'
+import { normalizeTxError } from '@/lib/errors'
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -110,38 +120,11 @@ type IntentParsed =
     }
   }
 
-const maskAddress = (addr: string) =>
-  addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-8)}` : addr
-
-function CopyButton({ value }: { value: string }) {
-  const copy = () => navigator.clipboard?.writeText(value)
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="inline-flex shrink-0 items-center justify-center rounded p-1 text-Heres-muted transition-colors hover:bg-Heres-surface/80 hover:text-Heres-accent"
-      title="Copy"
-    >
-      <Copy className="h-4 w-4" />
-    </button>
-  )
-}
-
-function timeAgo(ms: number | null) {
-  if (!ms) return '—'
-  const diff = Math.max(0, Date.now() - ms)
-  const m = Math.floor(diff / 60000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
 export default function CapsuleDetailPage() {
   const params = useParams()
   const router = useRouter()
   const wallet = useWallet()
+  const { toast } = useToast()
   const address = typeof params?.address === 'string' ? params.address : null
   const [capsule, setCapsule] = useState<Awaited<ReturnType<typeof getCapsuleByAddress>>>(null)
   const [loading, setLoading] = useState(true)
@@ -176,6 +159,11 @@ export default function CapsuleDetailPage() {
   const [revealing, setRevealing] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)
 
+  // ConfirmDialog open state for destructive actions
+  const [confirmRecover, setConfirmRecover] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [confirmUndelegate, setConfirmUndelegate] = useState(false)
+
   const isOwner = Boolean(wallet.connected && wallet.publicKey && capsule?.owner && capsule.owner.equals(wallet.publicKey))
 
   const handleExecuteIntent = async () => {
@@ -187,9 +175,12 @@ export default function CapsuleDetailPage() {
       // by distribute_assets, so nothing extra is passed here.
       const tx = await executeIntent(wallet as any, capsule.owner)
       setActionResult({ type: 'success', message: `Execute Intent TX: ${tx}` })
+      toast({ message: 'Execute Intent submitted successfully.', variant: 'success' })
     } catch (err: any) {
       console.error('[Execute Intent] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({ type: 'error', message: err.message || 'Execute failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -206,9 +197,12 @@ export default function CapsuleDetailPage() {
       const tx = await distributeAssets(wallet as any, capsule.owner, capsule.beneficiaries)
       setDistributionComplete(true)
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
+      toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
     } catch (err: any) {
       console.error('[Distribute Assets] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({ type: 'error', message: err.message || 'Distribution failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -226,9 +220,12 @@ export default function CapsuleDetailPage() {
       const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
       setCapsule(refreshed)
       setActionResult({ type: 'success', message: `Undelegate TX: ${tx}` })
+      toast({ message: 'Capsule undelegated from Ephemeral Rollup.', variant: 'success' })
     } catch (err: any) {
       console.error('[Undelegate] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({ type: 'error', message: err.message || 'Undelegation failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -238,7 +235,6 @@ export default function CapsuleDetailPage() {
   // Switch is delegated (the Vault is never delegated). The capsule stays active and armed.
   const handleRecoverVault = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
-    if (!window.confirm('Withdraw all funds from this capsule back to your wallet? The capsule stays active - you can re-fund it with another deposit later.')) return
     setActionLoading('recover')
     setActionResult(null)
     try {
@@ -248,9 +244,12 @@ export default function CapsuleDetailPage() {
       const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), getCachedTeeToken(capsule.owner) ?? undefined)
       if (refreshed) setCapsule(refreshed)
       setActionResult({ type: 'success', message: `Funds withdrawn to your wallet. TX: ${tx}` })
+      toast({ message: 'Funds withdrawn to your wallet.', variant: 'success' })
     } catch (err: any) {
       console.error('[Recover Vault] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({ type: 'error', message: err.message || 'Withdrawal failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -261,18 +260,20 @@ export default function CapsuleDetailPage() {
   // still-delegated account), so the button is gated on !isDelegated - undelegate from ER first.
   const handleCancelCapsule = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
-    if (!window.confirm('Cancel this capsule? This refunds all funds and account rent to your wallet and PERMANENTLY closes the capsule. This cannot be undone.')) return
     setActionLoading('cancel')
     setActionResult(null)
     try {
       const mint = vaultSplMint ?? undefined
       const tx = await cancelCapsule(wallet as any, mint)
       setActionResult({ type: 'success', message: `Capsule cancelled and assets reclaimed. TX: ${tx}` })
+      toast({ message: 'Capsule cancelled and assets reclaimed.', variant: 'success' })
       // The accounts are now closed; send the owner back to the list.
       setTimeout(() => router.push('/capsules'), 2500)
     } catch (err: any) {
       console.error('[Cancel Capsule] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({ type: 'error', message: err.message || 'Cancel failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -288,12 +289,15 @@ export default function CapsuleDetailPage() {
         type: 'success',
         message: 'Automation registry refreshed. The next external cron run should be able to discover this capsule.',
       })
+      toast({ message: 'Automation registry refreshed.', variant: 'success' })
     } catch (err: any) {
       console.error('[Automation Refresh] Error:', err)
+      const msg = normalizeTxError(err)
       setActionResult({
         type: 'error',
         message: err.message || 'Failed to refresh automation registry',
       })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
     }
@@ -321,8 +325,11 @@ export default function CapsuleDetailPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'CRE dispatch failed')
       setCreDispatchResult({ type: 'success', message: `Intent Statement delivery dispatched (${data.status || 'queued'})` })
+      toast({ message: 'Intent Statement delivery dispatched.', variant: 'success' })
     } catch (err: any) {
+      const msg = normalizeTxError(err)
       setCreDispatchResult({ type: 'error', message: err.message || 'CRE dispatch failed' })
+      toast({ message: msg, variant: 'error' })
     } finally {
       setCreDispatchLoading(false)
     }
@@ -639,7 +646,7 @@ export default function CapsuleDetailPage() {
       <div className="min-h-screen bg-hero text-Heres-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <RefreshCw className="h-8 w-8 animate-spin text-Heres-accent" />
-          <p className="text-Heres-muted">Loading capsule…</p>
+          <p className="text-Heres-muted">Loading capsule...</p>
         </div>
       </div>
     )
@@ -698,6 +705,45 @@ export default function CapsuleDetailPage() {
 
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
+      {/* Confirm dialogs for destructive actions */}
+      <ConfirmDialog
+        open={confirmRecover}
+        onClose={() => setConfirmRecover(false)}
+        onConfirm={() => { setConfirmRecover(false); handleRecoverVault() }}
+        title="Withdraw Funds"
+        description="Withdraw all funds from this capsule back to your wallet? The capsule stays active and armed - you can re-fund it with another deposit later."
+        confirmLabel="Withdraw"
+        variant="danger"
+        typedConfirm="withdraw"
+        loading={actionLoading === 'recover'}
+      />
+      <ConfirmDialog
+        open={confirmCancel}
+        onClose={() => setConfirmCancel(false)}
+        onConfirm={() => { setConfirmCancel(false); handleCancelCapsule() }}
+        title="Cancel Capsule"
+        description="Cancel this capsule? This refunds all funds and account rent to your wallet and PERMANENTLY closes the capsule. This cannot be undone."
+        confirmLabel="Cancel Capsule"
+        variant="danger"
+        typedConfirm="cancel"
+        loading={actionLoading === 'cancel'}
+      />
+      <ConfirmDialog
+        open={confirmUndelegate}
+        onClose={() => setConfirmUndelegate(false)}
+        onConfirm={() => { setConfirmUndelegate(false); handleUndelegate() }}
+        title="Undelegate from Ephemeral Rollup"
+        description={
+          <span>
+            Undelegating commits the private beneficiary list from the TEE to the <strong>public base layer</strong>. After this point the beneficiary addresses will be visible on-chain and <strong>will no longer be private</strong>. Only proceed if you are ready to settle the capsule publicly.
+          </span>
+        }
+        confirmLabel="Undelegate"
+        variant="danger"
+        typedConfirm="undelegate"
+        loading={actionLoading === 'undelegate'}
+      />
+
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-5xl mx-auto">
           <ServicePageHeader
@@ -714,23 +760,8 @@ export default function CapsuleDetailPage() {
                 <span className="rounded-lg border border-Heres-border bg-Heres-surface/80 px-2.5 py-1 text-xs font-medium text-Heres-muted">
                   v1.0
                 </span>
-                <span
-                  className={`rounded-lg px-2.5 py-1 text-xs font-medium ${status === 'Active'
-                    ? 'bg-Heres-accent/20 text-Heres-accent'
-                    : status === 'Executed'
-                      ? 'bg-Heres-accent/20 text-Heres-accent'
-                      : status === 'Expired'
-                        ? 'bg-red-500/20 text-red-400'
-                        : 'bg-Heres-purple/20 text-Heres-purple'
-                    }`}
-                >
-                  {status}
-                </span>
-                {isDelegated && (
-                  <span className="rounded-lg px-2.5 py-1 text-xs font-medium bg-blue-500/20 text-blue-400">
-                    Delegated (PER)
-                  </span>
-                )}
+                <StatusChip status={status} />
+                {isDelegated && <StatusChip status="delegated" />}
               </>
             }
           />
@@ -742,34 +773,13 @@ export default function CapsuleDetailPage() {
               </p>
             </ServiceMetaCard>
             <ServiceMetaCard label="Capsule ID">
-              <div className="flex items-center gap-1">
-                <a
-                  href={getExplorerUrl('address', capsule.capsuleAddress)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-mono text-Heres-accent truncate min-w-0 hover:underline"
-                  title={capsule.capsuleAddress}
-                >
-                  {maskAddress(capsule.capsuleAddress)}
-                </a>
-                <CopyButton value={capsule.capsuleAddress} />
-              </div>
+              <AddressPill address={capsule.capsuleAddress} explorer="address" />
             </ServiceMetaCard>
             <ServiceMetaCard label="Owner">
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={capsule.owner.toBase58()}>
-                  {maskAddress(capsule.owner.toBase58())}
-                </p>
-                <CopyButton value={capsule.owner.toBase58()} />
-              </div>
+              <AddressPill address={capsule.owner.toBase58()} explorer="address" />
             </ServiceMetaCard>
             <ServiceMetaCard label="Program ID">
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={getProgramId().toBase58()}>
-                  {maskAddress(getProgramId().toBase58())}
-                </p>
-                <CopyButton value={getProgramId().toBase58()} />
-              </div>
+              <AddressPill address={getProgramId().toBase58()} explorer="address" />
             </ServiceMetaCard>
             <ServiceMetaCard label="Beneficiaries">
               <p className="text-sm font-mono text-Heres-white">
@@ -811,13 +821,15 @@ export default function CapsuleDetailPage() {
               </p>
               {privateStateHidden && (
                 <div className="mt-3">
-                  <button
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleReveal}
                     disabled={revealing}
-                    className="rounded-lg border border-Heres-accent/50 bg-Heres-accent/10 px-3 py-1.5 text-xs font-medium text-Heres-accent hover:bg-Heres-accent/20 disabled:opacity-50"
+                    loading={revealing}
                   >
                     {revealing ? 'Authorizing TEE...' : 'Reveal private details'}
-                  </button>
+                  </Button>
                   {revealError && <p className="mt-2 text-xs text-red-400">{revealError}</p>}
                 </div>
               )}
@@ -833,12 +845,7 @@ export default function CapsuleDetailPage() {
               </div>
               <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">Validator address</p>
-                <div className="flex items-center gap-1">
-                  <p className="text-sm font-mono text-Heres-white truncate min-w-0" title={MAGICBLOCK_ER.VALIDATOR_TEE}>
-                    {maskAddress(MAGICBLOCK_ER.VALIDATOR_TEE)}
-                  </p>
-                  <CopyButton value={MAGICBLOCK_ER.VALIDATOR_TEE} />
-                </div>
+                <AddressPill address={MAGICBLOCK_ER.VALIDATOR_TEE} />
               </div>
               <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-Heres-muted mb-1">TEE RPC</p>
@@ -871,12 +878,7 @@ export default function CapsuleDetailPage() {
                     key={`${b.pubkey.toBase58()}-${i}`}
                     className="flex items-center justify-between gap-3 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-2"
                   >
-                    <div className="flex items-center gap-1 min-w-0">
-                      <p className="text-sm font-mono text-Heres-white truncate" title={b.pubkey.toBase58()}>
-                        {maskAddress(b.pubkey.toBase58())}
-                      </p>
-                      <CopyButton value={b.pubkey.toBase58()} />
-                    </div>
+                    <AddressPill address={b.pubkey.toBase58()} explorer="address" />
                     <span className="text-sm font-semibold text-Heres-accent tabular-nums shrink-0">
                       {(b.shareBps / 100).toFixed(b.shareBps % 100 === 0 ? 0 : 2)}%
                     </span>
@@ -909,7 +911,7 @@ export default function CapsuleDetailPage() {
                       ? `${creConfig.recipientEmailHash.slice(0, 16)}...`
                       : creConfig?.recipientEmail
                         ? 'legacy-email-onchain'
-                      : '—'}
+                      : '-'}
                   </p>
                 </div>
                 <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
@@ -934,7 +936,7 @@ export default function CapsuleDetailPage() {
             </ServiceSection>
           )}
 
-          {/* Actions — status-based flow */}
+          {/* Actions - status-based flow */}
           {isOwner && (() => {
             const isExecuted = status === 'Executed' || (!capsule.isActive && capsule.executedAt)
             const isExpired = status === 'Expired'
@@ -1024,7 +1026,7 @@ export default function CapsuleDetailPage() {
                             active ? 'bg-Heres-accent/20 text-Heres-accent border border-Heres-accent/40' :
                             'bg-Heres-surface/50 text-Heres-muted border border-Heres-border'
                           }`}>
-                            {done ? '✓' : step.num}
+                            {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : step.num}
                           </div>
                           <div>
                             <p className={`text-xs font-medium ${done ? 'text-green-400' : active ? 'text-Heres-white' : 'text-Heres-muted'}`}>
@@ -1040,19 +1042,22 @@ export default function CapsuleDetailPage() {
 
                 {/* Action buttons */}
                 <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={handleExecuteIntent}
                     disabled={!canExecute || !!actionLoading}
+                    loading={actionLoading === 'execute'}
                     title={!canExecute ? (isActive ? (targetDateMs != null ? 'No trigger condition met yet' : 'Inactivity period not elapsed') : isExecuted ? 'Already executed' : 'Not available') : 'Execute intent on-chain'}
-                    className="rounded-lg border border-Heres-accent px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-accent/10 text-Heres-accent hover:bg-Heres-accent/20"
                   >
-                    {actionLoading === 'execute' ? 'Executing...' : isExecuted ? 'Executed ✓' : 'Execute Intent'}
-                  </button>
-                  <button
-                    type="button"
+                    {isExecuted ? 'Executed' : 'Execute Intent'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleDistributeAssets}
                     disabled={!canDistribute || !!actionLoading}
+                    loading={actionLoading === 'distribute'}
                     title={
                       !canDistribute
                         ? isDelegated
@@ -1060,60 +1065,64 @@ export default function CapsuleDetailPage() {
                           : 'Execute intent first'
                         : `Distribute ${assetConfig.symbol}/tokens to beneficiaries`
                     }
-                    className="rounded-lg border border-Heres-purple px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-Heres-purple/10 text-Heres-purple hover:bg-Heres-purple/20"
                   >
-                    {actionLoading === 'distribute' ? 'Distributing...' : 'Distribute Assets'}
-                  </button>
-                  <button
-                    type="button"
+                    Distribute Assets
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleRefreshAutomation}
                     disabled={!canRefreshAutomation || !!actionLoading}
+                    loading={actionLoading === 'automation'}
                     title={!canRefreshAutomation ? 'Only pending capsules can be re-registered for automation' : 'Re-register this capsule for external crank discovery'}
-                    className="rounded-lg border border-cyan-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20"
                   >
-                    {actionLoading === 'automation' ? 'Refreshing...' : 'Refresh Automation'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleUndelegate}
+                    Refresh Automation
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setConfirmUndelegate(true)}
                     disabled={!canUndelegate || !!actionLoading}
+                    loading={actionLoading === 'undelegate'}
                     title={!canUndelegate ? 'Capsule is already on base layer' : 'Commit ER state and undelegate back to Solana base layer'}
-                    className="rounded-lg border border-blue-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
                   >
-                    {actionLoading === 'undelegate' ? 'Undelegating...' : 'Undelegate from ER'}
-                  </button>
+                    Undelegate from ER
+                  </Button>
                   {isCreEnabled && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       onClick={handleCreDispatch}
                       disabled={!canDispatchCre || creDispatchLoading || !!actionLoading}
+                      loading={creDispatchLoading}
                       title={!canDispatchCre ? 'Execute intent first' : 'Dispatch encrypted intent statement via CRE'}
-                      className="rounded-lg border border-blue-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
                     >
-                      {creDispatchLoading ? 'Dispatching...' : 'Deliver Intent Statement'}
-                    </button>
+                      Deliver Intent Statement
+                    </Button>
                   )}
                   {/* Owner early-exit (pre-fire): withdraw funds, or fully cancel + close. */}
                   {preFire && (
                     <>
-                      <button
-                        type="button"
-                        onClick={handleRecoverVault}
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => setConfirmRecover(true)}
                         disabled={!canRecover || !!actionLoading}
+                        loading={actionLoading === 'recover'}
                         title="Withdraw all funds from the capsule back to your wallet. The capsule stays active and armed."
-                        className="rounded-lg border border-amber-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
                       >
-                        {actionLoading === 'recover' ? 'Withdrawing...' : 'Withdraw Funds'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelCapsule}
+                        Withdraw Funds
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => setConfirmCancel(true)}
                         disabled={!canCancel || !!actionLoading}
+                        loading={actionLoading === 'cancel'}
                         title={!canCancel ? 'Undelegate from ER first (this settles the capsule to base), then cancel' : 'Refund all funds + account rent and permanently close the capsule'}
-                        className="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-red-500/10 text-red-400 hover:bg-red-500/20"
                       >
-                        {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Capsule'}
-                      </button>
+                        Cancel Capsule
+                      </Button>
                     </>
                   )}
                 </div>
