@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
 import { getCapsulePDA } from '@/lib/program'
-import { registerCreReminder } from '@/lib/cre/reminder-service'
-import { sha256Hex, verifyCreSignedRequest } from '@/lib/cre/auth'
+import { registerIntentReminder } from '@/lib/intent-delivery/reminder-service'
+import { sha256Hex, verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
 import { isValidEmail } from '@/utils/validation'
 
 type RegisterReminderRequestBody = {
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   }
 
   const recipientEmailHash = sha256Hex(recipientEmail)
-  const isValidSignature = verifyCreSignedRequest({
+  const isValidSignature = verifyIntentSignedRequest({
     action: 'register-reminder',
     owner,
     capsuleAddress,
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 
   let registered
   try {
-    registered = await registerCreReminder({
+    registered = await registerIntentReminder({
       capsuleAddress,
       owner,
       recipientEmail,

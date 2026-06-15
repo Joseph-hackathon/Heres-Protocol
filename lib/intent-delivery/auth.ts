@@ -1,13 +1,13 @@
 import { createHash, createPublicKey, timingSafeEqual, verify } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
-import { buildCreSignedMessage } from '../../utils/creAuth.ts'
-import type { CreSignedAction } from '../../utils/creAuth.ts'
+import { buildIntentSignedMessage } from '../../utils/intentAuth.ts'
+import type { IntentSignedAction } from '../../utils/intentAuth.ts'
 
 const SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
 
-type VerifyCreRequestInput = {
-  action: CreSignedAction
+type VerifyIntentRequestInput = {
+  action: IntentSignedAction
   owner: string
   timestamp: number
   signatureBase64: string
@@ -47,9 +47,9 @@ export function isRecentTimestamp(timestamp: number): boolean {
   return Math.abs(now - timestamp) <= SIGNATURE_MAX_AGE_MS
 }
 
-export function verifyCreSignedRequest(input: VerifyCreRequestInput): boolean {
+export function verifyIntentSignedRequest(input: VerifyIntentRequestInput): boolean {
   if (!isRecentTimestamp(input.timestamp)) return false
-  const message = buildCreSignedMessage({
+  const message = buildIntentSignedMessage({
     action: input.action,
     owner: input.owner,
     timestamp: input.timestamp,

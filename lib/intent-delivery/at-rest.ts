@@ -6,7 +6,7 @@
  * unlock code is guaranteed-undecryptable - a guaranteed failed delivery. The
  * genuinely-private data (the beneficiary split) is already TEE-protected
  * on-chain; the intent statement is a message to a human recipient. So the
- * server encrypts it at rest with a server-held key (CRE_AT_REST_KEY) and
+ * server encrypts it at rest with a server-held key (INTENT_AT_REST_KEY) and
  * decrypts it only at dispatch, just before emailing the recipient in plaintext.
  *
  * AES-256-GCM. Key is 32 bytes, supplied as base64 (recommended) or 64-char hex.
@@ -39,24 +39,24 @@ let cachedKey: Buffer | null = null
 
 function loadKey(): Buffer {
   if (cachedKey) return cachedKey
-  const raw = process.env.CRE_AT_REST_KEY?.trim()
+  const raw = process.env.INTENT_AT_REST_KEY?.trim()
   if (raw) {
     const key = decodeKeyMaterial(raw)
     if (key.length !== KEY_BYTES) {
       throw new Error(
-        `CRE_AT_REST_KEY must decode to ${KEY_BYTES} bytes (got ${key.length}). Generate one with: openssl rand -base64 32`
+        `INTENT_AT_REST_KEY must decode to ${KEY_BYTES} bytes (got ${key.length}). Generate one with: openssl rand -base64 32`
       )
     }
     cachedKey = key
     return key
   }
   if (isProductionRuntime()) {
-    throw new Error('CRE_AT_REST_KEY is required in production to encrypt intent statements at rest')
+    throw new Error('INTENT_AT_REST_KEY is required in production to encrypt intent statements at rest')
   }
   // Dev-only deterministic fallback so local dev + build-check work without a
   // configured key. NEVER reached in production (guarded above).
   console.warn(
-    '[cre/at-rest] CRE_AT_REST_KEY not set - using an INSECURE deterministic dev key. Set CRE_AT_REST_KEY before deploying.'
+    '[intent/at-rest] INTENT_AT_REST_KEY not set - using an INSECURE deterministic dev key. Set INTENT_AT_REST_KEY before deploying.'
   )
   cachedKey = createHash('sha256').update('heres-dev-insecure-at-rest-key-v1').digest()
   return cachedKey
@@ -89,5 +89,5 @@ export function decryptAtRest(payload: string): string {
 
 /** True when an explicit at-rest key is configured (for fail-closed pre-checks). */
 export function isAtRestKeyConfigured(): boolean {
-  return Boolean(process.env.CRE_AT_REST_KEY?.trim())
+  return Boolean(process.env.INTENT_AT_REST_KEY?.trim())
 }

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dispatchCreDeliveryForCapsule } from '@/lib/cre/service'
+import { dispatchIntentDeliveryForCapsule } from '@/lib/intent-delivery/service'
 
 type DispatchRequestBody = {
   capsuleAddress?: string
 }
 
 function getDispatchSecret(): string | null {
-  const value = process.env.CRE_DISPATCH_SECRET || process.env.CRON_SECRET
+  const value = process.env.INTENT_DISPATCH_SECRET || process.env.CRON_SECRET
   if (!value || !value.trim()) return null
   return value.trim()
 }
@@ -14,7 +14,7 @@ function getDispatchSecret(): string | null {
 export async function POST(request: NextRequest) {
   const secret = getDispatchSecret()
   if (!secret) {
-    return NextResponse.json({ error: 'CRE_DISPATCH_SECRET or CRON_SECRET is required' }, { status: 503 })
+    return NextResponse.json({ error: 'INTENT_DISPATCH_SECRET or CRON_SECRET is required' }, { status: 503 })
   }
 
   const auth = request.headers.get('authorization')
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'capsuleAddress is required' }, { status: 400 })
   }
 
-  const result = await dispatchCreDeliveryForCapsule(capsuleAddress)
+  const result = await dispatchIntentDeliveryForCapsule(capsuleAddress)
   let statusCode = 500
   if (result.ok || result.skipped) {
     statusCode = 200

@@ -20,11 +20,11 @@ import path from 'path'
 import { Redis } from '@upstash/redis'
 import { getDataFilePath } from '@/lib/runtime-paths'
 import {
-  CreDeliveryLedgerRecord,
-  CreReminderDeliveryRecord,
-  CreReminderRecord,
-  CreSecretRecord,
-} from '@/lib/cre/types'
+  IntentDeliveryLedgerRecord,
+  IntentReminderDeliveryRecord,
+  IntentReminderRecord,
+  IntentSecretRecord,
+} from '@/lib/intent-delivery/types'
 
 // ---------------------------------------------------------------------------
 // Backend selection
@@ -38,17 +38,17 @@ function getRedis(): Redis | null {
 }
 
 const K = {
-  secret: (ref: string) => `cre:secret:${ref}`,
-  secretsSet: 'cre:secrets',
-  secretByOwner: (owner: string) => `cre:secret:owner:${owner}`,
-  delivery: (key: string) => `cre:delivery:${key}`,
-  deliveryByCapsule: (cap: string) => `cre:delivery:capsule:${cap}`,
-  reminder: (id: string) => `cre:reminder:${id}`,
-  remindersSet: 'cre:reminders',
-  reminderByCapsule: (cap: string) => `cre:reminder:capsule:${cap}`,
-  reminderDelivery: (key: string) => `cre:reminderdelivery:${key}`,
-  reminderDeliveryByCapsule: (cap: string) => `cre:reminderdelivery:capsule:${cap}`,
-  lock: (key: string) => `cre:lock:${key}`,
+  secret: (ref: string) => `intent:secret:${ref}`,
+  secretsSet: 'intent:secrets',
+  secretByOwner: (owner: string) => `intent:secret:owner:${owner}`,
+  delivery: (key: string) => `intent:delivery:${key}`,
+  deliveryByCapsule: (cap: string) => `intent:delivery:capsule:${cap}`,
+  reminder: (id: string) => `intent:reminder:${id}`,
+  remindersSet: 'intent:reminders',
+  reminderByCapsule: (cap: string) => `intent:reminder:capsule:${cap}`,
+  reminderDelivery: (key: string) => `intent:reminderdelivery:${key}`,
+  reminderDeliveryByCapsule: (cap: string) => `intent:reminderdelivery:capsule:${cap}`,
+  lock: (key: string) => `intent:lock:${key}`,
 }
 
 async function redisMany<T>(redis: Redis, keys: string[]): Promise<T[]> {
@@ -61,26 +61,26 @@ async function redisMany<T>(redis: Redis, keys: string[]): Promise<T[]> {
 // File fallback (local dev only) - original global-cached JSON map approach
 // ---------------------------------------------------------------------------
 
-type CreStoreState = {
-  secrets: Map<string, CreSecretRecord>
-  deliveries: Map<string, CreDeliveryLedgerRecord>
-  reminders: Map<string, CreReminderRecord>
-  reminderDeliveries: Map<string, CreReminderDeliveryRecord>
+type IntentStoreState = {
+  secrets: Map<string, IntentSecretRecord>
+  deliveries: Map<string, IntentDeliveryLedgerRecord>
+  reminders: Map<string, IntentReminderRecord>
+  reminderDeliveries: Map<string, IntentReminderDeliveryRecord>
 }
 
-type PersistedCreStoreState = {
-  secrets: CreSecretRecord[]
-  deliveries: CreDeliveryLedgerRecord[]
-  reminders: CreReminderRecord[]
-  reminderDeliveries: CreReminderDeliveryRecord[]
+type PersistedIntentStoreState = {
+  secrets: IntentSecretRecord[]
+  deliveries: IntentDeliveryLedgerRecord[]
+  reminders: IntentReminderRecord[]
+  reminderDeliveries: IntentReminderDeliveryRecord[]
 }
 
 declare global {
   // eslint-disable-next-line no-var
-  var __heresCreStore: CreStoreState | undefined
+  var __heresIntentStore: IntentStoreState | undefined
 }
 
-function emptyState(): CreStoreState {
+function emptyState(): IntentStoreState {
   return {
     secrets: new Map(),
     deliveries: new Map(),
@@ -90,16 +90,16 @@ function emptyState(): CreStoreState {
 }
 
 function getStorePath(): string {
-  const configuredPath = process.env.CRE_STORE_PATH?.trim()
+  const configuredPath = process.env.INTENT_STORE_PATH?.trim()
   if (configuredPath) return configuredPath
   return getDataFilePath('cre-store.json')
 }
 
-function loadStateFromDisk(): CreStoreState {
+function loadStateFromDisk(): IntentStoreState {
   const storePath = getStorePath()
   if (!existsSync(storePath)) return emptyState()
   try {
-    const parsed = JSON.parse(readFileSync(storePath, 'utf8')) as PersistedCreStoreState
+    const parsed = JSON.parse(readFileSync(storePath, 'utf8')) as PersistedIntentStoreState
     const secrets = Array.isArray(parsed.secrets) ? parsed.secrets : []
     const deliveries = Array.isArray(parsed.deliveries) ? parsed.deliveries : []
     const reminders = Array.isArray(parsed.reminders) ? parsed.reminders : []
@@ -115,10 +115,10 @@ function loadStateFromDisk(): CreStoreState {
   }
 }
 
-function persistState(state: CreStoreState): void {
+function persistState(state: IntentStoreState): void {
   const storePath = getStorePath()
   mkdirSync(path.dirname(storePath), { recursive: true })
-  const data: PersistedCreStoreState = {
+  const data: PersistedIntentStoreState = {
     secrets: Array.from(state.secrets.values()),
     deliveries: Array.from(state.deliveries.values()),
     reminders: Array.from(state.reminders.values()),
@@ -129,11 +129,11 @@ function persistState(state: CreStoreState): void {
   renameSync(tmpPath, storePath)
 }
 
-function getState(): CreStoreState {
-  if (!globalThis.__heresCreStore) {
-    globalThis.__heresCreStore = loadStateFromDisk()
+function getState(): IntentStoreState {
+  if (!globalThis.__heresIntentStore) {
+    globalThis.__heresIntentStore = loadStateFromDisk()
   }
-  return globalThis.__heresCreStore
+  return globalThis.__heresIntentStore
 }
 
 // ---------------------------------------------------------------------------
@@ -147,13 +147,13 @@ function coalesceNonEmpty(nextValue: string | undefined, existingValue: string |
 
 function buildDeliveryRecord(
   idempotencyKey: string,
-  patch: Partial<CreDeliveryLedgerRecord> & {
+  patch: Partial<IntentDeliveryLedgerRecord> & {
     capsuleAddress: string
     executedAt: number
-    status: CreDeliveryLedgerRecord['status']
+    status: IntentDeliveryLedgerRecord['status']
   },
-  existing: CreDeliveryLedgerRecord | null
-): CreDeliveryLedgerRecord {
+  existing: IntentDeliveryLedgerRecord | null
+): IntentDeliveryLedgerRecord {
   const now = Date.now()
   return {
     idempotencyKey,
@@ -174,14 +174,14 @@ function buildDeliveryRecord(
 
 function buildReminderDeliveryRecord(
   idempotencyKey: string,
-  patch: Partial<CreReminderDeliveryRecord> & {
+  patch: Partial<IntentReminderDeliveryRecord> & {
     reminderId: string
     capsuleAddress: string
     scheduledAt: number
-    status: CreReminderDeliveryRecord['status']
+    status: IntentReminderDeliveryRecord['status']
   },
-  existing: CreReminderDeliveryRecord | null
-): CreReminderDeliveryRecord {
+  existing: IntentReminderDeliveryRecord | null
+): IntentReminderDeliveryRecord {
   const now = Date.now()
   return {
     idempotencyKey,
@@ -204,7 +204,7 @@ function buildReminderDeliveryRecord(
 // Secrets
 // ---------------------------------------------------------------------------
 
-export async function upsertCreSecret(secret: CreSecretRecord): Promise<CreSecretRecord> {
+export async function upsertIntentSecret(secret: IntentSecretRecord): Promise<IntentSecretRecord> {
   const redis = getRedis()
   if (redis) {
     await redis.set(K.secret(secret.secretRef), secret)
@@ -218,17 +218,17 @@ export async function upsertCreSecret(secret: CreSecretRecord): Promise<CreSecre
   return secret
 }
 
-export async function getCreSecret(secretRef: string): Promise<CreSecretRecord | null> {
+export async function getIntentSecret(secretRef: string): Promise<IntentSecretRecord | null> {
   const redis = getRedis()
-  if (redis) return (await redis.get<CreSecretRecord>(K.secret(secretRef))) ?? null
+  if (redis) return (await redis.get<IntentSecretRecord>(K.secret(secretRef))) ?? null
   return getState().secrets.get(secretRef) ?? null
 }
 
-export async function listCreSecrets(): Promise<CreSecretRecord[]> {
+export async function listIntentSecrets(): Promise<IntentSecretRecord[]> {
   const redis = getRedis()
   if (redis) {
     const refs = await redis.smembers(K.secretsSet)
-    return redisMany<CreSecretRecord>(redis, refs.map(K.secret))
+    return redisMany<IntentSecretRecord>(redis, refs.map(K.secret))
   }
   return Array.from(getState().secrets.values())
 }
@@ -238,14 +238,14 @@ export async function listCreSecrets(): Promise<CreSecretRecord[]> {
  * "is intent delivery enabled for this capsule" now that the lean on-chain
  * capsule carries no intent_data payload.
  */
-export async function getCreSecretByOwner(owner: string): Promise<CreSecretRecord | null> {
+export async function getIntentSecretByOwner(owner: string): Promise<IntentSecretRecord | null> {
   const redis = getRedis()
   if (redis) {
     const ref = await redis.get<string>(K.secretByOwner(owner))
     if (!ref) return null
-    return (await redis.get<CreSecretRecord>(K.secret(ref))) ?? null
+    return (await redis.get<IntentSecretRecord>(K.secret(ref))) ?? null
   }
-  let latest: CreSecretRecord | null = null
+  let latest: IntentSecretRecord | null = null
   for (const secret of getState().secrets.values()) {
     if (secret.owner !== owner) continue
     if (!latest || secret.updatedAt > latest.updatedAt) latest = secret
@@ -257,7 +257,7 @@ export async function getCreSecretByOwner(owner: string): Promise<CreSecretRecor
 // Reminders
 // ---------------------------------------------------------------------------
 
-export async function upsertCreReminder(reminder: CreReminderRecord): Promise<CreReminderRecord> {
+export async function upsertIntentReminder(reminder: IntentReminderRecord): Promise<IntentReminderRecord> {
   const redis = getRedis()
   if (redis) {
     await redis.set(K.reminder(reminder.reminderId), reminder)
@@ -271,18 +271,18 @@ export async function upsertCreReminder(reminder: CreReminderRecord): Promise<Cr
   return reminder
 }
 
-export async function getCreReminder(reminderId: string): Promise<CreReminderRecord | null> {
+export async function getIntentReminder(reminderId: string): Promise<IntentReminderRecord | null> {
   const redis = getRedis()
-  if (redis) return (await redis.get<CreReminderRecord>(K.reminder(reminderId))) ?? null
+  if (redis) return (await redis.get<IntentReminderRecord>(K.reminder(reminderId))) ?? null
   return getState().reminders.get(reminderId) ?? null
 }
 
-export async function getCreReminderByCapsule(capsuleAddress: string): Promise<CreReminderRecord | null> {
+export async function getIntentReminderByCapsule(capsuleAddress: string): Promise<IntentReminderRecord | null> {
   const redis = getRedis()
   if (redis) {
     const id = await redis.get<string>(K.reminderByCapsule(capsuleAddress))
     if (!id) return null
-    return (await redis.get<CreReminderRecord>(K.reminder(id))) ?? null
+    return (await redis.get<IntentReminderRecord>(K.reminder(id))) ?? null
   }
   for (const reminder of getState().reminders.values()) {
     if (reminder.capsuleAddress === capsuleAddress) return reminder
@@ -290,11 +290,11 @@ export async function getCreReminderByCapsule(capsuleAddress: string): Promise<C
   return null
 }
 
-export async function listCreReminders(): Promise<CreReminderRecord[]> {
+export async function listIntentReminders(): Promise<IntentReminderRecord[]> {
   const redis = getRedis()
   if (redis) {
     const ids = await redis.smembers(K.remindersSet)
-    const all = await redisMany<CreReminderRecord>(redis, ids.map(K.reminder))
+    const all = await redisMany<IntentReminderRecord>(redis, ids.map(K.reminder))
     return all.sort((a, b) => a.nextReminderAt - b.nextReminderAt)
   }
   return Array.from(getState().reminders.values()).sort((a, b) => a.nextReminderAt - b.nextReminderAt)
@@ -306,18 +306,18 @@ export async function listCreReminders(): Promise<CreReminderRecord[]> {
 
 export async function upsertDeliveryLedger(
   idempotencyKey: string,
-  patch: Partial<CreDeliveryLedgerRecord> & {
+  patch: Partial<IntentDeliveryLedgerRecord> & {
     capsuleAddress: string
     owner?: string
     executedAt: number
     recipientEmail?: string
     secretRef?: string
-    status: CreDeliveryLedgerRecord['status']
+    status: IntentDeliveryLedgerRecord['status']
   }
-): Promise<CreDeliveryLedgerRecord> {
+): Promise<IntentDeliveryLedgerRecord> {
   const redis = getRedis()
   if (redis) {
-    const existing = await redis.get<CreDeliveryLedgerRecord>(K.delivery(idempotencyKey))
+    const existing = await redis.get<IntentDeliveryLedgerRecord>(K.delivery(idempotencyKey))
     const next = buildDeliveryRecord(idempotencyKey, patch, existing ?? null)
     await redis.set(K.delivery(idempotencyKey), next)
     await redis.sadd(K.deliveryByCapsule(next.capsuleAddress), idempotencyKey)
@@ -330,17 +330,17 @@ export async function upsertDeliveryLedger(
   return next
 }
 
-export async function getDeliveryLedger(idempotencyKey: string): Promise<CreDeliveryLedgerRecord | null> {
+export async function getDeliveryLedger(idempotencyKey: string): Promise<IntentDeliveryLedgerRecord | null> {
   const redis = getRedis()
-  if (redis) return (await redis.get<CreDeliveryLedgerRecord>(K.delivery(idempotencyKey))) ?? null
+  if (redis) return (await redis.get<IntentDeliveryLedgerRecord>(K.delivery(idempotencyKey))) ?? null
   return getState().deliveries.get(idempotencyKey) ?? null
 }
 
-export async function listDeliveryByCapsule(capsuleAddress: string): Promise<CreDeliveryLedgerRecord[]> {
+export async function listDeliveryByCapsule(capsuleAddress: string): Promise<IntentDeliveryLedgerRecord[]> {
   const redis = getRedis()
   if (redis) {
     const keys = await redis.smembers(K.deliveryByCapsule(capsuleAddress))
-    const all = await redisMany<CreDeliveryLedgerRecord>(redis, keys.map(K.delivery))
+    const all = await redisMany<IntentDeliveryLedgerRecord>(redis, keys.map(K.delivery))
     return all.sort((a, b) => b.updatedAt - a.updatedAt)
   }
   return Array.from(getState().deliveries.values())
@@ -354,18 +354,18 @@ export async function listDeliveryByCapsule(capsuleAddress: string): Promise<Cre
 
 export async function upsertReminderDeliveryLedger(
   idempotencyKey: string,
-  patch: Partial<CreReminderDeliveryRecord> & {
+  patch: Partial<IntentReminderDeliveryRecord> & {
     reminderId: string
     capsuleAddress: string
     owner?: string
     recipientEmail?: string
     scheduledAt: number
-    status: CreReminderDeliveryRecord['status']
+    status: IntentReminderDeliveryRecord['status']
   }
-): Promise<CreReminderDeliveryRecord> {
+): Promise<IntentReminderDeliveryRecord> {
   const redis = getRedis()
   if (redis) {
-    const existing = await redis.get<CreReminderDeliveryRecord>(K.reminderDelivery(idempotencyKey))
+    const existing = await redis.get<IntentReminderDeliveryRecord>(K.reminderDelivery(idempotencyKey))
     const next = buildReminderDeliveryRecord(idempotencyKey, patch, existing ?? null)
     await redis.set(K.reminderDelivery(idempotencyKey), next)
     await redis.sadd(K.reminderDeliveryByCapsule(next.capsuleAddress), idempotencyKey)
@@ -384,19 +384,19 @@ export async function upsertReminderDeliveryLedger(
 
 export async function getReminderDeliveryLedger(
   idempotencyKey: string
-): Promise<CreReminderDeliveryRecord | null> {
+): Promise<IntentReminderDeliveryRecord | null> {
   const redis = getRedis()
-  if (redis) return (await redis.get<CreReminderDeliveryRecord>(K.reminderDelivery(idempotencyKey))) ?? null
+  if (redis) return (await redis.get<IntentReminderDeliveryRecord>(K.reminderDelivery(idempotencyKey))) ?? null
   return getState().reminderDeliveries.get(idempotencyKey) ?? null
 }
 
 export async function listReminderDeliveriesByCapsule(
   capsuleAddress: string
-): Promise<CreReminderDeliveryRecord[]> {
+): Promise<IntentReminderDeliveryRecord[]> {
   const redis = getRedis()
   if (redis) {
     const keys = await redis.smembers(K.reminderDeliveryByCapsule(capsuleAddress))
-    const all = await redisMany<CreReminderDeliveryRecord>(redis, keys.map(K.reminderDelivery))
+    const all = await redisMany<IntentReminderDeliveryRecord>(redis, keys.map(K.reminderDelivery))
     return all.sort((a, b) => b.updatedAt - a.updatedAt)
   }
   return Array.from(getState().reminderDeliveries.values())

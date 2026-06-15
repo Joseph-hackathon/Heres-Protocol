@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
 import { getAssetConfig, inferAssetConfig, isAssetConfigured, toAtomicAmount } from '../lib/assets.ts'
-import { computeNextReminderAt, createReminderIdempotencyKey } from '../lib/cre/reminder-schedule.ts'
+import { computeNextReminderAt, createReminderIdempotencyKey } from '../lib/intent-delivery/reminder-schedule.ts'
 
 test('asset registry exposes supported BTC, ETH, and mSOL symbols even when mints are env-driven', () => {
   const btc = getAssetConfig('BTC')

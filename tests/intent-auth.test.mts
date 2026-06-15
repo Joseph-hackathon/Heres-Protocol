@@ -2,18 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import bs58 from 'bs58'
-import { buildCreSignedMessage } from '../utils/creAuth.ts'
-import { safeEqualHex, sha256Hex, verifyCreSignedRequest } from '../lib/cre/auth.ts'
+import { buildIntentSignedMessage } from '../utils/intentAuth.ts'
+import { safeEqualHex, sha256Hex, verifyIntentSignedRequest } from '../lib/intent-delivery/auth.ts'
 
-test('buildCreSignedMessage is deterministic and scoped by action', () => {
-  const a = buildCreSignedMessage({
+test('buildIntentSignedMessage is deterministic and scoped by action', () => {
+  const a = buildIntentSignedMessage({
     action: 'register-secret',
     owner: 'owner1',
     timestamp: 123,
     recipientEmailHash: 'aa',
     messageHash: 'bb',
   })
-  const b = buildCreSignedMessage({
+  const b = buildIntentSignedMessage({
     action: 'delivery-status',
     owner: 'owner1',
     timestamp: 123,
@@ -34,13 +34,13 @@ test('safeEqualHex and sha256Hex integrity helpers', () => {
   assert.equal(safeEqualHex('zz', 'zz'), false)
 })
 
-test('verifyCreSignedRequest accepts valid signatures and rejects tampered payloads', () => {
+test('verifyIntentSignedRequest accepts valid signatures and rejects tampered payloads', () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const spki = publicKey.export({ format: 'der', type: 'spki' })
   const owner = bs58.encode(spki.subarray(spki.length - 32))
 
   const timestamp = Date.now()
-  const message = buildCreSignedMessage({
+  const message = buildIntentSignedMessage({
     action: 'register-secret',
     owner,
     timestamp,
@@ -49,7 +49,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
   })
   const signature = sign(null, Buffer.from(message, 'utf8'), privateKey).toString('base64')
 
-  const valid = verifyCreSignedRequest({
+  const valid = verifyIntentSignedRequest({
     action: 'register-secret',
     owner,
     timestamp,
@@ -59,7 +59,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
   })
   assert.equal(valid, true)
 
-  const tampered = verifyCreSignedRequest({
+  const tampered = verifyIntentSignedRequest({
     action: 'register-secret',
     owner,
     timestamp,
@@ -69,7 +69,7 @@ test('verifyCreSignedRequest accepts valid signatures and rejects tampered paylo
   })
   assert.equal(tampered, false)
 
-  const expired = verifyCreSignedRequest({
+  const expired = verifyIntentSignedRequest({
     action: 'register-secret',
     owner,
     timestamp: timestamp - 10 * 60 * 1000,

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 
 // Use a fixed 32-byte key so the round-trip is deterministic and does not rely
 // on the dev fallback. Must be set before the first encrypt/decrypt call.
-process.env.CRE_AT_REST_KEY = Buffer.alloc(32, 7).toString('base64')
+process.env.INTENT_AT_REST_KEY = Buffer.alloc(32, 7).toString('base64')
 
-const { encryptAtRest, decryptAtRest } = await import('../lib/cre/at-rest.ts')
+const { encryptAtRest, decryptAtRest } = await import('../lib/intent-delivery/at-rest.ts')
 
 test('at-rest encrypt/decrypt round-trips', () => {
   const msg = 'To my family: the cold-wallet seed is in the blue notebook. - A'

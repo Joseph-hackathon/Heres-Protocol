@@ -2,23 +2,23 @@ import 'server-only'
 
 import { randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
-import { sha256Hex } from '@/lib/cre/auth'
-import { encryptAtRest, decryptAtRest } from '@/lib/cre/at-rest'
-import { sendEmail } from '@/lib/cre/email'
-import { renderIntentEmail } from '@/lib/cre/email-templates'
-import { DispatchCreDeliveryResult, CreDeliveryLedgerRecord } from '@/lib/cre/types'
+import { sha256Hex } from '@/lib/intent-delivery/auth'
+import { encryptAtRest, decryptAtRest } from '@/lib/intent-delivery/at-rest'
+import { sendEmail } from '@/lib/intent-delivery/email'
+import { renderIntentEmail } from '@/lib/intent-delivery/email-templates'
+import { DispatchIntentDeliveryResult, IntentDeliveryLedgerRecord } from '@/lib/intent-delivery/types'
 import {
   acquireDeliveryLock,
   releaseDeliveryLock,
   getDeliveryLedger,
-  getCreSecret,
-  getCreSecretByOwner,
+  getIntentSecret,
+  getIntentSecretByOwner,
   listDeliveryByCapsule,
-  listCreSecrets,
+  listIntentSecrets,
   upsertDeliveryLedger,
-  upsertCreSecret,
-} from '@/lib/cre/store'
-import { fetchCapsuleStateByAddress, fetchCapsuleStateByOwner } from '@/lib/cre/solana'
+  upsertIntentSecret,
+} from '@/lib/intent-delivery/store'
+import { fetchCapsuleStateByAddress, fetchCapsuleStateByOwner } from '@/lib/intent-delivery/solana'
 
 // Reliability knobs for the self-hosted delivery engine.
 const MAX_ATTEMPTS = 8
@@ -31,7 +31,7 @@ type RegisterSecretInput = {
   recipientEmail: string
   // Plaintext intent statement. The server encrypts it at rest; the previous
   // client-side, access-code-derived ciphertext is gone (undecryptable once the
-  // owner is silent - see lib/cre/at-rest.ts).
+  // owner is silent - see lib/intent-delivery/at-rest.ts).
   message: string
 }
 
@@ -67,7 +67,7 @@ async function notifyOps(message: string): Promise<void> {
   }
 }
 
-export async function registerCreSecret(input: RegisterSecretInput): Promise<{
+export async function registerIntentSecret(input: RegisterSecretInput): Promise<{
   secretRef: string
   secretHash: string
   recipientEmailHash: string
@@ -81,7 +81,7 @@ export async function registerCreSecret(input: RegisterSecretInput): Promise<{
   const secretHash = sha256Hex(encryptedPayload)
   const now = Date.now()
 
-  await upsertCreSecret({
+  await upsertIntentSecret({
     secretRef,
     secretHash,
     encryptedPayload,
@@ -95,9 +95,9 @@ export async function registerCreSecret(input: RegisterSecretInput): Promise<{
   return { secretRef, secretHash, recipientEmailHash }
 }
 
-export async function dispatchCreDeliveryForCapsule(
+export async function dispatchIntentDeliveryForCapsule(
   capsuleAddressRaw: string
-): Promise<DispatchCreDeliveryResult> {
+): Promise<DispatchIntentDeliveryResult> {
   let capsuleAddress: PublicKey
   try {
     capsuleAddress = new PublicKey(capsuleAddressRaw)
@@ -112,7 +112,7 @@ export async function dispatchCreDeliveryForCapsule(
   // Intent delivery is enabled off-chain: a registered secret exists for the
   // capsule owner (the lean on-chain capsule carries no intent_data).
   const ownerStr = capsule.owner.toBase58()
-  const registeredSecret = await getCreSecretByOwner(ownerStr)
+  const registeredSecret = await getIntentSecretByOwner(ownerStr)
   if (!registeredSecret) {
     return { ok: true, skipped: true, reason: 'Intent delivery is not enabled' }
   }
@@ -144,7 +144,7 @@ export async function dispatchCreDeliveryForCapsule(
       return { ok: true, skipped: true, reason: 'Backing off before retry', idempotencyKey, status: 'failed' }
     }
 
-    const secret = await getCreSecret(registeredSecret.secretRef)
+    const secret = await getIntentSecret(registeredSecret.secretRef)
     const attempts = (existing?.attempts ?? 0) + 1
 
     if (!secret) {
@@ -255,18 +255,18 @@ export async function dispatchCreDeliveryForCapsule(
   }
 }
 
-export async function getDeliveryStatus(capsuleAddress: string): Promise<CreDeliveryLedgerRecord[]> {
+export async function getDeliveryStatus(capsuleAddress: string): Promise<IntentDeliveryLedgerRecord[]> {
   return listDeliveryByCapsule(capsuleAddress)
 }
 
-export async function reconcileCreDeliveries(): Promise<{
+export async function reconcileIntentDeliveries(): Promise<{
   scanned: number
-  executedCreCapsules: number
+  executedIntentCapsules: number
   dispatched: number
   failed: number
 }> {
-  const secrets = await listCreSecrets()
-  let executedCreCapsules = 0
+  const secrets = await listIntentSecrets()
+  let executedIntentCapsules = 0
   let dispatched = 0
   let failed = 0
 
@@ -282,14 +282,14 @@ export async function reconcileCreDeliveries(): Promise<{
     if (!capsule?.executedAt) continue
 
     // Only act on the most recently registered secret per owner (matches dispatch).
-    const latest = await getCreSecretByOwner(secret.owner)
+    const latest = await getIntentSecretByOwner(secret.owner)
     if (!latest || latest.secretRef !== secret.secretRef) continue
 
-    executedCreCapsules += 1
-    const result = await dispatchCreDeliveryForCapsule(capsule.capsuleAddress)
+    executedIntentCapsules += 1
+    const result = await dispatchIntentDeliveryForCapsule(capsule.capsuleAddress)
     if (result.ok && !result.skipped) dispatched += 1
     if (!result.ok) failed += 1
   }
 
-  return { scanned: secrets.length, executedCreCapsules, dispatched, failed }
+  return { scanned: secrets.length, executedIntentCapsules, dispatched, failed }
 }

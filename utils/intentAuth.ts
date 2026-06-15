@@ -1,4 +1,4 @@
-export type CreSignedAction =
+export type IntentSignedAction =
   | 'register-secret'
   | 'delivery-status'
   | 'dispatch'
@@ -6,7 +6,7 @@ export type CreSignedAction =
   | 'reminder-status'
 
 type BuildSignedMessageInput = {
-  action: CreSignedAction
+  action: IntentSignedAction
   owner: string
   timestamp: number
   capsuleAddress?: string
@@ -14,9 +14,9 @@ type BuildSignedMessageInput = {
   messageHash?: string
 }
 
-export function buildCreSignedMessage(input: BuildSignedMessageInput): string {
+export function buildIntentSignedMessage(input: BuildSignedMessageInput): string {
   const parts = [
-    'Heres CRE Auth v1',
+    'Heres Intent Auth v1',
     `action:${input.action}`,
     `owner:${input.owner.trim()}`,
     `timestamp:${Math.trunc(input.timestamp)}`,

@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { runCrankPipeline } from '@/lib/crank'
-import { reconcileCreDeliveries } from '@/lib/cre/service'
+import { reconcileIntentDeliveries } from '@/lib/intent-delivery/service'
 
 function getCrankKeypair(): Keypair | null {
   const raw = process.env.CRANK_WALLET_PRIVATE_KEY
@@ -57,26 +57,26 @@ async function handleCron(request: NextRequest) {
   }
 
   try {
-    const [crankResult, creResult] = await Promise.allSettled([
+    const [crankResult, intentResult] = await Promise.allSettled([
       runCrankPipeline(keypair),
-      reconcileCreDeliveries(),
+      reconcileIntentDeliveries(),
     ])
 
     if (crankResult.status === 'rejected') {
       const message = crankResult.reason instanceof Error ? crankResult.reason.message : String(crankResult.reason)
       const cre =
-        creResult.status === 'fulfilled'
-          ? creResult.value
-          : { error: creResult.reason instanceof Error ? creResult.reason.message : String(creResult.reason) }
+        intentResult.status === 'fulfilled'
+          ? intentResult.value
+          : { error: intentResult.reason instanceof Error ? intentResult.reason.message : String(intentResult.reason) }
       return NextResponse.json({ error: message, cre }, { status: 500 })
     }
 
     return NextResponse.json({
       ...crankResult.value,
       cre:
-        creResult.status === 'fulfilled'
-          ? creResult.value
-          : { error: creResult.reason instanceof Error ? creResult.reason.message : String(creResult.reason) },
+        intentResult.status === 'fulfilled'
+          ? intentResult.value
+          : { error: intentResult.reason instanceof Error ? intentResult.reason.message : String(intentResult.reason) },
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dispatchCreReminderForCapsule } from '@/lib/cre/reminder-service'
+import { dispatchIntentReminderForCapsule } from '@/lib/intent-delivery/reminder-service'
 
 type DispatchRequestBody = {
   capsuleAddress?: string
 }
 
 function getDispatchSecret(): string | null {
-  const value = process.env.CRE_REMINDER_DISPATCH_SECRET || process.env.CRON_SECRET
+  const value = process.env.INTENT_REMINDER_DISPATCH_SECRET || process.env.CRON_SECRET
   if (!value || !value.trim()) return null
   return value.trim()
 }
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const secret = getDispatchSecret()
   if (!secret) {
     return NextResponse.json(
-      { error: 'CRE_REMINDER_DISPATCH_SECRET or CRON_SECRET is required' },
+      { error: 'INTENT_REMINDER_DISPATCH_SECRET or CRON_SECRET is required' },
       { status: 503 }
     )
   }
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'capsuleAddress is required' }, { status: 400 })
   }
 
-  const result = await dispatchCreReminderForCapsule(capsuleAddress)
+  const result = await dispatchIntentReminderForCapsule(capsuleAddress)
   let statusCode = 500
   if (result.ok || result.skipped) {
     statusCode = 200

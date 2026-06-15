@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PublicKey } from '@solana/web3.js'
 import { isValidEmail } from '@/utils/validation'
-import { registerCreSecret } from '@/lib/cre/service'
-import { sha256Hex, verifyCreSignedRequest } from '@/lib/cre/auth'
+import { registerIntentSecret } from '@/lib/intent-delivery/service'
+import { sha256Hex, verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
 
 type RegisterRequestBody = {
   owner?: string
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
   const recipientEmailHash = sha256Hex(recipientEmail)
   const messageHash = sha256Hex(message)
-  const isValidSignature = verifyCreSignedRequest({
+  const isValidSignature = verifyIntentSignedRequest({
     action: 'register-secret',
     owner,
     timestamp,
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
 
   let registered
   try {
-    registered = await registerCreSecret({ owner, recipientEmail, message })
+    registered = await registerIntentSecret({ owner, recipientEmail, message })
   } catch (error) {
     const errMessage = error instanceof Error ? error.message : 'Failed to register intent statement'
     return NextResponse.json({ error: errMessage }, { status: 500 })

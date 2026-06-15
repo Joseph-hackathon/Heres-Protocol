@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { reconcileCreDeliveries } from '@/lib/cre/service'
+import { reconcileIntentDeliveries } from '@/lib/intent-delivery/service'
 
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
@@ -25,6 +25,6 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const result = await reconcileCreDeliveries()
+  const result = await reconcileIntentDeliveries()
   return NextResponse.json({ ok: true, ...result })
 }

@@ -15,19 +15,19 @@ declare namespace NodeJS {
     DATABASE_URL?: string
     HELIUS_WEBHOOK_AUTH_TOKEN?: string
     // Self-hosted intent-delivery engine (replaces Chainlink CRE).
-    CRE_AT_REST_KEY?: string
+    INTENT_AT_REST_KEY?: string
     RESEND_API_KEY?: string
     RESEND_FROM?: string
     NEXT_PUBLIC_APP_URL?: string
-    CRE_REMINDER_DISPATCH_SECRET?: string
-    CRE_REMINDER_INTERVAL_DAYS?: string
+    INTENT_REMINDER_DISPATCH_SECRET?: string
+    INTENT_REMINDER_INTERVAL_DAYS?: string
     OPS_ALERT_WEBHOOK_URL?: string
     CRON_SECRET?: string
     DASHBOARD_PREWARM_TOKEN?: string
     DASHBOARD_PREWARM_ENABLED?: string
     DASHBOARD_PREWARM_PAGES?: string
-    CRE_DISPATCH_SECRET?: string
-    CRE_STORE_PATH?: string
+    INTENT_DISPATCH_SECRET?: string
+    INTENT_STORE_PATH?: string
     UPSTASH_REDIS_REST_URL?: string
     UPSTASH_REDIS_REST_TOKEN?: string
   }

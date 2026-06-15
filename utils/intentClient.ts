@@ -3,7 +3,7 @@
  *
  * Client-side encryption (encryptPrivateMessage) was removed: the intent
  * statement is now sent as plaintext over TLS, bound by the owner's wallet
- * signature, and encrypted at rest on the server (see lib/cre/at-rest.ts). An
+ * signature, and encrypted at rest on the server (see lib/intent-delivery/at-rest.ts). An
  * owner-chosen access code could not work for a dead-man's-switch - the owner is
  * gone at delivery, so the code would be unrecoverable. Only the signing helpers
  * remain.

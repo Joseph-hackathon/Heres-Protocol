@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { reconcileCreReminders } from '@/lib/cre/reminder-service'
+import { reconcileIntentReminders } from '@/lib/intent-delivery/reminder-service'
 
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
@@ -25,6 +25,6 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const result = await reconcileCreReminders()
+  const result = await reconcileIntentReminders()
   return NextResponse.json({ ok: true, ...result })
 }

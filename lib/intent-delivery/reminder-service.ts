@@ -2,33 +2,33 @@ import 'server-only'
 
 import { randomUUID } from 'crypto'
 import { PublicKey } from '@solana/web3.js'
-import { sha256Hex } from '@/lib/cre/auth'
-import { sendEmail } from '@/lib/cre/email'
-import { renderReminderEmail } from '@/lib/cre/email-templates'
-import { fetchCapsuleStateByAddress } from '@/lib/cre/solana'
+import { sha256Hex } from '@/lib/intent-delivery/auth'
+import { sendEmail } from '@/lib/intent-delivery/email'
+import { renderReminderEmail } from '@/lib/intent-delivery/email-templates'
+import { fetchCapsuleStateByAddress } from '@/lib/intent-delivery/solana'
 import {
   acquireDeliveryLock,
   releaseDeliveryLock,
-  getCreReminder,
-  getCreReminderByCapsule,
+  getIntentReminder,
+  getIntentReminderByCapsule,
   getReminderDeliveryLedger,
-  listCreReminders,
+  listIntentReminders,
   listReminderDeliveriesByCapsule,
-  upsertCreReminder,
+  upsertIntentReminder,
   upsertReminderDeliveryLedger,
-} from '@/lib/cre/store'
+} from '@/lib/intent-delivery/store'
 import {
-  CreReminderDeliveryRecord,
-  CreReminderDeliveryStatus,
-  CreReminderRecord,
-  DispatchCreReminderResult,
-  RegisterCreReminderResult,
-} from '@/lib/cre/types'
+  IntentReminderDeliveryRecord,
+  IntentReminderDeliveryStatus,
+  IntentReminderRecord,
+  DispatchIntentReminderResult,
+  RegisterIntentReminderResult,
+} from '@/lib/intent-delivery/types'
 import {
   computeNextReminderAt,
   createReminderIdempotencyKey,
   getReminderIntervalDays,
-} from '@/lib/cre/reminder-schedule'
+} from '@/lib/intent-delivery/reminder-schedule'
 
 const LOCK_TTL_SECONDS = 120
 
@@ -70,10 +70,10 @@ async function notifyOps(message: string): Promise<void> {
 }
 
 async function stopReminder(
-  reminder: CreReminderRecord,
-  reasonStatus: CreReminderDeliveryStatus
-): Promise<CreReminderRecord> {
-  return upsertCreReminder({
+  reminder: IntentReminderRecord,
+  reasonStatus: IntentReminderDeliveryStatus
+): Promise<IntentReminderRecord> {
+  return upsertIntentReminder({
     ...reminder,
     status: 'stopped',
     lastDeliveryStatus: reasonStatus,
@@ -81,16 +81,16 @@ async function stopReminder(
   })
 }
 
-export async function registerCreReminder(input: RegisterReminderInput): Promise<RegisterCreReminderResult> {
+export async function registerIntentReminder(input: RegisterReminderInput): Promise<RegisterIntentReminderResult> {
   const now = Number.isFinite(input.createdAt) ? Number(input.createdAt) : Date.now()
   const normalizedEmail = normalizeEmail(input.recipientEmail)
   const reminderIntervalDays = getReminderIntervalDays()
   const nextReminderAt = computeNextReminderAt(now, reminderIntervalDays)
-  const existing = await getCreReminderByCapsule(input.capsuleAddress)
+  const existing = await getIntentReminderByCapsule(input.capsuleAddress)
   const reminderId = existing?.reminderId ?? `rem_${randomUUID().replace(/-/g, '')}`
   const recipientEmailHash = sha256Hex(normalizedEmail)
 
-  await upsertCreReminder({
+  await upsertIntentReminder({
     reminderId,
     capsuleAddress: input.capsuleAddress,
     owner: input.owner,
@@ -114,16 +114,16 @@ export async function registerCreReminder(input: RegisterReminderInput): Promise
   return { reminderId, nextReminderAt, recipientEmailHash, reminderIntervalDays }
 }
 
-export async function dispatchCreReminderForCapsule(
+export async function dispatchIntentReminderForCapsule(
   capsuleAddressRaw: string
-): Promise<DispatchCreReminderResult> {
-  const reminder = await getCreReminderByCapsule(capsuleAddressRaw)
+): Promise<DispatchIntentReminderResult> {
+  const reminder = await getIntentReminderByCapsule(capsuleAddressRaw)
   if (!reminder) return { ok: false, error: 'Reminder registration not found' }
-  return dispatchCreReminder(reminder.reminderId)
+  return dispatchIntentReminder(reminder.reminderId)
 }
 
-export async function dispatchCreReminder(reminderId: string): Promise<DispatchCreReminderResult> {
-  const reminder = await getCreReminder(reminderId)
+export async function dispatchIntentReminder(reminderId: string): Promise<DispatchIntentReminderResult> {
+  const reminder = await getIntentReminder(reminderId)
   if (!reminder) return { ok: false, error: 'Reminder registration not found' }
   if (reminder.status !== 'active') {
     return { ok: true, skipped: true, reason: `Reminder is ${reminder.status}`, reminderId }
@@ -205,7 +205,7 @@ export async function dispatchCreReminder(reminderId: string): Promise<DispatchC
         providerMessageId,
       })
       // Reminders recur: advance the schedule whether or not this one landed.
-      await upsertCreReminder({
+      await upsertIntentReminder({
         ...reminder,
         nextReminderAt: computeNextReminderAt(scheduledAt, reminder.reminderIntervalDays),
         lastReminderAt: scheduledAt,
@@ -227,7 +227,7 @@ export async function dispatchCreReminder(reminderId: string): Promise<DispatchC
         lastError: message,
       })
       // A missed reminder self-heals at the next interval; advance regardless.
-      await upsertCreReminder({
+      await upsertIntentReminder({
         ...reminder,
         nextReminderAt: computeNextReminderAt(scheduledAt, reminder.reminderIntervalDays),
         lastReminderAt: scheduledAt,
@@ -243,24 +243,24 @@ export async function dispatchCreReminder(reminderId: string): Promise<DispatchC
 }
 
 export async function getReminderStatus(capsuleAddress: string): Promise<{
-  reminder: CreReminderRecord | null
-  deliveries: CreReminderDeliveryRecord[]
+  reminder: IntentReminderRecord | null
+  deliveries: IntentReminderDeliveryRecord[]
 }> {
   const [reminder, deliveries] = await Promise.all([
-    getCreReminderByCapsule(capsuleAddress),
+    getIntentReminderByCapsule(capsuleAddress),
     listReminderDeliveriesByCapsule(capsuleAddress),
   ])
   return { reminder, deliveries }
 }
 
-export async function reconcileCreReminders(): Promise<{
+export async function reconcileIntentReminders(): Promise<{
   scanned: number
   due: number
   dispatched: number
   failed: number
   skipped: number
 }> {
-  const reminders = await listCreReminders()
+  const reminders = await listIntentReminders()
   const now = Date.now()
   let due = 0
   let dispatched = 0
@@ -272,7 +272,7 @@ export async function reconcileCreReminders(): Promise<{
     if (reminder.nextReminderAt > now) continue
 
     due += 1
-    const result = await dispatchCreReminder(reminder.reminderId)
+    const result = await dispatchIntentReminder(reminder.reminderId)
     if (result.ok && !result.skipped) dispatched += 1
     if (!result.ok) failed += 1
     if (result.skipped) skipped += 1

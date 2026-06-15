@@ -9,7 +9,7 @@ export function createReminderIdempotencyKey(capsuleAddress: string, scheduledAt
 }
 
 export function getReminderIntervalDays(): number {
-  const raw = process.env.CRE_REMINDER_INTERVAL_DAYS?.trim()
+  const raw = process.env.INTENT_REMINDER_INTERVAL_DAYS?.trim()
   if (!raw) return REMINDER_INTERVAL_DAYS
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isFinite(parsed) || parsed <= 0) return REMINDER_INTERVAL_DAYS
