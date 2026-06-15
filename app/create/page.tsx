@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import dynamic from 'next/dynamic'
 import { Clock, User, Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, ExternalLink } from 'lucide-react'
+import { Button, Field, Input, Textarea, Select, Stepper, useToast } from '@/components/ui'
+import { maskAddress } from '@/lib/format'
+import { normalizeTxError } from '@/lib/errors'
 
 // Dynamic import to prevent hydration errors
 const WalletMultiButton = dynamic(
@@ -50,12 +53,6 @@ type UiBeneficiary = Beneficiary & { id: string }
 // A fungible SPL token detected in the connected wallet (classic SPL or Token-2022), lockable as the
 // capsule asset. `mint`/`tokenProgram` are base58; `balanceUi` is the human-readable balance.
 type WalletToken = { mint: string; decimals: number; symbol: string; balanceUi: number; tokenProgram: string }
-
-// Best-effort display label for an arbitrary mint: a short truncation (devnet tokens rarely have a
-// resolvable symbol). The full mint is shown alongside so the user can verify the exact asset.
-function shortMint(mint: string): string {
-  return `${mint.slice(0, 4)}...${mint.slice(-4)}`
-}
 
 // Split 100% evenly across n recipients; the last absorbs the rounding remainder so the displayed
 // shares always total exactly 100 (and the derived share_bps total exactly 10000).
@@ -105,6 +102,7 @@ const CREATE_FAQS = [
 export default function CreatePage() {
   const wallet = useWallet()
   const { publicKey, connected } = wallet
+  const { toast } = useToast()
   const [intent, setIntent] = useState('')
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
   // Asset to lock: null = native SOL; otherwise the chosen SPL token's mint (auto-detected from the
@@ -284,7 +282,7 @@ export default function CreatePage() {
           .map((t) => ({
             mint: t.mint.toBase58(),
             decimals: t.decimals,
-            symbol: shortMint(t.mint.toBase58()),
+            symbol: maskAddress(t.mint.toBase58()),
             balanceUi: Number(t.amount) / Math.pow(10, t.decimals),
             tokenProgram: t.tokenProgram.toBase58(),
           }))
@@ -667,7 +665,7 @@ export default function CreatePage() {
 
       setCurrentStep(null)
 
-
+      toast({ message: 'Capsule created', variant: 'success' })
 
       // Redirect to capsules page after successful creation
       window.location.href = '/capsules'
@@ -686,6 +684,7 @@ export default function CreatePage() {
           if (publicKey) {
             const createdCapsule = await getCapsule(publicKey)
             if (createdCapsule && createdCapsule.isActive) {
+              toast({ message: 'Capsule created', variant: 'success' })
               window.location.href = '/capsules'
               setIsPending(false)
               return
@@ -717,6 +716,7 @@ export default function CreatePage() {
         }
       }
 
+      toast({ message: normalizeTxError(err), variant: 'error' })
       setError(errorMessage)
     } finally {
       setIsPending(false)
@@ -782,7 +782,7 @@ export default function CreatePage() {
         <header className="mb-6">
           <ServicePageHeader
             eyebrow={<SectionEyebrow>Capsule Builder</SectionEyebrow>}
-            title="Create Capsule"
+            title={<span className="font-serif"><em className="italic">Create</em> Capsule</span>}
             description="Build the asset payload, define beneficiaries, set trigger conditions, then encrypt the human instruction that accompanies the capsule."
             statusLine={currentStepMeta}
             badges={
@@ -826,65 +826,11 @@ export default function CreatePage() {
               </div>
             }
           />
-          <div className="mt-4 h-1 w-full overflow-hidden rounded-full bg-Heres-surface/80">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-Heres-cyan via-Heres-cyan to-emerald-400 transition-all duration-500"
-              style={{ width: `${(currentStepIndex / CREATE_STEPS.length) * 100}%` }}
-            />
-          </div>
-          <div className="mt-3.5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {CREATE_STEPS.map((step, index) => {
-              const isCompleted = (
-                (step.key === 'asset' && canCompleteAsset) ||
-                (step.key === 'beneficiary' && canCompleteBeneficiaries) ||
-                (step.key === 'intent' && canCompleteIntent) ||
-                (step.key === 'review' && isCreateReady)
-              )
-              const isCurrent = (
-                (step.key === 'asset' && !canCompleteAsset) ||
-                (step.key === 'beneficiary' && canCompleteAsset && !canCompleteBeneficiaries) ||
-                (step.key === 'intent' && canCompleteBeneficiaries && !canCompleteIntent) ||
-                (step.key === 'review' && canCompleteIntent)
-              )
-              return (
-                <button
-                  type="button"
-                  key={step.key}
-                  onClick={() => setOpenSection(
-                    step.key === 'asset'
-                      ? 'asset'
-                      : step.key === 'beneficiary'
-                        ? 'beneficiaries'
-                        : step.key === 'intent'
-                          ? 'intent'
-                          : 'review'
-                  )}
-                  className={`rounded-xl border px-3 py-2.5 transition-colors ${
-                    isCurrent
-                      ? 'border-Heres-accent/40 bg-Heres-accent/10'
-                      : isCompleted
-                        ? 'border-emerald-400/20 bg-emerald-400/5'
-                        : 'border-Heres-border bg-Heres-card/40'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className={`inline-flex h-5.5 w-5.5 items-center justify-center rounded-full text-[10px] font-semibold ${
-                      isCompleted
-                        ? 'bg-emerald-400 text-Heres-bg'
-                        : isCurrent
-                          ? 'bg-Heres-accent text-Heres-bg'
-                          : 'bg-Heres-surface text-Heres-muted'
-                    }`}>
-                      {index + 1}
-                    </span>
-                    <span className={`text-[12px] font-medium ${isCurrent ? 'text-Heres-white' : isCompleted ? 'text-emerald-300' : 'text-Heres-muted'}`}>
-                      {step.label}
-                    </span>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
+          <Stepper
+            steps={CREATE_STEPS.map((s) => s.label)}
+            current={currentStepIndex - 1}
+            className="mt-4"
+          />
         </header>
 
         <div className="space-y-5">
@@ -1001,21 +947,18 @@ export default function CreatePage() {
                         <p className="mt-2 text-xs text-Heres-muted">Connect your wallet to see the tokens you can lock.</p>
                       )}
                     </div>
-                    <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Total Amount ({assetUnit})</label>
-                      <input
+                    <Field
+                      label={`Total Amount (${assetUnit})`}
+                      hint={`How much ${assetUnit} to lock in the capsule. Each beneficiary receives their share of this.${selectedToken ? ` Available: ${selectedToken.balanceUi} ${assetUnit}.` : ''}`}
+                    >
+                      <Input
                         type="number"
                         inputMode="decimal"
                         value={totalAmount}
                         onChange={(e) => setTotalAmount(e.target.value)}
                         placeholder="0.0"
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-3.5 text-sm text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
                       />
-                      <p className="mt-3 text-sm text-Heres-muted">
-                        How much {assetUnit} to lock in the capsule. Each beneficiary receives their share of this.
-                        {selectedToken && <> Available: <span className="text-Heres-white">{selectedToken.balanceUi} {assetUnit}</span>.</>}
-                      </p>
-                    </div>
+                    </Field>
                   </div>
                 )}
 
@@ -1059,14 +1002,14 @@ export default function CreatePage() {
                   <p className="text-xs text-Heres-muted">
                     {canCompleteAsset ? 'Asset selection is ready. Continue to recipient setup.' : 'Choose the asset payload before continuing.'}
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => setOpenSection('beneficiaries')}
                     disabled={!canCompleteAsset}
-                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Continue
-                  </button>
+                  </Button>
                 </div>
               </div>
           </ServiceAccordionSection>
@@ -1100,16 +1043,19 @@ export default function CreatePage() {
                       const sharePct = parseFloat(beneficiary.amount) || 0
                       const total = parseFloat(totalAmount) || 0
                       const tokenAmount = total > 0 ? (total * sharePct) / 100 : 0
+                      const addrError = beneficiary.address && !isValidBeneficiaryAddress(beneficiary) ? 'Invalid Solana address' : undefined
                       return (
                         <div key={beneficiary.id} className="space-y-2">
                           <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-                            <input
-                              type="text"
-                              value={beneficiary.address}
-                              onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
-                              placeholder="Solana address..."
-                              className="w-full min-w-0 flex-1 rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
-                            />
+                            <Field label={`Beneficiary ${index + 1} address`} error={addrError} className="min-w-0 flex-1">
+                              <Input
+                                type="text"
+                                value={beneficiary.address}
+                                onChange={(e) => updateBeneficiary(index, 'address', e.target.value.trim())}
+                                placeholder="Solana address..."
+                                className="font-mono"
+                              />
+                            </Field>
                             <div className="flex flex-shrink-0 items-center gap-2">
                               <div className="flex items-center rounded-xl border border-Heres-border bg-Heres-surface/80 focus-within:border-Heres-accent/50">
                                 <input
@@ -1135,9 +1081,6 @@ export default function CreatePage() {
                               )}
                             </div>
                           </div>
-                          {beneficiary.address && !isValidBeneficiaryAddress(beneficiary) && (
-                            <p className="text-xs text-red-400">Invalid Solana address</p>
-                          )}
                           {beneficiary.address && sharePct > 0 && total > 0 && (
                             <p className="text-xs text-Heres-muted">
                               ~ <span className="font-semibold text-Heres-accent">{tokenAmount.toFixed(4)} {assetUnit}</span> ({sharePct}% of {total} {assetUnit})
@@ -1176,13 +1119,15 @@ export default function CreatePage() {
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">NFT Recipients</p>
                     {nftRecipients.map((r, i) => (
                       <div key={i} className="mb-2 flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={r.address}
-                          onChange={(e) => setNftRecipientAddress(i, e.target.value.trim())}
-                          placeholder="Solana address..."
-                          className="flex-1 rounded-xl border border-Heres-border bg-Heres-surface/80 p-3 font-mono text-sm text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
-                        />
+                        <Field label={`Recipient ${i + 1} address`} className="min-w-0 flex-1">
+                          <Input
+                            type="text"
+                            value={r.address}
+                            onChange={(e) => setNftRecipientAddress(i, e.target.value.trim())}
+                            placeholder="Solana address..."
+                            className="font-mono"
+                          />
+                        </Field>
                         {nftRecipients.length > 1 && (
                           <button type="button" onClick={() => removeNftRecipient(i)} className="rounded-lg border border-Heres-border p-2 text-red-400 hover:bg-red-500/10">
                             <X className="h-4 w-4" />
@@ -1205,10 +1150,10 @@ export default function CreatePage() {
                                 NFT: {mint.slice(0, 8)}...{mint.slice(-8)}
                               </span>
                               <span className="shrink-0 text-Heres-muted">send to</span>
-                              <select
+                              <Select
                                 value={nftAssignments[mint] ?? 0}
                                 onChange={(e) => setNftAssignment(mint, Number(e.target.value))}
-                                className="min-w-0 flex-1 rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-2.5 text-sm text-Heres-white focus:border-Heres-accent/50 focus:outline-none"
+                                className="min-w-0 flex-1"
                               >
                                 {nftRecipients.map((r, i) => (
                                   <option key={i} value={i} className="bg-Heres-card text-Heres-white">
@@ -1217,7 +1162,7 @@ export default function CreatePage() {
                                       : `Recipient ${i + 1} (enter address above)`}
                                   </option>
                                 ))}
-                              </select>
+                              </Select>
                             </div>
                           ))}
                         </div>
@@ -1340,14 +1285,14 @@ export default function CreatePage() {
                   <p className="text-xs text-Heres-muted">
                     {canCompleteBeneficiaries ? 'Recipients and trigger conditions are ready.' : 'Finish recipient and trigger setup before continuing.'}
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => setOpenSection('intent')}
                     disabled={!canCompleteBeneficiaries}
-                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Continue
-                  </button>
+                  </Button>
                 </div>
               </div>
           </ServiceAccordionSection>
@@ -1369,27 +1314,29 @@ export default function CreatePage() {
                   <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">Encrypted Delivery</p>
                   <p className="mb-4 text-sm text-Heres-white">Choose who receives the encrypted intent statement after execution is confirmed.</p>
                   <div className="space-y-4">
-                    <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Representative Email</label>
-                      <input
+                    <Field
+                      label="Representative Email"
+                      error={creEmail && !isValidEmail(creEmail) ? 'Enter a valid email address' : undefined}
+                    >
+                      <Input
                         type="email"
                         value={creEmail}
                         onChange={(e) => setCreEmail(e.target.value)}
                         placeholder="executor@example.com"
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                       />
-                    </div>
-                    <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Access Code</label>
-                      <input
+                    </Field>
+                    <Field
+                      label="Access Code"
+                      hint="This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload."
+                      error={creUnlockCode && creUnlockCode.trim().length < 6 ? 'At least 6 characters required' : undefined}
+                    >
+                      <Input
                         type="password"
                         value={creUnlockCode}
                         onChange={(e) => setCreUnlockCode(e.target.value)}
                         placeholder="At least 6 characters"
-                        className="w-full rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-Heres-white placeholder-Heres-muted focus:border-Heres-accent/50 focus:outline-none"
                       />
-                      <p className="mt-2 text-xs text-Heres-muted">This code should be shared offline with the representative. The intent statement is encrypted in-browser before upload.</p>
-                    </div>
+                    </Field>
                     <label className="flex items-start gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-4 py-3">
                       <input
                         type="checkbox"
@@ -1407,12 +1354,14 @@ export default function CreatePage() {
                   </div>
                 </div>
 
-                <textarea
-                  value={intent}
-                  onChange={(e) => setIntent(e.target.value)}
-                  placeholder="If I am inactive for one year, transfer my assets to my family, and delegate DAO permissions to my co-founder."
-                  className="h-32 w-full resize-none rounded-xl border border-Heres-border bg-Heres-surface/80 p-4 text-sm leading-6 text-Heres-white placeholder-Heres-muted transition-colors focus:border-Heres-accent/50 focus:outline-none"
-                />
+                <Field label="Intent Statement">
+                  <Textarea
+                    value={intent}
+                    onChange={(e) => setIntent(e.target.value)}
+                    placeholder="If I am inactive for one year, transfer my assets to my family, and delegate DAO permissions to my co-founder."
+                    rows={5}
+                  />
+                </Field>
                 <p className="text-xs text-amber-400">Do not put private keys, seed phrases, or master passwords in the intent statement.</p>
 
                 {error && (
@@ -1430,14 +1379,14 @@ export default function CreatePage() {
                   <p className="text-xs text-Heres-muted">
                     {canCompleteIntent ? 'Intent package is ready for final review.' : 'Add the intent statement, representative email, and access code before continuing.'}
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => setOpenSection('review')}
                     disabled={!canCompleteIntent}
-                    className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 px-4 py-2.5 text-sm font-medium text-Heres-accent transition hover:bg-Heres-accent/15 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Continue
-                  </button>
+                  </Button>
                 </div>
               </div>
           </ServiceAccordionSection>
@@ -1518,18 +1467,29 @@ export default function CreatePage() {
                             {error}
                           </div>
                         )}
-                        <button onClick={simulateExecution} className="btn-secondary mb-3 flex w-full items-center justify-center gap-2 py-3.5">
+                        <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-300 space-y-1">
+                          <p><span className="font-semibold">Irreversible action:</span> Once created, the capsule locks your funds on-chain. They cannot be recovered until the inactivity period or target date trigger fires.</p>
+                          <p><span className="font-semibold">Multiple approvals required:</span> Your wallet will prompt you to sign several times: (1) create and fund the capsule, (2) delegate it to the TEE, (3) sign the TEE authentication token, and (4) set your beneficiaries inside the TEE. Approve each prompt in sequence.</p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={simulateExecution}
+                          className="mb-3 w-full"
+                        >
                           <Eye className="h-5 w-5" />
                           Simulate Execution
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="md"
                           onClick={handleCreate}
                           disabled={!isCreateReady}
-                          className="btn-primary w-full py-3.5 disabled:cursor-not-allowed disabled:opacity-50"
+                          loading={isPending}
+                          className="w-full"
                         >
                           {isPending ? (currentStep || 'Creating capsule...') : 'Create Capsule'}
-                        </button>
+                        </Button>
                         <p className="mt-3 text-xs text-Heres-muted">
                           Final creation is enabled after all steps above are complete and your wallet can sign the encrypted payload.
                         </p>
@@ -1650,9 +1610,9 @@ export default function CreatePage() {
                     <p className="mt-1 text-sm text-Heres-muted">All conditions met. Capsule would execute automatically.</p>
                   </div>
                 </div>
-                <button onClick={() => setShowSimulation(false)} className="btn-primary mt-6 w-full py-3">
+                <Button variant="primary" size="md" onClick={() => setShowSimulation(false)} className="mt-6 w-full">
                   Close
-                </button>
+                </Button>
               </div>
             </div>
           )}
