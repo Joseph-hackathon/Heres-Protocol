@@ -9,7 +9,9 @@ export function middleware(request: NextRequest) {
 
   if (APP_HOSTS.has(host)) {
     if (url.pathname === '/' || url.pathname === '/home') {
-      url.pathname = '/dashboard'
+      // Land on the personal capsule entry, which routes a connected user to their
+      // own capsule or prompts a connect. The dashboard is now aggregate stats only.
+      url.pathname = '/capsules'
       return NextResponse.redirect(url)
     }
   }
