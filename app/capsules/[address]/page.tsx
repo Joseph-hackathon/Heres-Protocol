@@ -5,9 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Check, RefreshCw, Shield } from 'lucide-react'
+import { Check, RefreshCw } from 'lucide-react'
 import {
-  getCapsuleByAddress,
   executeIntent,
   distributeAssets,
   undelegateCapsule,
@@ -15,11 +14,9 @@ import {
   cancelCapsule,
   registerCapsuleOwnerForAutomation,
 } from '@/lib/solana'
-import { getOrMintTeeToken, getCachedTeeToken } from '@/lib/tee'
-import { getCapsuleVaultPDA } from '@/lib/program'
-import { getVaultTokenAccounts } from '@/lib/spl'
-import { getProgramId, getSolanaConnection } from '@/config/solana'
-import { SOLANA_CONFIG, MAGICBLOCK_ER, PER_TEE, getExplorerUrl, getNetworkDisplayLabel } from '@/constants'
+import { getOrMintTeeToken } from '@/lib/tee'
+import { getProgramId } from '@/config/solana'
+import { MAGICBLOCK_ER, PER_TEE, getNetworkDisplayLabel } from '@/constants'
 import { formatDuration } from '@/utils/intent'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
 import { bytesToBase64 } from '@/utils/intentClient'
@@ -44,6 +41,10 @@ import {
 } from '@/components/ui'
 import { maskAddress, timeAgo } from '@/lib/format'
 import { normalizeTxError } from '@/lib/errors'
+import { useCapsuleDetail } from '@/hooks/queries/useCapsuleDetail'
+import { useAssetPrice } from '@/hooks/queries/useAssetPrice'
+import { useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '@/lib/query/keys'
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -52,17 +53,6 @@ const CHART_RANGES = [
   { key: '1mo', label: '1M', days: 30, hoursFilter: null },
   { key: '1y', label: '1Y', days: 365, hoursFilter: null },
 ] as const
-
-function formatChartTime(ts: number, rangeKey: string): string {
-  const d = new Date(ts)
-  if (rangeKey === '1y') {
-    return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-  }
-  if (rangeKey === '1mo') {
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  }
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })
-}
 
 type IntentParsed =
   | {
@@ -125,37 +115,17 @@ export default function CapsuleDetailPage() {
   const router = useRouter()
   const wallet = useWallet()
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const address = typeof params?.address === 'string' ? params.address : null
-  const [capsule, setCapsule] = useState<Awaited<ReturnType<typeof getCapsuleByAddress>>>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [chartData, setChartData] = useState<{ time: string; value: number; usd: number }[]>([])
-  const [chartLoading, setChartLoading] = useState(true)
+
+  // UI-only state
   const [chartRange, setChartRange] = useState<(typeof CHART_RANGES)[number]['key']>('1d')
-  const [currentSolPrice, setCurrentSolPrice] = useState<number | null>(null)
   const [displayedSolPrice, setDisplayedSolPrice] = useState<number>(0)
   const displayedPriceRef = useRef(0)
-  const [intentDeliveryStatus, setIntentDeliveryStatus] = useState<{
-    status: string
-    updatedAt: number
-    idempotencyKey: string
-    lastError?: string
-  } | null>(null)
-  const [intentDeliveryLoading, setIntentDeliveryLoading] = useState(false)
-  const [intentDeliveryError, setIntentDeliveryError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [intentDispatchLoading, setIntentDispatchLoading] = useState(false)
   const [intentDispatchResult, setIntentDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-  const [distributionComplete, setDistributionComplete] = useState(false)
-  // Off-chain capsule metadata (intent statement + CRE config + asset hints). The lean on-chain
-  // capsule stores only beneficiaries; the human-facing payload lives off-chain (CRE), so we fetch it
-  // best-effort for display. Missing fields simply hide their UI.
-  const [meta, setMeta] = useState<IntentParsed | null>(null)
-  // The mint actually locked in the vault (source of truth for recover/cancel). Read from chain - the
-  // vault is never delegated - so it works for ANY token the capsule holds (classic SPL or Token-2022).
-  // null = SOL-only vault. The SDK resolves the token program from the mint.
-  const [vaultSplMint, setVaultSplMint] = useState<PublicKey | null>(null)
   const [revealing, setRevealing] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)
 
@@ -164,7 +134,71 @@ export default function CapsuleDetailPage() {
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmUndelegate, setConfirmUndelegate] = useState(false)
 
-  const isOwner = Boolean(wallet.connected && wallet.publicKey && capsule?.owner && capsule.owner.equals(wallet.publicKey))
+  const {
+    capsule,
+    capsuleLoading,
+    capsuleError,
+    meta,
+    isOwner,
+    isIntentEnabled,
+    vaultSplMint,
+    distributionComplete,
+    distributionLoading,
+    intentDeliveryStatus,
+    intentDeliveryLoading,
+    intentDeliveryError,
+    invalidateCapsule,
+    invalidateDistribution,
+  } = useCapsuleDetail({ address })
+
+  const intentParsed = meta as IntentParsed | null
+  const isNft = meta?.type === 'nft'
+  const isToken = !isNft
+  const assetConfig = inferAssetConfig(meta ?? undefined)
+  const intentConfig = intentParsed?.cre ?? intentParsed?.premium
+
+  const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
+
+  const { currentSolPrice, chartData, chartLoading } = useAssetPrice({
+    coingeckoId: assetConfig.coingeckoId,
+    rangeKey: rangeConfig.key,
+    days: rangeConfig.days,
+    hoursFilter: rangeConfig.hoursFilter,
+    isToken,
+    isNft,
+  })
+
+  // Keep ref in sync for animation start value
+  displayedPriceRef.current = displayedSolPrice
+
+  // Effect 8: price ticker animation (pure UI - kept in page as specified)
+  useEffect(() => {
+    if (currentSolPrice == null) return
+    const start = displayedPriceRef.current
+    const diff = currentSolPrice - start
+    if (Math.abs(diff) < 0.001) {
+      setDisplayedSolPrice(currentSolPrice)
+      return
+    }
+    const duration = 500
+    const startTime = performance.now()
+    let rafId: number
+    const tick = (now: number) => {
+      const elapsed = now - startTime
+      const t = Math.min(elapsed / duration, 1)
+      const ease = 1 - Math.pow(1 - t, 2)
+      const value = start + diff * ease
+      setDisplayedSolPrice(value)
+      displayedPriceRef.current = value
+      if (t < 1) rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [currentSolPrice])
+
+  // ---------------------------------------------------------------------------
+  // Mutation handlers (bodies unchanged; invalidate instead of setCapsule)
+  // ---------------------------------------------------------------------------
 
   const handleExecuteIntent = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
@@ -176,6 +210,7 @@ export default function CapsuleDetailPage() {
       const tx = await executeIntent(wallet as any, capsule.owner)
       setActionResult({ type: 'success', message: `Execute Intent TX: ${tx}` })
       toast({ message: 'Execute Intent submitted successfully.', variant: 'success' })
+      await invalidateCapsule()
     } catch (err: any) {
       console.error('[Execute Intent] Error:', err)
       const msg = normalizeTxError(err)
@@ -195,9 +230,10 @@ export default function CapsuleDetailPage() {
       // Beneficiaries + shares are read from the on-chain capsule; distribute splits every vault asset
       // by share_bps (SPL legs first, then the SOL leg).
       const tx = await distributeAssets(wallet as any, capsule.owner, capsule.beneficiaries)
-      setDistributionComplete(true)
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
       toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
+      await invalidateDistribution()
+      await invalidateCapsule()
     } catch (err: any) {
       console.error('[Distribute Assets] Error:', err)
       const msg = normalizeTxError(err)
@@ -217,8 +253,8 @@ export default function CapsuleDetailPage() {
       // owner's auth token; reuse the session token (minted once) so there's no extra signMessage.
       const token = await getOrMintTeeToken(wallet as any)
       const tx = await undelegateCapsule(wallet as any, capsule.owner, token)
-      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
-      setCapsule(refreshed)
+      // Token is now cached; invalidating the capsule query re-reads with the cached token.
+      await invalidateCapsule()
       setActionResult({ type: 'success', message: `Undelegate TX: ${tx}` })
       toast({ message: 'Capsule undelegated from Ephemeral Rollup.', variant: 'success' })
     } catch (err: any) {
@@ -241,8 +277,7 @@ export default function CapsuleDetailPage() {
       const mint = vaultSplMint ?? undefined
       const tx = await recoverVault(wallet as any, capsule.owner, mint)
       // Refresh with the cached token only (don't force a signMessage just to refresh the balance).
-      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), getCachedTeeToken(capsule.owner) ?? undefined)
-      if (refreshed) setCapsule(refreshed)
+      await invalidateCapsule()
       setActionResult({ type: 'success', message: `Funds withdrawn to your wallet. TX: ${tx}` })
       toast({ message: 'Funds withdrawn to your wallet.', variant: 'success' })
     } catch (err: any) {
@@ -335,313 +370,30 @@ export default function CapsuleDetailPage() {
     }
   }
 
-  const intentParsed = meta
-  const isNft = meta?.type === 'nft'
-  const isToken = !isNft
-  const assetConfig = inferAssetConfig(meta ?? undefined)
-  const priceChartBaseUrl = `https://api.coingecko.com/api/v3/coins/${assetConfig.coingeckoId}/market_chart?vs_currency=usd&days=`
-  const priceLookupUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${assetConfig.coingeckoId}&vs_currencies=usd`
-  const intentConfig = intentParsed?.cre ?? intentParsed?.premium
-  const isIntentEnabled = Boolean(
-    intentConfig?.enabled &&
-    intentConfig.secretRef &&
-    intentConfig.secretHash &&
-    (intentConfig.recipientEmailHash || intentConfig.recipientEmail)
-  )
-
-  useEffect(() => {
-    if (!address) {
-      setError('Invalid capsule address')
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    setError(null)
+  // Mint (or reuse) a TEE auth token and re-read the live private state from the TEE node.
+  const handleReveal = async () => {
+    if (!capsule || !wallet.publicKey) return
+    setRevealing(true)
+    setRevealError(null)
     try {
-      const pubkey = new PublicKey(address)
-      // Seed with a TEE token already cached for the connected wallet this session (e.g. minted during
-      // creation), so an owner sees live private state on first load without a fresh signMessage.
-      const cachedToken = wallet.publicKey ? getCachedTeeToken(wallet.publicKey) : undefined
-      getCapsuleByAddress(pubkey, cachedToken).then((data) => {
-        if (cancelled) return
-        setCapsule(data)
-        if (!data) setError('Capsule not found')
-        setLoading(false)
-      }).catch(() => {
-        if (!cancelled) {
-          setError('Failed to load capsule')
-          setLoading(false)
-        }
-      })
-    } catch {
-      setError('Invalid capsule address')
-      setLoading(false)
-    }
-    return () => { cancelled = true }
-  }, [address])
-
-  // Best-effort off-chain metadata (intent statement + CRE config). Decoupled from the on-chain
-  // capsule; failures are non-fatal and just leave the display fields empty.
-  useEffect(() => {
-    if (!address) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/capsules/${encodeURIComponent(address)}`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (cancelled) return
-        const m = (data?.meta ?? data) as Record<string, any>
-        setMeta({
-          type: m?.type === 'nft' ? 'nft' : 'token',
-          intent: m?.intent,
-          totalAmount: m?.totalAmount,
-          assetSymbol: m?.assetSymbol,
-          assetMint: m?.assetMint ?? null,
-          nftMints: m?.nftMints,
-          cre: m?.cre ?? m?.premium,
-        } as IntentParsed)
-      } catch {
-        // ignore - metadata is optional
+      // Mint the token (caches it in module-level map); then invalidate the capsule query
+      // so the queryFn re-runs and reads the now-cached token at call time.
+      await getOrMintTeeToken(wallet as any)
+      if (address) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.byAddress(address) })
       }
-    })()
-    return () => { cancelled = true }
-  }, [address])
-
-  // Discover the SPL asset locked in the vault (if any) straight from chain, so recover/cancel target
-  // the real mint regardless of off-chain metadata. Single-asset model: take the first non-zero token.
-  useEffect(() => {
-    const owner = capsule?.owner
-    if (!owner) {
-      setVaultSplMint(null)
-      return
+    } catch (e: any) {
+      setRevealError(e?.message || 'Failed to authorize the TEE read.')
+    } finally {
+      setRevealing(false)
     }
-    let cancelled = false
-    ;(async () => {
-      try {
-        const [vaultPDA] = getCapsuleVaultPDA(owner)
-        const tokens = await getVaultTokenAccounts(getSolanaConnection(), vaultPDA)
-        const held = tokens.find((t) => t.amount > 0n)
-        if (!cancelled) setVaultSplMint(held ? held.mint : null)
-      } catch {
-        if (!cancelled) setVaultSplMint(null)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [capsule?.owner?.toBase58()])
+  }
 
-  useEffect(() => {
-    if (!capsule?.owner || !capsule.executedAt) {
-      setDistributionComplete(false)
-      return
-    }
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
-    const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
-    if (isDelegated) {
-      setDistributionComplete(false)
-      return
-    }
-
-    let cancelled = false
-
-    ; (async () => {
-      try {
-        const connection = getSolanaConnection()
-        const [vaultPDA] = getCapsuleVaultPDA(capsule.owner)
-        // Lean vault holds SOL plus any number of SPL token accounts. "Distributed" = no spendable SOL
-        // above rent AND every token account drained.
-        const [vaultInfo, rentExemptLamports, tokenAccts] = await Promise.all([
-          connection.getAccountInfo(vaultPDA),
-          connection.getMinimumBalanceForRentExemption(9),
-          connection
-            .getParsedTokenAccountsByOwner(vaultPDA, {
-              programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-            })
-            .catch(() => null),
-        ])
-        const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
-        const tokensDrained =
-          !tokenAccts ||
-          tokenAccts.value.every(
-            (t: any) => Number(t.account.data?.parsed?.info?.tokenAmount?.amount || '0') === 0
-          )
-        if (!cancelled) setDistributionComplete(spendableLamports === 0 && tokensDrained)
-      } catch {
-        if (!cancelled) {
-          setDistributionComplete(false)
-        }
-      }
-    })()
-
-    return () => { cancelled = true }
-  }, [capsule?.owner, capsule?.executedAt, capsule?.accountOwner])
-
-  useEffect(() => {
-    if (
-      !capsule?.capsuleAddress ||
-      !isIntentEnabled ||
-      !wallet.connected ||
-      !wallet.publicKey ||
-      !wallet.signMessage ||
-      !isOwner
-    ) {
-      setIntentDeliveryStatus(null)
-      setIntentDeliveryError(null)
-      return
-    }
-
-    let cancelled = false
-    setIntentDeliveryLoading(true)
-    setIntentDeliveryError(null)
-    const walletPublicKey = wallet.publicKey
-    if (!walletPublicKey) {
-      setIntentDeliveryLoading(false)
-      setIntentDeliveryError('Wallet public key is unavailable.')
-      return
-    }
-    const signMessage = wallet.signMessage
-    if (!signMessage) {
-      setIntentDeliveryLoading(false)
-      setIntentDeliveryError('Wallet does not support message signing for Intent Statement delivery status lookup.')
-      return
-    }
-
-    ; (async () => {
-      try {
-        const owner = walletPublicKey.toBase58()
-        const cacheKey = `cre-status-auth:${capsule.capsuleAddress}:${owner}`
-        let timestamp = 0
-        let signature = ''
-
-        try {
-          const cachedRaw = sessionStorage.getItem(cacheKey)
-          if (cachedRaw) {
-            const cached = JSON.parse(cachedRaw) as { timestamp?: number; signature?: string }
-            if (typeof cached.timestamp === 'number' && typeof cached.signature === 'string') {
-              const ageMs = Date.now() - cached.timestamp
-              if (ageMs >= 0 && ageMs < 4 * 60 * 1000) {
-                timestamp = cached.timestamp
-                signature = cached.signature
-              }
-            }
-          }
-        } catch {
-          // Ignore cache parse failures and request a fresh signature.
-        }
-
-        if (!signature) {
-          timestamp = Date.now()
-          const message = buildIntentSignedMessage({
-            action: 'delivery-status',
-            owner,
-            capsuleAddress: capsule.capsuleAddress,
-            timestamp,
-          })
-          signature = bytesToBase64(await signMessage(new TextEncoder().encode(message)))
-          sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp, signature }))
-        }
-
-        const params = new URLSearchParams({
-          capsule: capsule.capsuleAddress,
-          owner,
-          timestamp: String(timestamp),
-        })
-        const res = await fetch(`/api/intent-delivery/status?${params.toString()}`, {
-          headers: { 'x-intent-signature': signature },
-        })
-        const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to fetch Intent Statement delivery status')
-        }
-        if (cancelled) return
-        const latest = Array.isArray(data.entries) ? data.entries[0] : null
-        setIntentDeliveryStatus(latest ?? null)
-      } catch (err) {
-        if (cancelled) return
-        setIntentDeliveryError(err instanceof Error ? err.message : String(err))
-      } finally {
-        if (!cancelled) setIntentDeliveryLoading(false)
-      }
-    })()
-
-    return () => { cancelled = true }
-  }, [capsule?.capsuleAddress, isIntentEnabled, wallet.connected, wallet.publicKey, wallet.signMessage, isOwner])
-
-  // Token price chart from CoinGecko (with range filter)
-  const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
-  useEffect(() => {
-    if (!isToken && !isNft) {
-      setChartLoading(false)
-      return
-    }
-    setChartLoading(true)
-    const url = `${priceChartBaseUrl}${rangeConfig.days}`
-    fetch(url)
-      .then((res) => res.json())
-      .then((data: { prices?: [number, number][] }) => {
-        let prices = data?.prices || []
-        if (rangeConfig.hoursFilter != null) {
-          const cutoff = Date.now() - rangeConfig.hoursFilter * 60 * 60 * 1000
-          prices = prices.filter(([ts]) => ts >= cutoff)
-        }
-        const mapped = prices.map(([ts, usd]) => ({
-          time: formatChartTime(ts, rangeConfig.key),
-          value: usd,
-          usd,
-        }))
-        setChartData(mapped)
-      })
-      .catch(() => setChartData([]))
-      .finally(() => setChartLoading(false))
-  }, [isToken, isNft, priceChartBaseUrl, chartRange, rangeConfig.days, rangeConfig.hoursFilter, rangeConfig.key])
-
-  // Current asset price (live) and polling
-  useEffect(() => {
-    if (!isToken && !isNft) return
-    const fetchPrice = () => {
-      fetch(priceLookupUrl)
-        .then((res) => res.json())
-        .then((data: Record<string, { usd?: number }>) => {
-          const usd = data?.[assetConfig.coingeckoId]?.usd
-          if (typeof usd === 'number' && usd > 0) setCurrentSolPrice(usd)
-        })
-        .catch(() => { })
-    }
-    fetchPrice()
-    const interval = setInterval(fetchPrice, 120_000)
-    return () => clearInterval(interval)
-  }, [assetConfig.coingeckoId, isToken, isNft, priceLookupUrl])
-
-  // Keep ref in sync for animation start value
-  displayedPriceRef.current = displayedSolPrice
-
-  // Animate displayed price towards current price (counting animation)
-  useEffect(() => {
-    if (currentSolPrice == null) return
-    const start = displayedPriceRef.current
-    const diff = currentSolPrice - start
-    if (Math.abs(diff) < 0.001) {
-      setDisplayedSolPrice(currentSolPrice)
-      return
-    }
-    const duration = 500
-    const startTime = performance.now()
-    let rafId: number
-    const tick = (now: number) => {
-      const elapsed = now - startTime
-      const t = Math.min(elapsed / duration, 1)
-      const ease = 1 - Math.pow(1 - t, 2)
-      const value = start + diff * ease
-      setDisplayedSolPrice(value)
-      displayedPriceRef.current = value
-      if (t < 1) rafId = requestAnimationFrame(tick)
-    }
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
-  }, [currentSolPrice])
-
-  if (loading) {
+  if (capsuleLoading) {
     return (
       <div className="min-h-screen bg-hero text-Heres-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -652,11 +404,11 @@ export default function CapsuleDetailPage() {
     )
   }
 
-  if (error || !capsule) {
+  if (capsuleError || !capsule) {
     return (
       <div className="min-h-screen bg-hero text-Heres-white pt-24 pb-16 px-4">
         <div className="max-w-2xl mx-auto text-center">
-          <p className="text-red-400 mb-6">{error || 'Capsule not found'}</p>
+          <p className="text-red-400 mb-6">{capsuleError || 'Capsule not found'}</p>
           <Link
             href="/capsules"
             className="inline-flex items-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-4 py-2 text-Heres-white hover:border-Heres-accent/40"
@@ -685,23 +437,6 @@ export default function CapsuleDetailPage() {
   const targetDateMs = capsule.targetDate != null ? capsule.targetDate * 1000 : null
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
   const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
-
-  // Mint (or reuse) a TEE auth token and re-read the live private state from the TEE node.
-  const handleReveal = async () => {
-    if (!capsule || !wallet.publicKey) return
-    setRevealing(true)
-    setRevealError(null)
-    try {
-      const token = await getOrMintTeeToken(wallet as any)
-      const refreshed = await getCapsuleByAddress(new PublicKey(capsule.capsuleAddress), token)
-      if (refreshed) setCapsule(refreshed)
-      else setRevealError('Could not read private state from the TEE.')
-    } catch (e: any) {
-      setRevealError(e?.message || 'Failed to authorize the TEE read.')
-    } finally {
-      setRevealing(false)
-    }
-  }
 
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
