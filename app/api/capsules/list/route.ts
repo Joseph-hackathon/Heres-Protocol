@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ensureDashboardPrewarmScheduler, getCapsulesListPage, type CapsuleListFilter, type CapsuleListSort } from '@/lib/dashboard'
+import { verifyAdminRequest } from '@/lib/admin-auth'
 
 const validFilters = new Set<CapsuleListFilter>(['all', 'live', 'created', 'executed', 'active', 'expired'])
 const validSorts = new Set<CapsuleListSort>(['newest', 'oldest'])
 
 export async function GET(request: NextRequest) {
   try {
+    // Admin-gated: paginated per-capsule feed of every owner's data.
+    const auth = verifyAdminRequest(request.headers)
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
+    }
     ensureDashboardPrewarmScheduler()
     const { searchParams } = request.nextUrl
     const page = Number(searchParams.get('page') || '1')
