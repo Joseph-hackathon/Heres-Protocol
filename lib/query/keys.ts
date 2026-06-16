@@ -11,6 +11,7 @@ export const queryKeys = {
   dashboard: {
     all: ['dashboard'] as const,
     data: () => [...queryKeys.dashboard.all, 'data'] as const,
+    summary: () => [...queryKeys.dashboard.all, 'summary'] as const,
     feeConfig: () => [...queryKeys.dashboard.all, 'feeConfig'] as const,
   },
   capsule: {
