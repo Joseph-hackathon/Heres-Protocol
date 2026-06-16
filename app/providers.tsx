@@ -4,9 +4,12 @@ import { WalletAdapterNetwork, WalletError } from '@solana/wallet-adapter-base'
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets'
-import { useCallback, useMemo, ReactNode } from 'react'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { useCallback, useMemo, useState, ReactNode } from 'react'
 import { HELIUS_CONFIG, SOLANA_CONFIG } from '@/constants'
 import { debugWarn } from '@/lib/log'
+import { makeQueryClient } from '@/lib/query/client'
 import { ToastProvider } from '@/components/ui'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
@@ -55,13 +58,19 @@ export function Providers({ children }: { children: ReactNode }) {
     [network]
   )
 
+  // One client per browser session; never shared across server requests.
+  const [queryClient] = useState(() => makeQueryClient())
+
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect onError={onError}>
-        <WalletModalProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <QueryClientProvider client={queryClient}>
+      <ConnectionProvider endpoint={endpoint}>
+        <WalletProvider wallets={wallets} autoConnect onError={onError}>
+          <WalletModalProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </WalletModalProvider>
+        </WalletProvider>
+      </ConnectionProvider>
+      <ReactQueryDevtools initialIsOpen={false} />
+    </QueryClientProvider>
   )
 }
