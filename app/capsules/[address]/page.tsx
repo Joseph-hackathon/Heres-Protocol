@@ -826,11 +826,10 @@ export default function CapsuleDetailPage() {
             const preFire = Boolean(capsule.isActive)
             const canRecover = preFire && vaultAssets.hasWithdrawable
             const canCancel = preFire && !isDelegated
-            // Deposit is base-only and the deployed program owner-checks the (delegated) capsule
-            // account, so it reverts 3007 while the Switch is delegated to the ER. Gate it until the
-            // capsule is settled on base. (Withdraw works while delegated; deposit does not - see
-            // deposit.rs vs recover_vault.rs.)
-            const canAddFunds = preFire && isToken && !isDelegated
+            // Deposit works regardless of delegation state: the program reads the capsule as a raw
+            // AccountInfo (like recover_vault), so it no longer reverts 3007 while the Switch is
+            // delegated to the ER. Both deposit and withdraw work while delegated.
+            const canAddFunds = preFire && isToken
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
@@ -848,7 +847,7 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
-                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} <strong>Check In</strong> any time to reset the inactivity timer. Execute and Distribute unlock once it expires; you can <strong>Add Funds</strong> or <strong>Withdraw Funds</strong>, or <strong>Cancel Capsule</strong> after undelegating from the ER.
+                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} <strong>Check In</strong> any time to reset the inactivity timer. Execute and Distribute unlock once it expires; you can <strong>Add Funds</strong> or <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
                     </p>
                   )}
                   {reviveEligible && (
@@ -1018,9 +1017,7 @@ export default function CapsuleDetailPage() {
                       size="sm"
                       onClick={() => setShowAddFunds(true)}
                       disabled={!canAddFunds || !!actionLoading}
-                      title={isDelegated
-                        ? 'Add Funds is unavailable while the capsule is delegated to the ER (deployed program limitation). Undelegate to base first; withdrawing still works while delegated.'
-                        : "Deposit more into this capsule's vault (deposits are repeatable)."}
+                      title="Deposit more into this capsule's vault (deposits are repeatable)."
                     >
                       <Plus className="h-4 w-4" aria-hidden />
                       Add Funds
