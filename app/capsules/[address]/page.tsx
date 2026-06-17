@@ -826,7 +826,11 @@ export default function CapsuleDetailPage() {
             const preFire = Boolean(capsule.isActive)
             const canRecover = preFire && vaultAssets.hasWithdrawable
             const canCancel = preFire && !isDelegated
-            const canAddFunds = preFire && isToken
+            // Deposit is base-only and the deployed program owner-checks the (delegated) capsule
+            // account, so it reverts 3007 while the Switch is delegated to the ER. Gate it until the
+            // capsule is settled on base. (Withdraw works while delegated; deposit does not - see
+            // deposit.rs vs recover_vault.rs.)
+            const canAddFunds = preFire && isToken && !isDelegated
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
@@ -1008,13 +1012,15 @@ export default function CapsuleDetailPage() {
                     </Button>
                   )}
                   {/* Owner early-exit (pre-fire): add funds, withdraw funds, or fully cancel + close. */}
-                  {canAddFunds && (
+                  {preFire && isToken && (
                     <Button
                       variant="secondary"
                       size="sm"
                       onClick={() => setShowAddFunds(true)}
-                      disabled={!!actionLoading}
-                      title="Deposit more into this capsule's vault (deposits are repeatable)."
+                      disabled={!canAddFunds || !!actionLoading}
+                      title={isDelegated
+                        ? 'Add Funds is unavailable while the capsule is delegated to the ER (deployed program limitation). Undelegate to base first; withdrawing still works while delegated.'
+                        : "Deposit more into this capsule's vault (deposits are repeatable)."}
                     >
                       <Plus className="h-4 w-4" aria-hidden />
                       Add Funds
