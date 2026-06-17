@@ -12,17 +12,19 @@ use crate::state::{CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct Deposit<'info> {
-    #[account(
-        seeds = [b"intent_capsule", owner.key().as_ref()],
-        bump = capsule.bump,
-        constraint = capsule.owner == owner.key() @ ErrorCode::Unauthorized,
-    )]
-    pub capsule: Box<Account<'info, IntentCapsule>>,
+    /// CHECK: the Switch PDA, validated by seeds. Read as a raw AccountInfo (NOT
+    /// Account<IntentCapsule>) on purpose: while the Switch is delegated its owner is the delegation
+    /// program, so an Account<IntentCapsule> would fail Anchor's owner check (error 3007) - yet the
+    /// Vault is always on the base layer, so deposits must keep working in that state (same pattern as
+    /// recover_vault). Authorization is the owner signer + the owner-seeded capsule/vault PDAs;
+    /// is_active is enforced in the handler only when the Switch is base-resident (program-owned).
+    #[account(seeds = [b"intent_capsule", owner.key().as_ref()], bump)]
+    pub capsule: AccountInfo<'info>,
 
     #[account(
         mut,
         seeds = [b"capsule_vault", owner.key().as_ref()],
-        bump = capsule.vault_bump
+        bump
     )]
     pub vault: Box<Account<'info, CapsuleVault>>,
 
@@ -51,7 +53,17 @@ pub struct Deposit<'info> {
 /// Lock `amount` of an asset into the Vault. Owner only; capsule must be active.
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
-    require!(ctx.accounts.capsule.is_active, ErrorCode::CapsuleInactive);
+
+    // The Vault is never delegated, so deposits run on base regardless of the Switch's delegation
+    // state. Only consult is_active when the Switch is base-resident (program-owned); when it is
+    // delegated we cannot deserialize the stub here, and the owner signer + owner-seeded PDAs already
+    // authorize the deposit. Mirrors recover_vault's escape-hatch handling.
+    let cap_ai = &ctx.accounts.capsule;
+    if cap_ai.owner == &crate::ID {
+        let data = cap_ai.try_borrow_data()?;
+        let cap = IntentCapsule::try_deserialize(&mut &data[..])?;
+        require!(cap.is_active, ErrorCode::CapsuleInactive);
+    }
 
     if let Some(mint) = &ctx.accounts.mint {
         let from_ata = ctx.accounts.source_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
