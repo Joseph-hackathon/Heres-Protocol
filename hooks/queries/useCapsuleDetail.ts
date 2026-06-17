@@ -7,7 +7,7 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { getCapsuleByAddress } from '@/lib/solana'
 import { getCachedTeeToken } from '@/lib/tee'
 import { getCapsuleVaultPDA } from '@/lib/program'
-import { getVaultTokenAccounts } from '@/lib/spl'
+import { getVaultTokenAccounts, type VaultTokenAccount } from '@/lib/spl'
 import { getSolanaConnection } from '@/config/solana'
 import { MAGICBLOCK_ER } from '@/constants'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
@@ -26,6 +26,25 @@ export type IntentDeliveryStatus = {
 } | null
 
 export type CapsuleDetailData = Awaited<ReturnType<typeof getCapsuleByAddress>>
+
+/** Live snapshot of everything held in the capsule vault (base layer; never delegated). */
+export interface VaultAssets {
+  /** Raw vault lamports (includes the rent-exempt floor). */
+  solLamports: number
+  /** Lamports the owner can actually pull out (balance above the rent floor). */
+  withdrawableSol: number
+  /** Held SPL/Token-2022 assets (amount > 0), across both token programs. */
+  tokens: VaultTokenAccount[]
+  /** True when there is any SOL above rent or any SPL token to withdraw. */
+  hasWithdrawable: boolean
+}
+
+const EMPTY_VAULT_ASSETS: VaultAssets = {
+  solLamports: 0,
+  withdrawableSol: 0,
+  tokens: [],
+  hasWithdrawable: false,
+}
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -75,6 +94,10 @@ export interface UseCapsuleDetail {
   vaultSplMint: PublicKey | null
   vaultMintLoading: boolean
 
+  /** Full multi-asset vault snapshot (SOL + every held SPL mint). */
+  vaultAssets: VaultAssets
+  vaultAssetsLoading: boolean
+
   distributionComplete: boolean
   distributionLoading: boolean
 
@@ -86,6 +109,8 @@ export interface UseCapsuleDetail {
   invalidateCapsule: () => Promise<void>
   /** Invalidate the distribution query only. */
   invalidateDistribution: () => Promise<void>
+  /** Invalidate the vault-assets query (call after deposit / withdraw). */
+  invalidateVaultAssets: () => Promise<void>
 }
 
 export function useCapsuleDetail({
@@ -171,22 +196,42 @@ export function useCapsuleDetail({
   )
 
   // -------------------------------------------------------------------------
-  // 3. Vault SPL mint (Effect 3 equivalent)
-  //    enabled only when capsule.owner is known
+  // 3. Vault assets (Effect 3 equivalent, extended to multi-asset)
+  //    Enumerates SOL (above the rent floor) plus every held SPL/Token-2022 mint.
+  //    Drives the balance-gated withdraw button, the per-asset withdraw list, and
+  //    the add-funds flow. Enabled only when capsule.owner is known.
   // -------------------------------------------------------------------------
-  const vaultMintQuery = useQuery({
-    queryKey: queryKeys.capsule.vaultMint(ownerPubkey?.toBase58() ?? ''),
+  const vaultAssetsQuery = useQuery<VaultAssets>({
+    queryKey: queryKeys.capsule.vaultAssets(ownerPubkey?.toBase58() ?? ''),
     enabled: Boolean(ownerPubkey),
-    staleTime: 60_000,
+    staleTime: 30_000,
     retry: 1,
     queryFn: async () => {
-      if (!ownerPubkey) return null
+      if (!ownerPubkey) return EMPTY_VAULT_ASSETS
+      const connection = getSolanaConnection()
       const [vaultPDA] = getCapsuleVaultPDA(ownerPubkey)
-      const tokens = await getVaultTokenAccounts(getSolanaConnection(), vaultPDA)
-      const held = tokens.find((t) => t.amount > 0n)
-      return held ? held.mint : null
+      // The vault is a 9-byte CapsuleVault account; recover_vault only releases lamports above its
+      // rent-exempt floor, so mirror that here to report what is actually withdrawable.
+      const [vaultInfo, rentFloor, tokens] = await Promise.all([
+        connection.getAccountInfo(vaultPDA),
+        connection.getMinimumBalanceForRentExemption(9),
+        getVaultTokenAccounts(connection, vaultPDA),
+      ])
+      const solLamports = vaultInfo?.lamports ?? 0
+      const withdrawableSol = Math.max(0, solLamports - rentFloor)
+      const heldTokens = tokens.filter((t) => t.amount > 0n)
+      return {
+        solLamports,
+        withdrawableSol,
+        tokens: heldTokens,
+        hasWithdrawable: withdrawableSol > 0 || heldTokens.length > 0,
+      }
     },
   })
+
+  const vaultAssets = vaultAssetsQuery.data ?? EMPTY_VAULT_ASSETS
+  // First held SPL mint - kept for the single-asset cancel path.
+  const vaultSplMint = vaultAssets.tokens[0]?.mint ?? null
 
   // -------------------------------------------------------------------------
   // 4. Distribution complete check (Effect 4 equivalent)
@@ -316,6 +361,13 @@ export function useCapsuleDetail({
     await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.distribution(address) })
   }, [queryClient, address])
 
+  const invalidateVaultAssets = useCallback(async () => {
+    if (!ownerPubkey) return
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.capsule.vaultAssets(ownerPubkey.toBase58()),
+    })
+  }, [queryClient, ownerPubkey])
+
   // -------------------------------------------------------------------------
   // Derived error strings (mirrors original Effect 1 / Effect 5 error state)
   // -------------------------------------------------------------------------
@@ -344,8 +396,11 @@ export function useCapsuleDetail({
     isOwner,
     isIntentEnabled,
 
-    vaultSplMint: vaultMintQuery.data ?? null,
-    vaultMintLoading: vaultMintQuery.isLoading,
+    vaultSplMint,
+    vaultMintLoading: vaultAssetsQuery.isLoading,
+
+    vaultAssets,
+    vaultAssetsLoading: vaultAssetsQuery.isLoading,
 
     distributionComplete: distributionQuery.data ?? false,
     distributionLoading: distributionQuery.isLoading,
@@ -356,5 +411,6 @@ export function useCapsuleDetail({
 
     invalidateCapsule,
     invalidateDistribution,
+    invalidateVaultAssets,
   }
 }
