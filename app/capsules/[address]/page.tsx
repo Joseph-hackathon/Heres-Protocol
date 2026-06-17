@@ -6,7 +6,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Check, RefreshCw } from 'lucide-react'
+import { Check, Eye, RefreshCw } from 'lucide-react'
 import {
   executeIntent,
   distributeAssets,
@@ -560,9 +560,24 @@ export default function CapsuleDetailPage() {
               <AddressPill address={getProgramId().toBase58()} explorer="address" />
             </ServiceMetaCard>
             <ServiceMetaCard label="Beneficiaries">
-              <p className="text-sm font-mono text-Heres-white">
-                {capsule.beneficiaries.length > 0 ? `${capsule.beneficiaries.length} on-chain` : 'Not set'}
-              </p>
+              {privateStateHidden ? (
+                <button
+                  type="button"
+                  onClick={handleReveal}
+                  disabled={revealing}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-Heres-accent transition-colors hover:text-Heres-white disabled:opacity-60"
+                  title="Beneficiaries are private inside the TEE. Sign to reveal them."
+                >
+                  <Eye className="h-4 w-4 shrink-0" />
+                  {revealing ? 'Revealing...' : 'Private - reveal'}
+                </button>
+              ) : (
+                <p className="text-sm font-medium text-Heres-white">
+                  {capsule.beneficiaries.length > 0
+                    ? `${capsule.beneficiaries.length} beneficiar${capsule.beneficiaries.length === 1 ? 'y' : 'ies'}`
+                    : 'Not set'}
+                </p>
+              )}
             </ServiceMetaCard>
             <ServiceMetaCard label="Trigger">
               <p className="text-sm font-medium text-Heres-white">
