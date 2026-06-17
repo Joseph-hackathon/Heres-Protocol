@@ -20,6 +20,7 @@ export const queryKeys = {
     byOwner: (owner: string) => [...queryKeys.capsule.all, 'byOwner', owner] as const,
     meta: (address: string) => [...queryKeys.capsule.all, 'meta', address] as const,
     vaultMint: (owner: string) => [...queryKeys.capsule.all, 'vaultMint', owner] as const,
+    vaultAssets: (owner: string) => [...queryKeys.capsule.all, 'vaultAssets', owner] as const,
     distribution: (address: string) => [...queryKeys.capsule.all, 'distribution', address] as const,
     intentDelivery: (address: string) => [...queryKeys.capsule.all, 'intentDelivery', address] as const,
   },
