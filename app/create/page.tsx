@@ -60,7 +60,9 @@ export default function CreatePage() {
     setIntentReminderEnabled,
     walletTokens,
     tokensLoading,
-    supportsMinuteMode,
+    inactivityUnitOptions,
+    inactivityPresets,
+    inactivityPlaceholder,
     selectedToken,
     assetUnit,
     approxFireDate,
@@ -493,24 +495,18 @@ export default function CreatePage() {
                       The capsule fires after this long with no activity, measured from your last on-chain transaction.
                     </p>
 
-                    {supportsMinuteMode && (
-                      <div className="mb-3 inline-flex rounded-xl border border-Heres-border bg-Heres-surface/70 p-1">
+                    <div className="mb-3 inline-flex rounded-xl border border-Heres-border bg-Heres-surface/70 p-1">
+                      {inactivityUnitOptions.map((unit) => (
                         <button
+                          key={unit}
                           type="button"
-                          onClick={() => setInactivityUnit('days')}
-                          className={`rounded-lg px-4 py-2 text-sm transition ${inactivityUnit === 'days' ? 'bg-Heres-accent/15 text-Heres-accent' : 'text-Heres-muted hover:text-Heres-white'}`}
+                          onClick={() => setInactivityUnit(unit)}
+                          className={`rounded-lg px-4 py-2 text-sm capitalize transition ${inactivityUnit === unit ? 'bg-Heres-accent/15 text-Heres-accent' : 'text-Heres-muted hover:text-Heres-white'}`}
                         >
-                          Days
+                          {unit}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setInactivityUnit('minutes')}
-                          className={`rounded-lg px-4 py-2 text-sm transition ${inactivityUnit === 'minutes' ? 'bg-Heres-accent/15 text-Heres-accent' : 'text-Heres-muted hover:text-Heres-white'}`}
-                        >
-                          Minutes
-                        </button>
-                      </div>
-                    )}
+                      ))}
+                    </div>
 
                     <div className="flex items-center rounded-xl border border-Heres-border bg-Heres-surface/80 focus-within:border-Heres-accent/50">
                       <input
@@ -518,28 +514,19 @@ export default function CreatePage() {
                         inputMode="numeric"
                         value={inactivityDays}
                         onChange={(e) => setInactivityDays(e.target.value)}
-                        placeholder={inactivityUnit === 'minutes' ? 'e.g. 5' : 'e.g. 365'}
+                        placeholder={inactivityPlaceholder}
                         aria-label="Inactivity period"
                         className="w-full bg-transparent p-4 text-Heres-white placeholder-Heres-muted focus:outline-none"
                       />
-                      <span className="pr-4 text-sm text-Heres-muted">{inactivityUnit === 'minutes' ? 'minutes' : 'days'}</span>
+                      <span className="pr-4 text-sm text-Heres-muted">{inactivityUnit}</span>
                     </div>
 
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        { label: '30d', unit: 'days' as const, value: 30 },
-                        { label: '90d', unit: 'days' as const, value: 90 },
-                        { label: '1y', unit: 'days' as const, value: 365 },
-                        ...(supportsMinuteMode ? [
-                          { label: '1min', unit: 'minutes' as const, value: 1 },
-                          { label: '5min', unit: 'minutes' as const, value: 5 },
-                          { label: '10min', unit: 'minutes' as const, value: 10 },
-                        ] : []),
-                      ].map((p) => (
+                      {inactivityPresets.map((p) => (
                         <button
                           key={p.label}
                           type="button"
-                          onClick={() => { setInactivityUnit(p.unit); setInactivityDays(String(p.value)) }}
+                          onClick={() => setInactivityDays(String(p.value))}
                           className="rounded-lg border border-Heres-accent/30 bg-Heres-accent/10 px-3 py-1 text-xs text-Heres-accent hover:bg-Heres-accent/20"
                         >
                           {p.label}
