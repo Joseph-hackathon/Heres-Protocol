@@ -765,7 +765,7 @@ export default function CreatePage() {
                           className="mb-3 w-full"
                         >
                           <Eye className="h-5 w-5" />
-                          Simulate Execution
+                          Preview Execution
                         </Button>
                         <Button
                           variant="primary"
@@ -818,7 +818,7 @@ export default function CreatePage() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
               <div className="card-Heres max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl p-8">
                 <div className="mb-6 flex items-center justify-between">
-                  <h3 className="text-xl font-bold text-Heres-white">Execution Simulation</h3>
+                  <h3 className="text-xl font-bold text-Heres-white">Execution Preview</h3>
                   <button onClick={() => setShowSimulation(false)} className="text-Heres-muted hover:text-Heres-white">
                     <X className="h-5 w-5" />
                   </button>
@@ -892,9 +892,9 @@ export default function CreatePage() {
                   <div className="rounded-xl border border-Heres-accent/30 bg-Heres-accent/10 p-4">
                     <p className="flex items-center gap-2 font-semibold text-Heres-accent">
                       <CheckCircle className="h-5 w-5" />
-                      Execution would succeed
+                      Ready to create
                     </p>
-                    <p className="mt-1 text-sm text-Heres-muted">All conditions met. Capsule would execute automatically.</p>
+                    <p className="mt-1 text-sm text-Heres-muted">All required details are set. Your capsule is ready to create.</p>
                   </div>
                 </div>
                 <Button variant="primary" size="md" onClick={() => setShowSimulation(false)} className="mt-6 w-full">
