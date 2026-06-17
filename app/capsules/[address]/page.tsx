@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { Check, RefreshCw } from 'lucide-react'
@@ -45,6 +46,12 @@ import { useCapsuleDetail } from '@/hooks/queries/useCapsuleDetail'
 import { useAssetPrice } from '@/hooks/queries/useAssetPrice'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
+import { isAdminWallet } from '@/lib/admin'
+
+const WalletMultiButton = dynamic(
+  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
+  { ssr: false }
+)
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -114,6 +121,10 @@ export default function CapsuleDetailPage() {
   const params = useParams()
   const router = useRouter()
   const wallet = useWallet()
+  // Detail pages are scoped to the capsule owner; admins may view any capsule.
+  // This is a UI scope only -- the underlying account is public on-chain, while
+  // the private beneficiary set stays TEE-gated to the owner regardless.
+  const isAdmin = isAdminWallet(wallet.publicKey ?? null)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const address = typeof params?.address === 'string' ? params.address : null
@@ -415,6 +426,38 @@ export default function CapsuleDetailPage() {
           >
             My Capsule
           </Link>
+        </div>
+      </div>
+    )
+  }
+
+  // Scope the detail view to the owner (or an admin). A non-owner sees a prompt to
+  // connect or to open their own capsule instead of another wallet's.
+  if (!isOwner && !isAdmin) {
+    return (
+      <div className="min-h-screen bg-hero text-Heres-white pt-24 pb-16 px-4">
+        <div className="max-w-md mx-auto text-center rounded-2xl border border-Heres-border bg-Heres-card/60 p-8 sm:p-12">
+          <h2 className="mb-3 font-serif text-2xl font-semibold text-vellum">
+            {wallet.connected ? 'Not your capsule' : 'Connect your wallet'}
+          </h2>
+          <p className="mb-6 text-Heres-muted">
+            {wallet.connected
+              ? 'This capsule belongs to another wallet. You can view and manage your own capsule instead.'
+              : 'Capsule details are private to their owner. Connect your wallet to view your own capsule.'}
+          </p>
+          <div className="flex flex-col items-center gap-3">
+            {!wallet.connected && (
+              <div className="wallet-menu-container flex justify-center">
+                <WalletMultiButton />
+              </div>
+            )}
+            <Link
+              href="/capsules"
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-Heres-border bg-Heres-card/80 px-4 py-2 text-sm font-medium text-Heres-white transition-colors hover:border-Heres-accent/40"
+            >
+              Go to My Capsule
+            </Link>
+          </div>
         </div>
       </div>
     )

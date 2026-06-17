@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
+import { useWallet } from '@solana/wallet-adapter-react'
 import { Menu, User, X } from 'lucide-react'
 import { NetworkBadge } from '@/components/layout/NetworkBadge'
+import { isAdminWallet } from '@/lib/admin'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
 const WalletMultiButton = dynamic(
@@ -24,7 +26,14 @@ const personalLink = { href: '/capsules', label: 'My Capsule' }
 
 export function Navbar() {
   const pathname = usePathname()
+  const { publicKey } = useWallet()
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Admin link is cosmetic visibility only; the explorer enforces access server-side.
+  const links = useMemo(
+    () => (isAdminWallet(publicKey ?? null) ? [...navLinks, { href: '/admin', label: 'Admin' }] : navLinks),
+    [publicKey]
+  )
 
   useEffect(() => {
     setMobileOpen(false)
@@ -47,7 +56,7 @@ export function Navbar() {
           </Link>
 
           <nav className="hidden items-center gap-5 lg:flex">
-            {navLinks.map((link) => (
+            {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
@@ -104,7 +113,7 @@ export function Navbar() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-Heres-muted/80">Menu</p>
             </div>
             <ul className="flex flex-col gap-1">
-              {navLinks.map((link) => (
+              {links.map((link) => (
                 <li key={link.href}>
                   <Link
                     href={link.href}

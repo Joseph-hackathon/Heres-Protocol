@@ -298,9 +298,13 @@ const getTokenDeltaFromMeta = (meta: any) => {
 
 type DashboardSnapshot = { capsules: CapsuleRow[]; summary: DashboardSummary; timestamp: number }
 
-const loadDashboard = async (forceRefresh: boolean): Promise<DashboardSnapshot> => {
+const loadDashboard = async (
+  forceRefresh: boolean,
+  authHeaders?: Record<string, string>
+): Promise<DashboardSnapshot> => {
   const snapshotResponse = await fetch(`/api/dashboard?history=1${forceRefresh ? '&refresh=1' : ''}`, {
     cache: 'no-store',
+    ...(authHeaders ? { headers: authHeaders } : {}),
   })
   if (!snapshotResponse.ok) {
     throw new Error(`Dashboard API failed with ${snapshotResponse.status}`)
@@ -659,7 +663,19 @@ export interface UseDashboardData {
   }
 }
 
-export function useDashboardData(): UseDashboardData {
+export interface UseDashboardDataOptions {
+  /**
+   * Supplies admin auth headers for the gated /api/dashboard feed. Called at fetch
+   * time so a fresh (or cached) signature is used on every refetch. Omit for the
+   * legacy unauthenticated path (no consumer ships that anymore).
+   */
+  adminAuthHeaders?: () => Promise<Record<string, string>>
+  /** When false, both queries are disabled (e.g. before an admin authenticates). */
+  enabled?: boolean
+}
+
+export function useDashboardData(options: UseDashboardDataOptions = {}): UseDashboardData {
+  const { adminAuthHeaders, enabled = true } = options
   const wallet = useWallet()
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -670,10 +686,14 @@ export function useDashboardData(): UseDashboardData {
 
   const dashboardQuery = useQuery({
     queryKey: queryKeys.dashboard.data(),
+    enabled,
+    // queryFn closes over the latest `adminAuthHeaders`: useQuery adopts the new
+    // function each render, so the next fetch always uses the current provider.
     queryFn: async () => {
       const force = forceRefreshRef.current
       forceRefreshRef.current = false
-      return loadDashboard(force)
+      const headers = adminAuthHeaders ? await adminAuthHeaders() : undefined
+      return loadDashboard(force, headers)
     },
     staleTime: 5 * 60 * 1000, // replaces the old 5-min sessionStorage cache
     retry: 0, // the load already has internal API->RPC->Helius fallbacks; one heavy attempt
@@ -681,6 +701,7 @@ export function useDashboardData(): UseDashboardData {
 
   const feeConfigQuery = useQuery({
     queryKey: queryKeys.dashboard.feeConfig(),
+    enabled,
     queryFn: checkFeeConfigExists,
   })
 
