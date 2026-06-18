@@ -33,5 +33,6 @@ export const queryKeys = {
     all: ['wallet'] as const,
     tokens: (owner: string) => [...queryKeys.wallet.all, 'tokens', owner] as const,
     nfts: (owner: string) => [...queryKeys.wallet.all, 'nfts', owner] as const,
+    balance: (owner: string) => [...queryKeys.wallet.all, 'balance', owner] as const,
   },
 } as const

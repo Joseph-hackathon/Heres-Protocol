@@ -3,7 +3,7 @@
 import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { PublicKey } from '@solana/web3.js'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { getCapsuleByAddress } from '@/lib/solana'
 import { getCachedTeeToken } from '@/lib/tee'
 import { getCapsuleVaultPDA } from '@/lib/program'
@@ -91,7 +91,7 @@ export interface UseCapsuleDetail {
 export function useCapsuleDetail({
   address,
 }: UseCapsuleDetailOptions): UseCapsuleDetail {
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   const queryClient = useQueryClient()
 
   // -------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo } from 'react'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { isAdminWallet } from '@/lib/admin'
 import { buildAdminSignedMessage } from '@/utils/adminAuth'
 import { bytesToBase64 } from '@/utils/intentClient'
@@ -23,7 +23,7 @@ export interface UseAdminAuth {
 }
 
 export function useAdminAuth(): UseAdminAuth {
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
 
   const isAdmin = useMemo(() => isAdminWallet(wallet.publicKey ?? null), [wallet.publicKey])
 

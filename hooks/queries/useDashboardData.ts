@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Connection, PublicKey } from '@solana/web3.js'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { SOLANA_CONFIG, PLATFORM_FEE, HELIUS_CONFIG } from '@/constants'
 import { inferAssetConfig, type SupportedAssetSymbol } from '@/lib/assets'
@@ -676,7 +676,7 @@ export interface UseDashboardDataOptions {
 
 export function useDashboardData(options: UseDashboardDataOptions = {}): UseDashboardData {
   const { adminAuthHeaders, enabled = true } = options
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   const { toast } = useToast()
   const queryClient = useQueryClient()
 

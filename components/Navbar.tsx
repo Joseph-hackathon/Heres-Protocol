@@ -4,18 +4,11 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import dynamic from 'next/dynamic'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { Menu, User, X } from 'lucide-react'
 import { NetworkBadge } from '@/components/layout/NetworkBadge'
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 import { isAdminWallet } from '@/lib/admin'
-import '@solana/wallet-adapter-react-ui/styles.css'
-
-const WalletMultiButton = dynamic(
-  () =>
-    import('@solana/wallet-adapter-react-ui').then((mod) => mod.WalletMultiButton),
-  { ssr: false }
-)
 
 const navLinks = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -26,7 +19,7 @@ const personalLink = { href: '/capsules', label: 'My Capsule' }
 
 export function Navbar() {
   const pathname = usePathname()
-  const { publicKey } = useWallet()
+  const { publicKey } = useHeresWallet()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Admin link is cosmetic visibility only; the explorer enforces access server-side.
@@ -94,7 +87,7 @@ export function Navbar() {
           </button>
           <NetworkBadge className="hidden sm:inline-flex" />
           <div className="relative z-50 hidden items-center wallet-nav-trigger sm:flex">
-            <WalletMultiButton className="!h-10 !rounded-2xl !border !border-Heres-accent/20 !bg-Heres-accent !px-4 !py-0 !text-sm !font-semibold !text-slate-950 transition-opacity hover:!border-Heres-accent/40 hover:!opacity-95 active:scale-95" />
+            <PrivyLoginButton className="!h-10 !rounded-2xl !border !border-Heres-accent/20 !bg-Heres-accent !px-4 !py-0 !text-sm !font-semibold !text-slate-950 transition-opacity hover:!border-Heres-accent/40 hover:!opacity-95 active:scale-95" />
           </div>
         </div>
       </div>
@@ -144,8 +137,8 @@ export function Navbar() {
                 <NetworkBadge />
               </div>
             </div>
-            <div className="mobile-menu-wallet-wrap mt-2 w-full min-w-0 overflow-hidden border-t border-Heres-border/70 px-6 pt-2 pb-3">
-              <WalletMultiButton className="!h-11 !min-h-[44px] !w-full !max-w-full !min-w-0 !rounded-xl !bg-Heres-surface !px-4 !py-0 !text-sm !font-medium !text-white transition-opacity hover:!bg-Heres-card active:scale-95" />
+            <div className="mobile-menu-wallet-wrap mt-2 w-full min-w-0 border-t border-Heres-border/70 px-6 pt-2 pb-3">
+              <PrivyLoginButton className="!h-11 !min-h-[44px] !w-full !max-w-full !min-w-0 !rounded-xl !bg-Heres-surface !px-4 !py-0 !text-sm !font-medium !text-white transition-opacity hover:!bg-Heres-card active:scale-95" />
             </div>
           </nav>
         </div>

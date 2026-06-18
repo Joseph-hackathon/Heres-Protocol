@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { useToast } from '@/components/ui'
 import { maskAddress } from '@/lib/format'
 import { normalizeTxError } from '@/lib/errors'
@@ -91,7 +91,7 @@ function evenShares(n: number): string[] {
 }
 
 export function useCreateCapsuleForm() {
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   const { publicKey, connected } = wallet
   const { toast } = useToast()
   const [intent, setIntent] = useState('')

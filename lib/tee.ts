@@ -1,12 +1,12 @@
 import { Connection, PublicKey } from '@solana/web3.js'
-import { WalletContextState } from '@solana/wallet-adapter-react'
+import type { HeresWallet } from '@/types/wallet'
 import { PER_TEE, MAGICBLOCK_ER } from '@/constants'
 import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk'
 
 /**
  * Get TEE authentication token for the current wallet
  */
-export async function getTeeAuthToken(wallet: WalletContextState): Promise<string> {
+export async function getTeeAuthToken(wallet: HeresWallet): Promise<string> {
     if (!wallet.publicKey || !wallet.signMessage) {
         throw new Error('Wallet not connected or does not support message signing')
     }
@@ -49,7 +49,7 @@ export function clearCachedTeeToken(pubkey: PublicKey | string): void {
 }
 
 /** Return the cached TEE token for the wallet, or mint one (signMessage) and cache it. */
-export async function getOrMintTeeToken(wallet: WalletContextState): Promise<string> {
+export async function getOrMintTeeToken(wallet: HeresWallet): Promise<string> {
     if (!wallet.publicKey) throw new Error('Wallet not connected')
     const cached = teeTokenCache.get(wallet.publicKey.toBase58())
     if (cached) return cached
