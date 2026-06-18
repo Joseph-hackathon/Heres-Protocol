@@ -2,6 +2,8 @@
  * Application constants
  */
 
+import idl from '@/idl/heres_program.json'
+
 export type SolanaNetwork = 'devnet' | 'testnet' | 'mainnet-beta'
 
 const KNOWN_DEVNET_ASSET_MINTS: Partial<Record<string, string>> = {
@@ -91,7 +93,11 @@ export function getNetworkDisplayLabel(network = SOLANA_CONFIG.NETWORK): string 
 // Solana Configuration
 export const SOLANA_CONFIG = {
   NETWORK: normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK),
-  PROGRAM_ID: process.env.NEXT_PUBLIC_PROGRAM_ID || 'sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz',
+  // Single source of truth: the program's declare_id!, surfaced via the IDL that anchor build
+  // regenerates. Do NOT read this from env - that lets a deployed env (Vercel) silently drift
+  // from the program the IDL was built against. On a new-keypair deploy, update declare_id! and
+  // rebuild; the new address flows here automatically.
+  PROGRAM_ID: idl.address,
   HELIUS_API_KEY: process.env.NEXT_PUBLIC_HELIUS_API_KEY || '',
     RPC_URL: process.env.SOLANA_RPC_URL || '',
     FALLBACK_RPC_URL:
@@ -140,10 +146,8 @@ export const PLATFORM_FEE = {
 export const MAGICBLOCK_ER = {
   DELEGATION_PROGRAM_ID: 'DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh',
   MAGIC_PROGRAM_ID: process.env.NEXT_PUBLIC_MAGIC_PROGRAM_ID || 'Magic11111111111111111111111111111111111111',
-  BUFFER_SEED_PROGRAM_ID:
-    process.env.NEXT_PUBLIC_BUFFER_SEED_PROGRAM_ID ||
-    process.env.NEXT_PUBLIC_PROGRAM_ID ||
-    'sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz',
+  // The buffer/delegation PDAs are owned by our program, so this is always the program ID.
+  BUFFER_SEED_PROGRAM_ID: idl.address,
   MAGIC_CONTEXT: process.env.NEXT_PUBLIC_MAGIC_CONTEXT || 'MagicContext1111111111111111111111111111111',
   ER_RPC_URL: process.env.NEXT_PUBLIC_ER_RPC_URL || 'https://devnet-as.magicblock.app',
   ER_WS_URL: process.env.NEXT_PUBLIC_ER_WS_URL || 'wss://devnet-as.magicblock.app',

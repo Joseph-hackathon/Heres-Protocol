@@ -8,7 +8,6 @@ declare namespace NodeJS {
     NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL?: string
     SOLANA_RPC_URL?: string
     SOLANA_FALLBACK_RPC_URL?: string
-    NEXT_PUBLIC_PROGRAM_ID?: string
     NEXT_PUBLIC_PLATFORM_FEE_RECIPIENT?: string
     APP_BASE_URL?: string
     INDEXER_BASE_URL?: string
