@@ -5,13 +5,13 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
-import { Check, RefreshCw } from 'lucide-react'
+import { Check, Eye, RefreshCw, HeartPulse, RotateCcw, Plus, Pencil } from 'lucide-react'
 import {
   executeIntent,
   distributeAssets,
   undelegateCapsule,
-  recoverVault,
   cancelCapsule,
+  updateActivity,
   registerCapsuleOwnerForAutomation,
 } from '@/lib/solana'
 import { getOrMintTeeToken } from '@/lib/tee'
@@ -43,6 +43,9 @@ import { maskAddress, timeAgo } from '@/lib/format'
 import { normalizeTxError } from '@/lib/errors'
 import { useCapsuleDetail } from '@/hooks/queries/useCapsuleDetail'
 import { useAssetPrice } from '@/hooks/queries/useAssetPrice'
+import { WithdrawFundsDialog } from '@/components/capsule/WithdrawFundsDialog'
+import { AddFundsDialog } from '@/components/capsule/AddFundsDialog'
+import { EditBeneficiariesDialog } from '@/components/capsule/EditBeneficiariesDialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
 import { isAdminWallet } from '@/lib/admin'
@@ -136,9 +139,12 @@ export default function CapsuleDetailPage() {
   const [revealError, setRevealError] = useState<string | null>(null)
 
   // ConfirmDialog open state for destructive actions
-  const [confirmRecover, setConfirmRecover] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmUndelegate, setConfirmUndelegate] = useState(false)
+  // Asset-management dialogs
+  const [showWithdraw, setShowWithdraw] = useState(false)
+  const [showAddFunds, setShowAddFunds] = useState(false)
+  const [showEditBeneficiaries, setShowEditBeneficiaries] = useState(false)
 
   const {
     capsule,
@@ -148,6 +154,7 @@ export default function CapsuleDetailPage() {
     isOwner,
     isIntentEnabled,
     vaultSplMint,
+    vaultAssets,
     distributionComplete,
     distributionLoading,
     intentDeliveryStatus,
@@ -155,6 +162,7 @@ export default function CapsuleDetailPage() {
     intentDeliveryError,
     invalidateCapsule,
     invalidateDistribution,
+    invalidateVaultAssets,
   } = useCapsuleDetail({ address })
 
   const intentParsed = meta as IntentParsed | null
@@ -162,6 +170,19 @@ export default function CapsuleDetailPage() {
   const isToken = !isNft
   const assetConfig = inferAssetConfig(meta ?? undefined)
   const intentConfig = intentParsed?.cre ?? intentParsed?.premium
+
+  // Asset descriptor for the Add Funds (deposit) flow. A null assetMint means a native-SOL capsule;
+  // otherwise it is an SPL token capsule keyed by that mint. Guard the PublicKey parse so a malformed
+  // metadata value can never crash the page render.
+  const addFundsAsset = useMemo(() => {
+    const mintStr = intentParsed?.assetMint ?? null
+    if (!mintStr) return { kind: 'sol' as const, mint: undefined, symbol: assetConfig.symbol || 'SOL' }
+    try {
+      return { kind: 'spl' as const, mint: new PublicKey(mintStr), symbol: assetConfig.symbol || 'tokens' }
+    } catch {
+      return { kind: 'sol' as const, mint: undefined, symbol: assetConfig.symbol || 'SOL' }
+    }
+  }, [intentParsed?.assetMint, assetConfig.symbol])
 
   const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
 
@@ -273,23 +294,34 @@ export default function CapsuleDetailPage() {
     }
   }
 
-  // Owner escape hatch: pull all funds out of the Vault back to the wallet. Works even while the
-  // Switch is delegated (the Vault is never delegated). The capsule stays active and armed.
-  const handleRecoverVault = async () => {
+  // Refresh on-chain state after a deposit/withdraw (vault balances + capsule). Used as the dialogs'
+  // onWithdrawn / onDeposited callback so the balance-gated buttons re-evaluate immediately.
+  const refreshVault = async () => {
+    await Promise.all([invalidateVaultAssets(), invalidateCapsule()])
+  }
+
+  // Proof-of-life: bump last_activity so the inactivity deadline slides forward. Owner-signed; works
+  // on an active capsule (and the on-chain handler also revives a just-fired one inside the grace
+  // window). actionKey lets the Check In and Revive buttons show their own spinner.
+  const handleUpdateActivity = async (actionKey: 'checkin' | 'revive') => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
-    setActionLoading('recover')
+    setActionLoading(actionKey)
     setActionResult(null)
     try {
-      const mint = vaultSplMint ?? undefined
-      const tx = await recoverVault(wallet as any, capsule.owner, mint)
-      // Refresh with the cached token only (don't force a signMessage just to refresh the balance).
+      const tx = await updateActivity(wallet as any, capsule.owner)
       await invalidateCapsule()
-      setActionResult({ type: 'success', message: `Funds withdrawn to your wallet. TX: ${tx}` })
-      toast({ message: 'Funds withdrawn to your wallet.', variant: 'success' })
+      setActionResult({
+        type: 'success',
+        message: actionKey === 'revive' ? `Capsule revived. TX: ${tx}` : `Liveness updated. TX: ${tx}`,
+      })
+      toast({
+        message: actionKey === 'revive' ? 'Capsule revived.' : 'Liveness updated - timer reset.',
+        variant: 'success',
+      })
     } catch (err: any) {
-      console.error('[Recover Vault] Error:', err)
+      console.error('[Update Activity] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Withdrawal failed' })
+      setActionResult({ type: 'error', message: err.message || 'Update failed' })
       toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
@@ -463,11 +495,12 @@ export default function CapsuleDetailPage() {
   // date becomes the binding trigger - mirrors the on-chain `inactivity_due || date_due` condition.
   const inactivityDueTs = capsule.lastActivity + capsule.inactivityPeriod
   const effectiveDueTs = capsule.targetDate != null ? Math.min(inactivityDueTs, capsule.targetDate) : inactivityDueTs
+  const nowSec = Math.floor(Date.now() / 1000)
   const status = capsule.executedAt
     ? 'Executed'
     : !capsule.isActive
       ? 'Waiting'
-      : effectiveDueTs < Math.floor(Date.now() / 1000)
+      : effectiveDueTs < nowSec
         ? 'Expired'
         : 'Active'
   const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
@@ -476,19 +509,50 @@ export default function CapsuleDetailPage() {
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
   const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
 
+  // Proof-of-life surfaces: an active capsule can be "checked in" (bump last_activity); a capsule that
+  // just fired can be revived by the owner within the on-chain 48h grace window (update_activity).
+  const GRACE_PERIOD_SECONDS = 48 * 60 * 60
+  const canCheckIn = Boolean(isOwner && capsule.isActive)
+  const reviveEligible = Boolean(
+    isOwner && !capsule.isActive && capsule.executedAt && nowSec < capsule.executedAt + GRACE_PERIOD_SECONDS
+  )
+  // Owner may edit the private beneficiary list pre-fire, but only once it is visible (revealed or on
+  // base). When still hidden behind the TEE, the Reveal action must run first.
+  const canEditBeneficiaries = Boolean(isOwner && capsule.isActive && capsule.beneficiaries.length > 0)
+
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
-      {/* Confirm dialogs for destructive actions */}
-      <ConfirmDialog
-        open={confirmRecover}
-        onClose={() => setConfirmRecover(false)}
-        onConfirm={() => { setConfirmRecover(false); handleRecoverVault() }}
-        title="Withdraw Funds"
-        description="Withdraw all funds from this capsule back to your wallet? The capsule stays active and armed - you can re-fund it with another deposit later."
-        confirmLabel="Withdraw"
-        variant="danger"
-        typedConfirm="withdraw"
-        loading={actionLoading === 'recover'}
+      {/* Asset-management dialogs. key remounts each on open so internal form state starts fresh. */}
+      <WithdrawFundsDialog
+        key={showWithdraw ? 'withdraw-open' : 'withdraw-closed'}
+        open={showWithdraw}
+        onClose={() => setShowWithdraw(false)}
+        owner={capsule.owner}
+        wallet={wallet}
+        assets={vaultAssets}
+        assetSymbol={assetConfig.symbol}
+        assetMint={intentParsed?.assetMint ?? null}
+        onWithdrawn={refreshVault}
+      />
+      <AddFundsDialog
+        key={showAddFunds ? 'addfunds-open' : 'addfunds-closed'}
+        open={showAddFunds}
+        onClose={() => setShowAddFunds(false)}
+        owner={capsule.owner}
+        wallet={wallet}
+        assetKind={addFundsAsset.kind}
+        mint={addFundsAsset.mint}
+        symbol={addFundsAsset.symbol}
+        onDeposited={refreshVault}
+      />
+      <EditBeneficiariesDialog
+        key={showEditBeneficiaries ? 'editben-open' : 'editben-closed'}
+        open={showEditBeneficiaries}
+        onClose={() => setShowEditBeneficiaries(false)}
+        owner={capsule.owner}
+        wallet={wallet}
+        current={capsule.beneficiaries}
+        onUpdated={invalidateCapsule}
       />
       <ConfirmDialog
         open={confirmCancel}
@@ -555,9 +619,24 @@ export default function CapsuleDetailPage() {
               <AddressPill address={getProgramId().toBase58()} explorer="address" />
             </ServiceMetaCard>
             <ServiceMetaCard label="Beneficiaries">
-              <p className="text-sm font-mono text-Heres-white">
-                {capsule.beneficiaries.length > 0 ? `${capsule.beneficiaries.length} on-chain` : 'Not set'}
-              </p>
+              {privateStateHidden ? (
+                <button
+                  type="button"
+                  onClick={handleReveal}
+                  disabled={revealing}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-Heres-accent transition-colors hover:text-Heres-white disabled:opacity-60"
+                  title="Beneficiaries are private inside the TEE. Sign to reveal them."
+                >
+                  <Eye className="h-4 w-4 shrink-0" />
+                  {revealing ? 'Revealing...' : 'Private - reveal'}
+                </button>
+              ) : (
+                <p className="text-sm font-medium text-Heres-white">
+                  {capsule.beneficiaries.length > 0
+                    ? `${capsule.beneficiaries.length} beneficiar${capsule.beneficiaries.length === 1 ? 'y' : 'ies'}`
+                    : 'Not set'}
+                </p>
+              )}
             </ServiceMetaCard>
             <ServiceMetaCard label="Trigger">
               <p className="text-sm font-medium text-Heres-white">
@@ -640,10 +719,24 @@ export default function CapsuleDetailPage() {
           </ServiceSection>
 
           <ServiceSection title="Beneficiaries & Intent" className="mb-6">
-            <p className="text-sm text-Heres-muted mb-4">
-              {intentParsed?.intent
-                || 'The human intent statement is encrypted off-chain and delivered to the beneficiary via CRE. Only the on-chain beneficiary split is shown here.'}
-            </p>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <p className="text-sm text-Heres-muted">
+                {intentParsed?.intent
+                  || 'The human intent statement is encrypted off-chain and delivered to the beneficiary via CRE. Only the on-chain beneficiary split is shown here.'}
+              </p>
+              {canEditBeneficiaries && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowEditBeneficiaries(true)}
+                  className="shrink-0"
+                  title="Edit the beneficiary list (routed privately through the TEE while delegated)."
+                >
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  Edit
+                </Button>
+              )}
+            </div>
             {capsule.beneficiaries.length > 0 ? (
               <div className="space-y-2">
                 {capsule.beneficiaries.map((b, i) => (
@@ -722,10 +815,16 @@ export default function CapsuleDetailPage() {
             const canDispatchCre = Boolean(isExecuted && isDistributed && isIntentEnabled && !isIntentDelivered)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
             // Owner early-exit (pre-fire only). Recover works even while delegated; full cancel needs
-            // the accounts undelegated to base first, so it is gated on !isDelegated.
+            // the accounts undelegated to base first, so it is gated on !isDelegated. Withdraw also
+            // requires the vault to actually hold something - the button no longer lingers on an
+            // emptied vault.
             const preFire = Boolean(capsule.isActive)
-            const canRecover = preFire
+            const canRecover = preFire && vaultAssets.hasWithdrawable
             const canCancel = preFire && !isDelegated
+            // Deposit works regardless of delegation state: the program reads the capsule as a raw
+            // AccountInfo (like recover_vault), so it no longer reverts 3007 while the Switch is
+            // delegated to the ER. Both deposit and withdraw work while delegated.
+            const canAddFunds = preFire && isToken
 
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
@@ -743,7 +842,12 @@ export default function CapsuleDetailPage() {
                 <div className="rounded-lg border border-Heres-border/50 bg-Heres-surface/30 p-3 mb-5">
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
-                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} Execute and Distribute unlock once it expires; you can <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
+                      Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} <strong>Check In</strong> any time to reset the inactivity timer. Execute and Distribute unlock once it expires; you can <strong>Add Funds</strong> or <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
+                    </p>
+                  )}
+                  {reviveEligible && (
+                    <p className="text-sm text-amber-400">
+                      This capsule fired but is still within the 48h grace window. You can <strong>Revive Capsule</strong> to reactivate it before assets are distributed.
                     </p>
                   )}
                   {canExecute && (
@@ -873,16 +977,55 @@ export default function CapsuleDetailPage() {
                       Deliver Intent Statement
                     </Button>
                   )}
-                  {/* Owner early-exit (pre-fire): withdraw funds, or fully cancel + close. */}
+                  {/* Owner liveness: prove you are alive to slide the inactivity deadline forward. */}
+                  {canCheckIn && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleUpdateActivity('checkin')}
+                      disabled={!!actionLoading}
+                      loading={actionLoading === 'checkin'}
+                      title="Prove liveness now - resets the inactivity timer so the capsule does not fire."
+                    >
+                      <HeartPulse className="h-4 w-4" aria-hidden />
+                      Check In
+                    </Button>
+                  )}
+                  {/* Owner post-fire safety net: revive within the 48h grace window before distribution. */}
+                  {reviveEligible && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleUpdateActivity('revive')}
+                      disabled={!!actionLoading}
+                      loading={actionLoading === 'revive'}
+                      title="Reactivate this just-fired capsule (owner only, within the 48h grace window)."
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden />
+                      Revive Capsule
+                    </Button>
+                  )}
+                  {/* Owner early-exit (pre-fire): add funds, withdraw funds, or fully cancel + close. */}
+                  {preFire && isToken && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setShowAddFunds(true)}
+                      disabled={!canAddFunds || !!actionLoading}
+                      title="Deposit more into this capsule's vault (deposits are repeatable)."
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      Add Funds
+                    </Button>
+                  )}
                   {preFire && (
                     <>
                       <Button
                         variant="danger"
                         size="sm"
-                        onClick={() => setConfirmRecover(true)}
+                        onClick={() => setShowWithdraw(true)}
                         disabled={!canRecover || !!actionLoading}
-                        loading={actionLoading === 'recover'}
-                        title="Withdraw all funds from the capsule back to your wallet. The capsule stays active and armed."
+                        title={canRecover ? 'Withdraw funds from the capsule back to your wallet. The capsule stays active and armed.' : 'No funds to withdraw'}
                       >
                         Withdraw Funds
                       </Button>

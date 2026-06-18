@@ -21,6 +21,13 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   const [mounted, setMounted] = useState(false)
   const dialogRef = useRef<HTMLDivElement>(null)
   const prevFocus = useRef<HTMLElement | null>(null)
+  // Hold the latest onClose in a ref so the open/focus effect below depends only on
+  // `open`. Callers (e.g. ConfirmDialog) pass a fresh onClose each render; without this
+  // the effect re-ran on every keystroke and stole focus back from inputs in the dialog.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   // SSR-safe portal guard: only render into document.body after client mount.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -35,7 +42,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (e.key === 'Tab' && dialog) {
@@ -67,7 +74,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       document.body.style.overflow = prevOverflow
       prevFocus.current?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!mounted || !open) return null
 

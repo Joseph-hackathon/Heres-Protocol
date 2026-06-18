@@ -33,7 +33,45 @@ import { queryKeys } from '@/lib/query/keys'
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
 export type CapsuleAssetType = 'token' | 'nft' | null
-type InactivityUnit = 'days' | 'minutes'
+export type InactivityUnit = 'minutes' | 'days' | 'months' | 'years'
+
+// Inactivity unit metadata. Months/years use fixed lengths (30d / 365d) - this is an
+// inactivity countdown, not a calendar reminder, so approximate spans are fine.
+const INACTIVITY_DAYS_PER_UNIT: Record<Exclude<InactivityUnit, 'minutes'>, number> = {
+  days: 1,
+  months: 30,
+  years: 365,
+}
+const INACTIVITY_PRESETS: Record<InactivityUnit, { label: string; value: number }[]> = {
+  minutes: [
+    { label: '1min', value: 1 },
+    { label: '5min', value: 5 },
+    { label: '10min', value: 10 },
+  ],
+  days: [
+    { label: '30d', value: 30 },
+    { label: '90d', value: 90 },
+    { label: '180d', value: 180 },
+  ],
+  months: [
+    { label: '3mo', value: 3 },
+    { label: '6mo', value: 6 },
+    { label: '12mo', value: 12 },
+  ],
+  years: [
+    { label: '1y', value: 1 },
+    { label: '2y', value: 2 },
+    { label: '5y', value: 5 },
+  ],
+}
+const INACTIVITY_PLACEHOLDER: Record<InactivityUnit, string> = {
+  minutes: 'e.g. 5',
+  days: 'e.g. 90',
+  months: 'e.g. 6',
+  years: 'e.g. 1',
+}
+const inactivityUnitToSeconds = (value: number, unit: InactivityUnit): number =>
+  unit === 'minutes' ? value * 60 : daysToSeconds(value * INACTIVITY_DAYS_PER_UNIT[unit])
 
 export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?: string }
 
@@ -226,6 +264,10 @@ export function useCreateCapsuleForm() {
   }
 
   const supportsMinuteMode = SOLANA_CONFIG.NETWORK === 'devnet'
+  // Minutes is a devnet-only testing affordance; real users pick days/months/years.
+  const inactivityUnitOptions: InactivityUnit[] = supportsMinuteMode
+    ? ['days', 'months', 'years', 'minutes']
+    : ['days', 'months', 'years']
 
   // Auto-detect the connected wallet's fungible tokens (both token programs) so the user can lock any
   // of them. NFTs (decimals 0, amount 1) and zero balances are filtered out. The fetch body is the
@@ -260,18 +302,18 @@ export function useCreateCapsuleForm() {
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
     if (!Number.isFinite(numeric) || numeric <= 0) return ''
-    const label = unit === 'minutes'
-      ? (numeric === 1 ? 'minute' : 'minutes')
-      : (numeric === 1 ? 'day' : 'days')
-    return `${numeric} ${label}`
+    const singular =
+      unit === 'minutes' ? 'minute' : unit === 'days' ? 'day' : unit === 'months' ? 'month' : 'year'
+    return `${numeric} ${singular}${numeric === 1 ? '' : 's'}`
   }
 
-  // Approximate calendar date the switch would fire if the owner goes silent from today (days mode).
+  // Approximate calendar date the switch would fire if the owner goes silent from today.
+  // Shown for day/month/year spans; minutes are too short to be a meaningful date.
   const approxFireDate = (() => {
-    const days = parseInt(inactivityDays, 10)
-    if (inactivityUnit !== 'days' || !Number.isFinite(days) || days <= 0) return ''
+    const numeric = parseInt(inactivityDays, 10)
+    if (inactivityUnit === 'minutes' || !Number.isFinite(numeric) || numeric <= 0) return ''
     const d = new Date()
-    d.setDate(d.getDate() + days)
+    d.setDate(d.getDate() + numeric * INACTIVITY_DAYS_PER_UNIT[inactivityUnit])
     return d.toLocaleDateString()
   })()
 
@@ -483,9 +525,7 @@ export function useCreateCapsuleForm() {
         ? Math.round(totalAmountNum * Math.pow(10, assetDecimals))
         : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
 
-      const inactivityPeriodSeconds = inactivityUnit === 'minutes'
-        ? inactivityValueNum * 60
-        : daysToSeconds(inactivityValueNum)
+      const inactivityPeriodSeconds = inactivityUnitToSeconds(inactivityValueNum, inactivityUnit)
 
       // ---- Optional absolute fire date: fires regardless of activity, whichever comes first ----
       let targetDateSeconds: number | null = null
@@ -748,6 +788,9 @@ export function useCreateCapsuleForm() {
     setInactivityDays,
     inactivityUnit,
     setInactivityUnit,
+    inactivityUnitOptions,
+    inactivityPresets: INACTIVITY_PRESETS[inactivityUnit],
+    inactivityPlaceholder: INACTIVITY_PLACEHOLDER[inactivityUnit],
     targetDate,
     setTargetDate,
     // wizard UI state
