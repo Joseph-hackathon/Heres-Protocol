@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { PublicKey } from '@solana/web3.js'
-import type { WalletContextState } from '@solana/wallet-adapter-react'
+import type { HeresWallet } from '@/types/wallet'
 import { recoverVault } from '@/lib/solana'
 import { normalizeTxError } from '@/lib/errors'
 import { maskAddress } from '@/lib/format'
@@ -13,7 +13,7 @@ export interface WithdrawFundsDialogProps {
   open: boolean
   onClose: () => void
   owner: PublicKey
-  wallet: WalletContextState
+  wallet: HeresWallet
   assets: VaultAssets
   /** Symbol + mint of the capsule's primary asset, used to label the SPL rows nicely. */
   assetSymbol?: string

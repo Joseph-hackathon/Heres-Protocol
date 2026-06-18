@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { PublicKey } from '@solana/web3.js'
-import type { WalletContextState } from '@solana/wallet-adapter-react'
+import type { HeresWallet } from '@/types/wallet'
 import { updateIntent } from '@/lib/solana'
 import { getOrMintTeeToken } from '@/lib/tee'
 import { normalizeTxError } from '@/lib/errors'
@@ -16,7 +16,7 @@ export interface EditBeneficiariesDialogProps {
   open: boolean
   onClose: () => void
   owner: PublicKey
-  wallet: WalletContextState
+  wallet: HeresWallet
   /** The current on-chain beneficiary list to prefill (must be revealed first). */
   current: OnChainBeneficiary[]
   onUpdated: () => Promise<void>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { BN } from '@coral-xyz/anchor'
 import { PublicKey } from '@solana/web3.js'
-import type { WalletContextState } from '@solana/wallet-adapter-react'
+import type { HeresWallet } from '@/types/wallet'
 import { deposit } from '@/lib/solana'
 import { normalizeTxError } from '@/lib/errors'
 import { maskAddress } from '@/lib/format'
@@ -14,7 +14,7 @@ export interface AddFundsDialogProps {
   open: boolean
   onClose: () => void
   owner: PublicKey
-  wallet: WalletContextState
+  wallet: HeresWallet
   /** 'sol' for a native-SOL capsule, 'spl' for a fungible token capsule. */
   assetKind: 'sol' | 'spl'
   /** Required for assetKind 'spl' - the token mint to deposit. */

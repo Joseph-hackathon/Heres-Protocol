@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
 import {
   ChevronDown,
   ChevronLeft,
@@ -15,7 +14,7 @@ import {
   User,
 } from 'lucide-react'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { SOLANA_CONFIG, getExplorerUrl } from '@/constants'
 import { type SupportedAssetSymbol } from '@/lib/assets'
 import { SectionEyebrow, ServicePageHeader } from '@/components/ui/service-page'
@@ -29,11 +28,7 @@ import {
 import { timeAgo, formatDateTime } from '@/lib/format'
 import { useDashboardData } from '@/hooks/queries/useDashboardData'
 import { useAdminAuth } from '@/hooks/useAdminAuth'
-
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 
 const formatNumber = (value: number) => value.toLocaleString('en-US')
 const formatSolAmount = (lamports: number, fractionDigits = 2) =>
@@ -68,7 +63,7 @@ function AdminGate({ title, message, children }: { title: string; message: strin
 }
 
 export default function AdminPage() {
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   const { isAdmin, ensureAuthHeaders } = useAdminAuth()
   const dataEnabled = wallet.connected && isAdmin
 
@@ -190,9 +185,9 @@ export default function AdminPage() {
   // Access gates: cosmetic here, enforced server-side on every data request.
   if (!wallet.connected) {
     return (
-      <AdminGate title="Admin Access" message="Connect an allowlisted admin wallet to open the protocol explorer.">
+      <AdminGate title="Admin Access" message="Sign in with an allowlisted admin wallet to open the protocol explorer.">
         <div className="wallet-menu-container flex justify-center">
-          <WalletMultiButton />
+          <PrivyLoginButton />
         </div>
       </AdminGate>
     )

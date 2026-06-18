@@ -3,9 +3,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
 import { PublicKey } from '@solana/web3.js'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { Check, Eye, RefreshCw, HeartPulse, RotateCcw, Plus, Pencil } from 'lucide-react'
 import {
   executeIntent,
@@ -50,11 +49,7 @@ import { EditBeneficiariesDialog } from '@/components/capsule/EditBeneficiariesD
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
 import { isAdminWallet } from '@/lib/admin'
-
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -123,7 +118,7 @@ type IntentParsed =
 export default function CapsuleDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   // Detail pages are scoped to the capsule owner; admins may view any capsule.
   // This is a UI scope only -- the underlying account is public on-chain, while
   // the private beneficiary set stays TEE-gated to the owner regardless.
@@ -470,17 +465,17 @@ export default function CapsuleDetailPage() {
       <div className="min-h-screen bg-hero text-Heres-white pt-24 pb-16 px-4">
         <div className="max-w-md mx-auto text-center rounded-2xl border border-Heres-border bg-Heres-card/60 p-8 sm:p-12">
           <h2 className="mb-3 font-serif text-2xl font-semibold text-vellum">
-            {wallet.connected ? 'Not your capsule' : 'Connect your wallet'}
+            {wallet.connected ? 'Not your capsule' : 'Sign in to continue'}
           </h2>
           <p className="mb-6 text-Heres-muted">
             {wallet.connected
               ? 'This capsule belongs to another wallet. You can view and manage your own capsule instead.'
-              : 'Capsule details are private to their owner. Connect your wallet to view your own capsule.'}
+              : 'Capsule details are private to their owner. Sign in to view your own capsule.'}
           </p>
           <div className="flex flex-col items-center gap-3">
             {!wallet.connected && (
               <div className="wallet-menu-container flex justify-center">
-                <WalletMultiButton />
+                <PrivyLoginButton />
               </div>
             )}
             <Link

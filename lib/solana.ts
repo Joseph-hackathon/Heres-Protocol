@@ -12,7 +12,7 @@
 import { SystemProgram, PublicKey, Connection, SendTransactionError, Transaction, TransactionInstruction, ComputeBudgetProgram } from '@solana/web3.js'
 import { Program, AnchorProvider, BN } from '@coral-xyz/anchor'
 import type { Wallet } from '@coral-xyz/anchor'
-import { WalletContextState } from '@solana/wallet-adapter-react'
+import type { HeresWallet } from '@/types/wallet'
 import idl from '../idl/heres_program.json'
 import { getSolanaConnection, getSolanaFallbackConnection, getTeeConnection, getProgramId } from '@/config/solana'
 import {
@@ -58,7 +58,7 @@ export { getSolanaConnection as getConnection }
 /**
  * Get Anchor provider (base-layer connection).
  */
-export function getProvider(wallet: WalletContextState): AnchorProvider | null {
+export function getProvider(wallet: HeresWallet): AnchorProvider | null {
   if (!wallet.publicKey || !wallet.signTransaction) {
     return null
   }
@@ -79,7 +79,7 @@ export function getProvider(wallet: WalletContextState): AnchorProvider | null {
 /**
  * Get Anchor program instance (base-layer connection).
  */
-export function getProgram(wallet: WalletContextState): Program | null {
+export function getProgram(wallet: HeresWallet): Program | null {
   const provider = getProvider(wallet)
   if (!provider) return null
 
@@ -94,7 +94,7 @@ export function getProgram(wallet: WalletContextState): Program | null {
 /**
  * Get Program instance connected to ER RPC (Asia devnet) for delegation & scheduling.
  */
-export function getErProgram(wallet: WalletContextState): Program | null {
+export function getErProgram(wallet: HeresWallet): Program | null {
   if (!wallet.publicKey || !wallet.signTransaction) {
     return null
   }
@@ -124,7 +124,7 @@ export function getErProgram(wallet: WalletContextState): Program | null {
 /**
  * Get Anchor program instance for the TEE / Private ER (authenticated if a token is provided).
  */
-export function getTeeProgram(wallet: WalletContextState, token?: string): Program | null {
+export function getTeeProgram(wallet: HeresWallet, token?: string): Program | null {
   if (!wallet.publicKey || !wallet.signTransaction) {
     return null
   }
@@ -155,7 +155,7 @@ export function getTeeProgram(wallet: WalletContextState, token?: string): Progr
 /** Sign with the wallet, submit, and confirm on a base-layer connection. */
 async function sendBase(
   connection: Connection,
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   instructions: TransactionInstruction[]
 ): Promise<string> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
@@ -174,7 +174,7 @@ async function sendBase(
  */
 async function sendEr(
   connection: Connection,
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   instructions: TransactionInstruction[]
 ): Promise<string> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
@@ -226,7 +226,7 @@ const toBenArg = (b: OnChainBeneficiary) => ({
  */
 async function sendBaseBatch(
   connection: Connection,
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   txGroups: TransactionInstruction[][]
 ): Promise<string[]> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')
@@ -265,7 +265,7 @@ async function sendBaseBatch(
  * service can bump last_activity (the owner can always bump too via the on-chain is_owner branch).
  */
 export async function createCapsule(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   inactivityPeriodSeconds: number,
   heartbeatAuthority?: PublicKey,
   targetDateSeconds?: number | null
@@ -357,7 +357,7 @@ export async function registerCapsuleOwnerForAutomation(ownerPubkey: string): Pr
  * the base layer); pre-delegation it writes to base. Pass a token, or have one cached for this owner.
  */
 export async function updateIntent(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   beneficiaries: OnChainBeneficiary[],
   token?: string
 ): Promise<string> {
@@ -386,7 +386,7 @@ export async function updateIntent(
  * mint's base units (SPL).
  */
 export async function deposit(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   amount: number | BN,
   mint?: PublicKey
 ): Promise<string> {
@@ -432,7 +432,7 @@ export async function deposit(
  * when the Switch is delegated, otherwise to the base layer.
  */
 export async function executeIntent(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   ownerPublicKey: PublicKey
 ): Promise<string> {
   const program = getProgram(wallet)
@@ -460,7 +460,7 @@ export async function executeIntent(
  * Runs on the base layer.
  */
 export async function delegateCapsule(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   validatorPubkey?: PublicKey
 ): Promise<string> {
   const program = getProgram(wallet)
@@ -512,7 +512,7 @@ export async function delegateCapsule(
  * base layer. Defaults to the TEE validator. Idempotent: a no-op if already delegated.
  */
 export async function delegateBeneficiaries(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   validatorPubkey?: PublicKey
 ): Promise<string> {
   const program = getProgram(wallet)
@@ -570,7 +570,7 @@ export async function delegateBeneficiaries(
  * this runs there, token-free.
  */
 export async function scheduleExecuteIntent(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   ownerPublicKey: PublicKey,
   args?: { taskId?: BN; executionIntervalMillis?: BN; iterations?: BN }
 ): Promise<string> {
@@ -660,7 +660,7 @@ export type CreateDelegatedCapsuleParams = {
  * beneficiaries). Delegations must run as distinct txs (each reads state a prior tx wrote).
  */
 export async function createDelegatedCapsule(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   params: CreateDelegatedCapsuleParams
 ): Promise<{ baseSigs: string[]; teeSig: string; scheduleSig: string; capsule: PublicKey; token: string }> {
   const program = getProgram(wallet)
@@ -848,7 +848,7 @@ export async function createDelegatedCapsule(
  * the reclaimed rent too. Must run on the base layer (the Switch undelegated). Returns the last tx sig.
  */
 export async function distributeAssets(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   ownerPublicKey: PublicKey,
   beneficiaries: OnChainBeneficiary[]
 ): Promise<string> {
@@ -934,7 +934,7 @@ export async function distributeAssets(
  * Initialize platform fee config (call once after program deploy; authority can update via updateFeeConfig).
  */
 export async function initFeeConfig(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   feeRecipient: PublicKey,
   creationFeeLamports: number = PLATFORM_FEE.CREATION_FEE_LAMPORTS
 ): Promise<string> {
@@ -956,7 +956,7 @@ export async function initFeeConfig(
  * Update platform fee config (authority only).
  */
 export async function updateFeeConfig(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   creationFeeLamports: number
 ): Promise<string> {
   if (creationFeeLamports > 1_000_000_000) throw new Error('creationFeeLamports must be <= 1 SOL')
@@ -975,7 +975,7 @@ export async function updateFeeConfig(
 /**
  * Send the liveness heartbeat (update_activity) as the capsule's heartbeat_authority.
  */
-export async function updateActivity(wallet: WalletContextState, ownerPublicKey?: PublicKey): Promise<string> {
+export async function updateActivity(wallet: HeresWallet, ownerPublicKey?: PublicKey): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
 
@@ -997,7 +997,7 @@ export async function updateActivity(wallet: WalletContextState, ownerPublicKey?
  * Recreate a capsule from an executed (terminal) state, resetting the inactivity timer.
  */
 export async function recreateCapsule(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   inactivityPeriodSeconds: number,
   targetDateSeconds?: number | null
 ): Promise<string> {
@@ -1192,7 +1192,7 @@ export async function getCapsuleByAddress(
  * program-owned again after each step.
  */
 export async function undelegateCapsule(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   ownerPublicKey?: PublicKey,
   token?: string
 ): Promise<string> {
@@ -1269,7 +1269,7 @@ export async function undelegateCapsule(
  * Finalize an undelegation on the base layer after the ER committed the account.
  */
 export async function processUndelegation(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   baseAccount: PublicKey,
   accountSeeds: Uint8Array[]
 ): Promise<string> {
@@ -1296,7 +1296,7 @@ export async function processUndelegation(
  * the vault is never delegated). SOL when no mint; SPL otherwise.
  */
 export async function recoverVault(
-  wallet: WalletContextState,
+  wallet: HeresWallet,
   ownerPublicKey?: PublicKey,
   mint?: PublicKey
 ): Promise<string> {
@@ -1338,7 +1338,7 @@ export async function recoverVault(
  * Cancel (close) a capsule, reclaiming SOL from the vault and account rent. Owner-only. SPL capsules
  * need the token-refund accounts; SOL capsules leave them null.
  */
-export async function cancelCapsule(wallet: WalletContextState, mint?: PublicKey): Promise<string> {
+export async function cancelCapsule(wallet: HeresWallet, mint?: PublicKey): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
   if (!wallet.publicKey) throw new Error('Wallet not connected')

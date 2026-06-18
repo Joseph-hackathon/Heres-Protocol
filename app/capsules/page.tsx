@@ -2,18 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useHeresWallet } from '@/hooks/useHeresWallet'
 import Link from 'next/link'
 import { Shield, User, Loader2 } from 'lucide-react'
-import dynamic from 'next/dynamic'
 import { getCapsule } from '@/lib/solana'
 import { getCapsulePDA } from '@/lib/program'
 import { Card } from '@/components/ui'
-
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 
 function CenteredStatus({ label }: { label: string }) {
   return (
@@ -28,7 +23,7 @@ function CenteredStatus({ label }: { label: string }) {
 
 export default function CapsulesEntryPage() {
   const router = useRouter()
-  const wallet = useWallet()
+  const wallet = useHeresWallet()
   const { publicKey, connected } = wallet
   const [loading, setLoading] = useState(true)
   const [hasCapsule, setHasCapsule] = useState(false)
@@ -78,10 +73,10 @@ export default function CapsulesEntryPage() {
           <Card className="w-full p-8 text-center sm:p-12">
             <User className="mx-auto mb-6 h-14 w-14 text-brand" aria-hidden />
             <h2 className="mb-3 font-serif text-2xl font-semibold text-vellum">My Capsule</h2>
-            <p className="mb-6 text-ash">Connect your wallet to view your capsule or create a new one.</p>
+            <p className="mb-6 text-ash">Sign in to view your capsule or create a new one.</p>
             <div className="flex flex-col gap-3">
               <div className="wallet-menu-container flex justify-center">
-                <WalletMultiButton />
+                <PrivyLoginButton />
               </div>
               <Link
                 href="/create"

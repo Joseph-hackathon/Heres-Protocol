@@ -1,76 +1,39 @@
 'use client'
 
-import { WalletAdapterNetwork, WalletError } from '@solana/wallet-adapter-base'
-import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react'
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
-import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets'
+import { PrivyProvider } from '@privy-io/react-auth'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import { useCallback, useMemo, useState, ReactNode } from 'react'
-import { HELIUS_CONFIG, SOLANA_CONFIG } from '@/constants'
-import { debugWarn } from '@/lib/log'
+import { useState, ReactNode } from 'react'
 import { makeQueryClient } from '@/lib/query/client'
 import { ToastProvider } from '@/components/ui'
-import '@solana/wallet-adapter-react-ui/styles.css'
 
-// Benign wallet lifecycle events: the user disconnected/switched accounts from the
-// wallet UI, closed the connect modal, or no wallet is selected yet. The adapter
-// already reconciles its own state for these; without a custom onError, wallet-adapter
-// logs them via console.error, which the Next.js dev overlay promotes to a blocking
-// error. Matched by name to stay robust across duplicate base-package copies.
-const BENIGN_WALLET_ERRORS = new Set([
-  'WalletDisconnectedError',
-  'WalletNotSelectedError',
-  'WalletNotConnectedError',
-  'WalletWindowClosedError',
-  'WalletWindowBlockedError',
-  'WalletConnectionError',
-])
+// Set in the Privy dashboard (dashboard.privy.io). REQUIRED: Privy rejects anything
+// that isn't a 25-char app id at construction, so the build/app fails fast without it.
+const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? ''
 
 export function Providers({ children }: { children: ReactNode }) {
-  const network = useMemo(() => {
-    switch (SOLANA_CONFIG.NETWORK) {
-      case 'mainnet-beta':
-        return WalletAdapterNetwork.Mainnet
-      case 'testnet':
-        return WalletAdapterNetwork.Testnet
-      case 'devnet':
-      default:
-        return WalletAdapterNetwork.Devnet
-    }
-  }, [])
-
-  const endpoint = useMemo(() => HELIUS_CONFIG.RPC_URL, [])
-
-  const onError = useCallback((error: WalletError) => {
-    if (BENIGN_WALLET_ERRORS.has(error?.name)) {
-      debugWarn('[wallet] benign event:', error.name, error.message)
-      return
-    }
-    console.error('[wallet] error:', error)
-  }, [])
-
-  const wallets = useMemo(
-    () => [
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter({ network }),
-    ],
-    [network]
-  )
-
-  // One client per browser session; never shared across server requests.
+  // One query client per browser session; never shared across server requests.
   const [queryClient] = useState(() => makeQueryClient())
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <ConnectionProvider endpoint={endpoint}>
-        <WalletProvider wallets={wallets} autoConnect onError={onError}>
-          <WalletModalProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </WalletModalProvider>
-        </WalletProvider>
-      </ConnectionProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
-    </QueryClientProvider>
+    <PrivyProvider
+      appId={PRIVY_APP_ID}
+      config={{
+        loginMethods: ['email'],
+        appearance: { walletChainType: 'solana-only' },
+        embeddedWallets: {
+          // Auto-create a Solana embedded wallet for every user on login.
+          solana: { createOnLogin: 'all-users' },
+          // Demo: sign without a per-action confirmation modal so a multi-tx flow
+          // (capsule creation) runs popup-free. Flip to true to require confirmations.
+          showWalletUIs: false,
+        },
+      }}
+    >
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>{children}</ToastProvider>
+        <ReactQueryDevtools initialIsOpen={false} />
+      </QueryClientProvider>
+    </PrivyProvider>
   )
 }

@@ -1,14 +1,8 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import { Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon } from 'lucide-react'
 import { Button, Field, Input, Textarea, Select, Stepper } from '@/components/ui'
-
-// Dynamic import to prevent hydration errors
-const WalletMultiButton = dynamic(
-  async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
-  { ssr: false }
-)
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 import {
   SOLANA_CONFIG,
   PLATFORM_FEE,
@@ -151,12 +145,12 @@ export default function CreatePage() {
           {!connected && (
             <div className="card-Heres p-8 text-center">
               <Shield className="mx-auto mb-5 h-14 w-14 text-Heres-accent" />
-              <h2 className="text-2xl font-bold text-Heres-white">Connect Your Wallet</h2>
+              <h2 className="text-2xl font-bold text-Heres-white">Sign In to Continue</h2>
               <p className="mx-auto mt-3 max-w-2xl text-Heres-muted">
-                Connect Phantom or another Solana wallet to unlock capsule creation and NFT/token selection.
+                Sign in with your email to unlock capsule creation and NFT/token selection. A secure Solana wallet is created for you automatically.
               </p>
               <div className="mt-6 flex justify-center">
-                <WalletMultiButton className="!h-11 !rounded-xl !bg-Heres-surface !px-5 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!bg-Heres-card active:scale-95" />
+                <PrivyLoginButton className="!h-11 !rounded-xl !bg-Heres-surface !px-5 !py-0 !text-sm !font-medium !text-Heres-white transition-opacity hover:!bg-Heres-card active:scale-95" />
               </div>
             </div>
           )}
