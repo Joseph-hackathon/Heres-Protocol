@@ -1,5 +1,5 @@
 import Image from 'next/image'
-import Link from 'next/link'
+import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 
 export function MarketingNav() {
   return (
@@ -20,9 +20,9 @@ export function MarketingNav() {
           </a>
         </nav>
         <div className="nav__cta">
-          <Link className="btn btn--gold" href="/create">
-            Create your capsule
-          </Link>
+          {/* Wallet sign-in (Privy email -> embedded Solana wallet). Styled to match
+              the landing's .btn--gold cyan pill so the nav reads on-brand. */}
+          <PrivyLoginButton className="!rounded-[14px] !border-0 !px-[22px] !py-[13px] !text-[15px] !font-bold !bg-[#2DD4E8] !text-[#06080F] hover:!bg-[#5be1f2] active:!translate-y-px" />
         </div>
       </div>
     </header>

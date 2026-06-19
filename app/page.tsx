@@ -18,6 +18,9 @@ export const metadata: Metadata = {
     'Set your beneficiaries, your assets, and your inactivity window once. If your wallet goes quiet past that window, Heres settles your instructions on Solana automatically. Private until it matters.',
 }
 
+// Regenerate the page (and its server-fetched hero stats) at most once an hour.
+export const revalidate = 3600
+
 // Marketing landing (Design 04 "Elevated"): a static, full-bleed page with its
 // own chrome and a WebGL aurora background. The global Navbar/Footer are hidden
 // on "/" by SiteChrome. Presentation lives in components/landing/*; the motion

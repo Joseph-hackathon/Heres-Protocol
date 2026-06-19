@@ -98,6 +98,12 @@ export const SOLANA_CONFIG = {
   // from the program the IDL was built against. On a new-keypair deploy, update declare_id! and
   // rebuild; the new address flows here automatically.
   PROGRAM_ID: idl.address,
+  // Display-only. Aggregate dashboard + landing-hero stats are read from an earlier
+  // high-activity deploy so the public numbers reflect the protocol's full history
+  // rather than the fresh lean program. This NEVER affects functional flows
+  // (create/delegate/execute) - those always use PROGRAM_ID above. Override with
+  // DASHBOARD_STATS_PROGRAM_ID; set it to PROGRAM_ID's value to show live-program stats.
+  STATS_PROGRAM_ID: process.env.DASHBOARD_STATS_PROGRAM_ID || '26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6',
   HELIUS_API_KEY: process.env.NEXT_PUBLIC_HELIUS_API_KEY || '',
     RPC_URL: process.env.SOLANA_RPC_URL || '',
     FALLBACK_RPC_URL:
