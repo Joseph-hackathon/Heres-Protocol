@@ -9,6 +9,7 @@ import { getOrMintTeeToken } from '@/lib/tee'
 import { normalizeTxError } from '@/lib/errors'
 import { maskAddress } from '@/lib/format'
 import { isValidSolanaAddress } from '@/config/solana'
+import { beneficiariesSchema, collectFieldErrors, firstError, MAX_BENEFICIARIES } from '@/lib/schemas'
 import type { OnChainBeneficiary } from '@/types'
 import { Modal, Button, Field, Input, useToast } from '@/components/ui'
 
@@ -27,8 +28,6 @@ interface Row {
   /** Share as a percentage string (e.g. "50" = 50%). */
   share: string
 }
-
-const MAX_BENEFICIARIES = 8
 
 function rowsFromCurrent(current: OnChainBeneficiary[]): Row[] {
   if (current.length === 0) return [{ address: '', share: '100' }]
@@ -67,12 +66,26 @@ export function EditBeneficiariesDialog({
   const [rows, setRows] = useState<Row[]>(() => rowsFromCurrent(current))
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Per-row submit-time messages keyed by schema path ('0.address', '1.share', '_shares').
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
+  // Any row edit clears submit-time errors so a corrected field stops showing its old message.
+  const clearErrors = () => {
+    setError(null)
+    setFieldErrors((prev) => (Object.keys(prev).length ? {} : prev))
+  }
   const updateRow = (index: number, key: keyof Row, value: string) => {
+    clearErrors()
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [key]: value } : r)))
   }
-  const addRow = () => setRows((prev) => [...prev, { address: '', share: '' }])
-  const removeRow = (index: number) => setRows((prev) => prev.filter((_, i) => i !== index))
+  const addRow = () => {
+    clearErrors()
+    setRows((prev) => [...prev, { address: '', share: '' }])
+  }
+  const removeRow = (index: number) => {
+    clearErrors()
+    setRows((prev) => prev.filter((_, i) => i !== index))
+  }
 
   // Live validation summary.
   const bpsList = rows.map((r) => pctToBps(r.share))
@@ -82,28 +95,21 @@ export function EditBeneficiariesDialog({
 
   const handleSave = async () => {
     setError(null)
-    if (rows.length === 0 || rows.length > MAX_BENEFICIARIES) {
-      setError(`Set between 1 and ${MAX_BENEFICIARIES} beneficiaries.`)
+    setFieldErrors({})
+    // Authoritative gate (lib/schemas): 1..MAX rows, valid addresses + shares, shares total exactly
+    // 100% (in basis points), no duplicate addresses, and no self-as-beneficiary.
+    const parsed = beneficiariesSchema({ ownerAddress: owner.toBase58() }).safeParse(
+      rows.map((r) => ({ address: r.address, share: r.share }))
+    )
+    if (!parsed.success) {
+      setFieldErrors(collectFieldErrors(parsed.error))
+      setError(firstError(parsed.error))
       return
     }
-    const beneficiaries: OnChainBeneficiary[] = []
-    for (let i = 0; i < rows.length; i++) {
-      const addr = rows[i].address.trim()
-      if (!isValidSolanaAddress(addr)) {
-        setError(`Beneficiary ${i + 1} has an invalid Solana address.`)
-        return
-      }
-      const bps = bpsList[i]
-      if (bps == null) {
-        setError(`Beneficiary ${i + 1} needs a share greater than zero.`)
-        return
-      }
-      beneficiaries.push({ pubkey: new PublicKey(addr), shareBps: bps })
-    }
-    if (totalBps !== 10000) {
-      setError(`Shares must total exactly 100% (currently ${totalPct}%).`)
-      return
-    }
+    const beneficiaries: OnChainBeneficiary[] = parsed.data.map((r) => ({
+      pubkey: new PublicKey(r.address.trim()),
+      shareBps: Math.round(parseFloat(r.share) * 100),
+    }))
 
     setSubmitting(true)
     try {
@@ -137,7 +143,7 @@ export function EditBeneficiariesDialog({
           <div key={i} className="flex items-start gap-2">
             <Field
               label={`Beneficiary ${i + 1}`}
-              error={addressErrors[i] ? 'Invalid Solana address' : undefined}
+              error={fieldErrors[`${i}.address`] ?? (addressErrors[i] ? 'Invalid Solana address' : undefined)}
               className="min-w-0 flex-1"
             >
               <Input
@@ -146,7 +152,7 @@ export function EditBeneficiariesDialog({
                 placeholder="Recipient wallet address"
               />
             </Field>
-            <Field label="Share %" className="w-24 shrink-0">
+            <Field label="Share %" className="w-24 shrink-0" error={fieldErrors[`${i}.share`]}>
               <Input
                 value={row.share}
                 onChange={(e) => updateRow(i, 'share', e.target.value)}

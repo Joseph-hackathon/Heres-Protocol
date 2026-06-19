@@ -16,16 +16,11 @@ import {
   MAX_CAPSULE_MODIFICATIONS,
 } from '@/constants'
 import { daysToSeconds } from '@/utils/intent'
-import { isValidAmountString } from '@/lib/assets'
 import { getVaultTokenAccounts } from '@/lib/spl'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
 import { bytesToBase64, sha256Hex } from '@/utils/intentClient'
-import {
-  validateBeneficiaryAddresses,
-  validateBeneficiaryAmounts,
-  validatePercentageTotals,
-  isValidEmail,
-} from '@/utils/validation'
+import { isValidEmail } from '@/utils/validation'
+import { createCapsuleInputSchema, collectFieldErrors, firstError } from '@/lib/schemas'
 import { getSolanaConnection } from '@/config/solana'
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { queryKeys } from '@/lib/query/keys'
@@ -154,6 +149,9 @@ export function useCreateCapsuleForm() {
   const [currentStep, setCurrentStep] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Per-field validation messages, keyed by schema path (e.g. 'totalAmount', 'beneficiaries.0.address',
+  // 'beneficiaries._shares'). Populated on submit; cleared the moment the user edits any input below.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [existingCapsule, setExistingCapsule] = useState<boolean>(false)
   const [modifyCount, setModifyCount] = useState<number>(0)
   const [openSection, setOpenSection] = useState<'asset' | 'beneficiaries' | 'intent' | 'review'>('asset')
@@ -165,6 +163,11 @@ export function useCreateCapsuleForm() {
   // Intent Statement email delivery (CRE)
   const [intentEmail, setIntentEmail] = useState('')
   const [intentReminderEnabled, setIntentReminderEnabled] = useState(true)
+
+  // Drop submit-time field errors the moment the user edits any validated input, so a stale message
+  // never lingers on a field they have already corrected (next submit re-validates from scratch).
+  // Done in the change handlers (not an effect) to avoid cascading renders.
+  const clearFieldErrors = () => setFieldErrors((prev) => (Object.keys(prev).length ? {} : prev))
 
   // Fetch wallet NFTs when NFT path is selected (Helius DAS when API key set, else RPC). The fetch
   // body is the exact existing Effect 1 logic, now keyed/cached by React Query.
@@ -245,6 +248,7 @@ export function useCreateCapsuleForm() {
 
   // Add a recipient and re-split shares evenly so they always total 100% (1 -> 100, 2 -> 50/50, ...).
   const addBeneficiary = () => {
+    clearFieldErrors()
     setBeneficiaries((prev) => {
       const next: UiBeneficiary[] = [
         ...prev,
@@ -257,6 +261,7 @@ export function useCreateCapsuleForm() {
 
   // Reset all shares to an even split (the "Split evenly" affordance).
   const splitEvenly = () => {
+    clearFieldErrors()
     setBeneficiaries((prev) => {
       const shares = evenShares(prev.length)
       return prev.map((b, i) => ({ ...b, amount: shares[i] }))
@@ -327,6 +332,7 @@ export function useCreateCapsuleForm() {
 
   // Remove a recipient and re-split the remaining shares evenly.
   const removeBeneficiary = (index: number) => {
+    clearFieldErrors()
     setBeneficiaries((prev) => {
       if (prev.length <= 1) return prev
       const next = prev.filter((_, i) => i !== index)
@@ -366,6 +372,7 @@ export function useCreateCapsuleForm() {
   // Solana-only, percentage-only: update an address, or a share (clamped to <=100, raw kept so the
   // user can still type decimals). Shares are free to edit after the even-split default.
   const updateBeneficiary = (index: number, field: 'address' | 'amount', value: string) => {
+    clearFieldErrors()
     setBeneficiaries((prev) => {
       const next = [...prev]
       if (field === 'amount') {
@@ -376,40 +383,6 @@ export function useCreateCapsuleForm() {
       }
       return next
     })
-  }
-
-  const validateBeneficiaries = (): boolean => {
-    if (selectedToken) {
-      const amt = parseFloat(totalAmount)
-      if (Number.isFinite(amt) && amt > selectedToken.balanceUi) {
-        setError(`You only have ${selectedToken.balanceUi} ${selectedToken.symbol} in your wallet.`)
-        return false
-      }
-    }
-
-    // Format parity with the on-chain parser (audit M1): totalAmount is parsed by the program.
-    if (!isValidAmountString(totalAmount)) {
-      setError('Enter a valid total amount to fund the capsule (digits only, e.g. 1.5).')
-      return false
-    }
-
-    if (!validateBeneficiaryAddresses(beneficiaries)) {
-      setError('Enter a valid Solana address for every beneficiary.')
-      return false
-    }
-
-    if (!validateBeneficiaryAmounts(beneficiaries)) {
-      setError('Enter a valid share for every beneficiary.')
-      return false
-    }
-
-    if (!validatePercentageTotals(beneficiaries)) {
-      const totalPercentage = beneficiaries.reduce((sum, b) => sum + parseFloat(b.amount || '0'), 0)
-      setError(`Beneficiary shares must total 100% (currently ${totalPercentage.toFixed(2)}%). Use "Split evenly" to fix.`)
-      return false
-    }
-
-    return true
   }
 
   const handleCreate = async () => {
@@ -434,24 +407,32 @@ export function useCreateCapsuleForm() {
       return
     }
 
-    if (!validateBeneficiaries()) return
-
-    if (!intent.trim()) {
-      setError('Please write an intent statement.')
+    // Single authoritative validation gate (lib/schemas): amount format + wallet-balance ceiling,
+    // beneficiary addresses + shares (sum to 100, no duplicates, no self), inactivity (whole number,
+    // <= 100y), optional future target date, intent length, and email. Bad input never reaches a
+    // wallet signature or the chain.
+    const validation = createCapsuleInputSchema({
+      ownerAddress: publicKey.toBase58(),
+      maxBalance: selectedToken ? selectedToken.balanceUi : null,
+      allowMinutes: supportsMinuteMode,
+    }).safeParse({
+      totalAmount,
+      inactivityValue: inactivityDays,
+      inactivityUnit,
+      targetDate,
+      intent,
+      intentEmail,
+      beneficiaries: beneficiaries.map((b) => ({ address: b.address, share: b.amount })),
+    })
+    if (!validation.success) {
+      setFieldErrors(collectFieldErrors(validation.error))
+      setError(firstError(validation.error))
       return
     }
-
-    if (!inactivityDays || parseInt(inactivityDays) <= 0) {
-      setError('Set a valid inactivity period before creating.')
-      return
-    }
+    setFieldErrors({})
 
     if (!wallet.signMessage) {
       setError('This wallet does not support message signing, which is required for encrypted intent delivery.')
-      return
-    }
-    if (!isValidEmail(intentEmail)) {
-      setError('Enter a valid representative email address.')
       return
     }
 
@@ -776,23 +757,23 @@ export function useCreateCapsuleForm() {
     connected,
     // core form state
     intent,
-    setIntent,
+    setIntent: (v: string) => { clearFieldErrors(); setIntent(v) },
     capsuleType,
     setCapsuleType,
     selectedAssetMint,
     setSelectedAssetMint,
     beneficiaries,
     totalAmount,
-    setTotalAmount,
+    setTotalAmount: (v: string) => { clearFieldErrors(); setTotalAmount(v) },
     inactivityDays,
-    setInactivityDays,
+    setInactivityDays: (v: string) => { clearFieldErrors(); setInactivityDays(v) },
     inactivityUnit,
-    setInactivityUnit,
+    setInactivityUnit: (v: InactivityUnit) => { clearFieldErrors(); setInactivityUnit(v) },
     inactivityUnitOptions,
     inactivityPresets: INACTIVITY_PRESETS[inactivityUnit],
     inactivityPlaceholder: INACTIVITY_PLACEHOLDER[inactivityUnit],
     targetDate,
-    setTargetDate,
+    setTargetDate: (v: string) => { clearFieldErrors(); setTargetDate(v) },
     // wizard UI state
     showSimulation,
     setShowSimulation,
@@ -800,6 +781,7 @@ export function useCreateCapsuleForm() {
     currentStep,
     txHash,
     error,
+    fieldErrors,
     existingCapsule,
     modifyCount,
     openSection,
@@ -815,7 +797,7 @@ export function useCreateCapsuleForm() {
     nftAssignments,
     // intent delivery
     intentEmail,
-    setIntentEmail,
+    setIntentEmail: (v: string) => { clearFieldErrors(); setIntentEmail(v) },
     intentReminderEnabled,
     setIntentReminderEnabled,
     // wallet token reads
@@ -833,7 +815,6 @@ export function useCreateCapsuleForm() {
     splitEvenly,
     removeBeneficiary,
     updateBeneficiary,
-    validateBeneficiaries,
     // NFT handlers
     toggleNftSelection,
     addNftRecipient,
