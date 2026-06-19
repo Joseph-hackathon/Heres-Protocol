@@ -3,78 +3,39 @@ import { PublicKey } from '@solana/web3.js'
 import { getCapsulePDA } from '@/lib/program'
 import { registerIntentReminder } from '@/lib/intent-delivery/reminder-service'
 import { sha256Hex, verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
-import { isValidEmail } from '@/utils/validation'
-
-type RegisterReminderRequestBody = {
-  capsuleAddress?: string
-  owner?: string
-  recipientEmail?: string
-  assetSymbol?: string
-  assetLabel?: string
-  totalAmount?: string
-  beneficiaryCount?: number
-  inactivityLabel?: string
-  delayDays?: number
-  createdAt?: number
-  timestamp?: number
-  signature?: string
-}
+import { intentReminderBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
-  let body: RegisterReminderRequestBody
+  let raw: unknown
   try {
-    body = (await request.json()) as RegisterReminderRequestBody
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const capsuleAddress = body.capsuleAddress?.trim()
-  const owner = body.owner?.trim()
-  const recipientEmail = body.recipientEmail?.trim().toLowerCase()
-  const assetSymbol = body.assetSymbol?.trim() || 'Unknown'
-  const assetLabel = body.assetLabel?.trim() || assetSymbol
-  const inactivityLabel = body.inactivityLabel?.trim() || 'Not configured'
-  const totalAmount = body.totalAmount?.trim()
-  const beneficiaryCount = Number(body.beneficiaryCount)
-  const delayDays = Number(body.delayDays)
-  const createdAt = Number(body.createdAt)
-  const timestamp = Number(body.timestamp)
-  const signature = body.signature?.trim()
-
-  if (
-    !capsuleAddress ||
-    !owner ||
-    !recipientEmail ||
-    !signature ||
-    !Number.isFinite(timestamp) ||
-    !Number.isFinite(beneficiaryCount) ||
-    !Number.isFinite(delayDays)
-  ) {
-    return NextResponse.json(
-      {
-        error:
-          'capsuleAddress, owner, recipientEmail, beneficiaryCount, delayDays, timestamp, signature are required',
-      },
-      { status: 400 }
-    )
+  const parsed = intentReminderBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
   }
+  const d = parsed.data
+  const capsuleAddress = d.capsuleAddress
+  const owner = d.owner
+  const recipientEmail = d.recipientEmail.toLowerCase()
+  const assetSymbol = d.assetSymbol || 'Unknown'
+  const assetLabel = d.assetLabel || assetSymbol
+  const inactivityLabel = d.inactivityLabel || 'Not configured'
+  const totalAmount = d.totalAmount
+  const beneficiaryCount = d.beneficiaryCount
+  const delayDays = d.delayDays
+  const createdAt = d.createdAt
+  const { timestamp, signature } = d
 
-  let ownerPubkey: PublicKey
-  let capsulePubkey: PublicKey
-  try {
-    ownerPubkey = new PublicKey(owner)
-    capsulePubkey = new PublicKey(capsuleAddress)
-  } catch {
-    return NextResponse.json({ error: 'Invalid owner or capsule address' }, { status: 400 })
-  }
+  const ownerPubkey = new PublicKey(owner)
+  const capsulePubkey = new PublicKey(capsuleAddress)
 
   const [expectedCapsulePda] = getCapsulePDA(ownerPubkey)
   if (!capsulePubkey.equals(expectedCapsulePda)) {
     return NextResponse.json({ error: 'Capsule PDA does not match owner' }, { status: 403 })
-  }
-
-  if (!isValidEmail(recipientEmail)) {
-    return NextResponse.json({ error: 'Invalid recipient email' }, { status: 400 })
   }
 
   const recipientEmailHash = sha256Hex(recipientEmail)
@@ -102,7 +63,7 @@ export async function POST(request: NextRequest) {
       beneficiaryCount,
       inactivityLabel,
       delayDays,
-      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      createdAt: createdAt ?? Date.now(),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to register CRE reminder'

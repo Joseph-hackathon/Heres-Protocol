@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dispatchIntentReminderForCapsule } from '@/lib/intent-delivery/reminder-service'
-
-type DispatchRequestBody = {
-  capsuleAddress?: string
-}
+import { capsuleAddressBody, firstError } from '@/lib/schemas'
 
 function getDispatchSecret(): string | null {
   const value = process.env.INTENT_REMINDER_DISPATCH_SECRET || process.env.CRON_SECRET
@@ -25,19 +22,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: DispatchRequestBody
+  let raw: unknown
   try {
-    body = (await request.json()) as DispatchRequestBody
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-
-  const capsuleAddress = body.capsuleAddress?.trim()
-  if (!capsuleAddress) {
-    return NextResponse.json({ error: 'capsuleAddress is required' }, { status: 400 })
+  const parsed = capsuleAddressBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
   }
 
-  const result = await dispatchIntentReminderForCapsule(capsuleAddress)
+  const result = await dispatchIntentReminderForCapsule(parsed.data.capsuleAddress)
   let statusCode = 500
   if (result.ok || result.skipped) {
     statusCode = 200

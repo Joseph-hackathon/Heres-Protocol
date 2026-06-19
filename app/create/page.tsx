@@ -37,6 +37,7 @@ export default function CreatePage() {
     currentStep,
     txHash,
     error,
+    fieldErrors,
     existingCapsule,
     modifyCount,
     openSection,
@@ -258,6 +259,7 @@ export default function CreatePage() {
                     <Field
                       label={`Total Amount (${assetUnit})`}
                       hint={`How much ${assetUnit} to lock in the capsule. Each beneficiary receives their share of this.${selectedToken ? ` Available: ${selectedToken.balanceUi} ${assetUnit}.` : ''}`}
+                      error={fieldErrors['totalAmount']}
                     >
                       <Input
                         type="number"
@@ -351,7 +353,9 @@ export default function CreatePage() {
                       const sharePct = parseFloat(beneficiary.amount) || 0
                       const total = parseFloat(totalAmount) || 0
                       const tokenAmount = total > 0 ? (total * sharePct) / 100 : 0
-                      const addrError = beneficiary.address && !isValidBeneficiaryAddress(beneficiary) ? 'Invalid Solana address' : undefined
+                      const liveAddrError = beneficiary.address && !isValidBeneficiaryAddress(beneficiary) ? 'Invalid Solana address' : undefined
+                      const addrError = fieldErrors[`beneficiaries.${index}.address`] ?? liveAddrError
+                      const shareError = fieldErrors[`beneficiaries.${index}.share`]
                       return (
                         <div key={beneficiary.id} className="space-y-2">
                           <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
@@ -389,6 +393,9 @@ export default function CreatePage() {
                               )}
                             </div>
                           </div>
+                          {shareError && (
+                            <p role="alert" className="text-xs text-danger">{shareError}</p>
+                          )}
                           {beneficiary.address && sharePct > 0 && total > 0 && (
                             <p className="text-xs text-Heres-muted">
                               ~ <span className="font-semibold text-Heres-accent">{tokenAmount.toFixed(4)} {assetUnit}</span> ({sharePct}% of {total} {assetUnit})
@@ -410,6 +417,12 @@ export default function CreatePage() {
                         </div>
                       )
                     })()}
+
+                    {(fieldErrors['beneficiaries._shares'] || fieldErrors['beneficiaries']) && (
+                      <p role="alert" className="text-xs text-danger">
+                        {fieldErrors['beneficiaries._shares'] || fieldErrors['beneficiaries']}
+                      </p>
+                    )}
 
                     <button
                       type="button"
@@ -514,6 +527,11 @@ export default function CreatePage() {
                       />
                       <span className="pr-4 text-sm text-Heres-muted">{inactivityUnit}</span>
                     </div>
+                    {(fieldErrors['inactivityValue'] || fieldErrors['inactivityUnit']) && (
+                      <p role="alert" className="mt-2 text-xs text-danger">
+                        {fieldErrors['inactivityValue'] || fieldErrors['inactivityUnit']}
+                      </p>
+                    )}
 
                     <div className="mt-2 flex flex-wrap gap-2">
                       {inactivityPresets.map((p) => (
@@ -565,6 +583,9 @@ export default function CreatePage() {
                           className="w-full bg-transparent p-4 text-Heres-white placeholder-Heres-muted focus:outline-none [color-scheme:dark]"
                         />
                       </div>
+                      {fieldErrors['targetDate'] && (
+                        <p role="alert" className="mt-2 text-xs text-danger">{fieldErrors['targetDate']}</p>
+                      )}
                       {targetDate && (
                         <p className="mt-2 text-sm text-Heres-muted">
                           Fires on <span className="font-semibold text-Heres-white">{new Date(targetDate + 'T00:00:00').toLocaleDateString()}</span> even if you stay active, then a fixed <span className="font-semibold text-Heres-white">48h grace</span> before release.
@@ -609,7 +630,7 @@ export default function CreatePage() {
                   <div className="space-y-4">
                     <Field
                       label="Representative Email"
-                      error={intentEmail && !isValidEmail(intentEmail) ? 'Enter a valid email address' : undefined}
+                      error={fieldErrors['intentEmail'] ?? (intentEmail && !isValidEmail(intentEmail) ? 'Enter a valid email address' : undefined)}
                     >
                       <Input
                         type="email"
@@ -635,7 +656,7 @@ export default function CreatePage() {
                   </div>
                 </div>
 
-                <Field label="Intent Statement">
+                <Field label="Intent Statement" error={fieldErrors['intent']}>
                   <Textarea
                     value={intent}
                     onChange={(e) => setIntent(e.target.value)}

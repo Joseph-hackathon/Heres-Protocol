@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PublicKey } from '@solana/web3.js'
 import { registerCapsuleOwner } from '@/lib/capsule-registry'
+import { ownerBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
+  let raw: unknown
   try {
-    const { owner } = await request.json()
-    if (!owner || typeof owner !== 'string') {
-      return NextResponse.json({ error: 'owner required' }, { status: 400 })
-    }
-    // Validate it's a valid pubkey
-    new PublicKey(owner)
-    await registerCapsuleOwner(owner)
+    raw = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const parsed = ownerBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
+  }
+
+  try {
+    await registerCapsuleOwner(parsed.data.owner)
     return NextResponse.json({ ok: true })
-  } catch (e) {
-    return NextResponse.json({ error: 'invalid owner' }, { status: 400 })
+  } catch {
+    return NextResponse.json({ error: 'Failed to register owner' }, { status: 500 })
   }
 }

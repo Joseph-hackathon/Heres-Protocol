@@ -8,6 +8,7 @@ import { deposit } from '@/lib/solana'
 import { normalizeTxError } from '@/lib/errors'
 import { maskAddress } from '@/lib/format'
 import { getSolanaConnection } from '@/config/solana'
+import { decimalAmountString, firstError } from '@/lib/schemas'
 import { Modal, Button, Field, Input, useToast } from '@/components/ui'
 
 export interface AddFundsDialogProps {
@@ -86,9 +87,16 @@ export function AddFundsDialog({
       setError('Still reading the token mint. Try again in a moment.')
       return
     }
+    // Format + positivity via the shared schema (one definition of "valid amount" app-wide); the
+    // base-unit conversion below additionally rejects more decimal places than the asset supports.
+    const fmt = decimalAmountString.safeParse(amount)
+    if (!fmt.success) {
+      setError(firstError(fmt.error))
+      return
+    }
     const units = parseDecimalToBaseUnits(amount, decimals)
     if (units == null) {
-      setError('Enter a valid amount greater than zero.')
+      setError(`Too many decimal places for this asset (max ${decimals}).`)
       return
     }
     setSubmitting(true)
@@ -117,18 +125,20 @@ export function AddFundsDialog({
         <Field
           label={`Amount (${symbol})`}
           hint={assetKind === 'spl' && decimals == null ? 'Reading token details...' : undefined}
+          error={error ?? undefined}
         >
           <Input
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value)
+              if (error) setError(null)
+            }}
             inputMode="decimal"
             placeholder="0.0"
             autoFocus
           />
         </Field>
       </div>
-
-      {error && <p className="mt-3 text-xs text-danger">{error}</p>}
 
       <div className="mt-6 flex justify-end gap-3">
         <Button variant="ghost" onClick={onClose} disabled={submitting}>

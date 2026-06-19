@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildUpdateActivityUnsignedTx } from '@/lib/mobile-tx'
+import { ownerBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
+  let raw: unknown
   try {
-    const body = await request.json()
-    const owner = typeof body?.owner === 'string' ? body.owner : ''
+    raw = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  const parsed = ownerBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
+  }
 
-    const unsigned = await buildUpdateActivityUnsignedTx(owner)
+  try {
+    const unsigned = await buildUpdateActivityUnsignedTx(parsed.data.owner)
 
     return NextResponse.json({
       ...unsigned,
