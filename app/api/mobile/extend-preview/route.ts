@@ -3,18 +3,16 @@ import { PublicKey } from '@solana/web3.js'
 import { getCapsule } from '@/lib/solana'
 import { getEnhancedTransactions } from '@/lib/helius'
 import { buildActivityScore } from '@/lib/mobile'
+import { walletBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json().catch(() => ({}))
-    const wallet = typeof body?.wallet === 'string' ? body.wallet : ''
-
-    try {
-      new PublicKey(wallet)
-    } catch {
-      return NextResponse.json({ error: 'Invalid wallet address' }, { status: 400 })
+    const raw = await request.json().catch(() => ({}))
+    const parsed = walletBody.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
     }
-
+    const wallet = parsed.data.wallet
     const owner = new PublicKey(wallet)
     const capsule = await getCapsule(owner)
     if (!capsule) {

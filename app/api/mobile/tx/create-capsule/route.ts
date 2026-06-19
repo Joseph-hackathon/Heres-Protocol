@@ -1,24 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildCreateCapsuleUnsignedTx } from '@/lib/mobile-tx'
+import { mobileCreateCapsuleBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
+  let raw: unknown
   try {
-    const body = await request.json()
+    raw = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
 
-    const owner = typeof body?.owner === 'string' ? body.owner : ''
-    const totalSol = typeof body?.totalSol === 'string' ? body.totalSol : ''
-    const inactivityDays = Number(body?.inactivityDays)
-    const beneficiaryAddress = typeof body?.beneficiaryAddress === 'string' ? body.beneficiaryAddress : ''
-    const beneficiaryAmountSol = typeof body?.beneficiaryAmountSol === 'string' ? body.beneficiaryAmountSol : ''
-    const intent = typeof body?.intent === 'string' ? body.intent : undefined
+  // Validate the full body (owner pubkey, amounts, inactivity bounds, beneficiary != owner, capped
+  // intent) before building a tx - the web flow validates client-side, mobile callers do not.
+  const parsed = mobileCreateCapsuleBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
+  }
 
+  try {
     const unsigned = await buildCreateCapsuleUnsignedTx({
-      owner,
-      totalSol,
-      inactivityDays,
-      beneficiaryAddress,
-      beneficiaryAmountSol,
-      intent,
+      owner: parsed.data.owner,
+      totalSol: parsed.data.totalSol,
+      inactivityDays: parsed.data.inactivityDays,
+      beneficiaryAddress: parsed.data.beneficiaryAddress,
+      beneficiaryAmountSol: parsed.data.beneficiaryAmountSol,
+      intent: parsed.data.intent,
     })
 
     return NextResponse.json({

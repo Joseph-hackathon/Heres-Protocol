@@ -205,20 +205,25 @@ export const intentRegisterBody = z.object({
   signature: signatureString,
 })
 
-/** POST /api/intent-reminder/register */
+/**
+ * POST /api/intent-reminder/register. Required: capsuleAddress, owner, recipientEmail,
+ * beneficiaryCount, delayDays, timestamp, signature. The display-only metadata fields are optional
+ * (the route applies its own defaults) but still length-capped so they cannot bloat the store or be
+ * smuggled into the reminder email template.
+ */
 export const intentReminderBody = z.object({
   capsuleAddress: solanaAddress,
   owner: solanaAddress,
   recipientEmail: emailString,
-  assetSymbol: z.string().trim().max(MAX_SYMBOL_LENGTH, { message: 'Asset symbol is too long.' }),
-  assetLabel: z.string().trim().max(MAX_LABEL_LENGTH, { message: 'Asset label is too long.' }),
+  assetSymbol: z.string().trim().max(MAX_SYMBOL_LENGTH, { message: 'Asset symbol is too long.' }).optional(),
+  assetLabel: z.string().trim().max(MAX_LABEL_LENGTH, { message: 'Asset label is too long.' }).optional(),
   assetMint: solanaAddress.nullish(),
   assetDecimals: nonNegativeInt.max(18, { message: 'Invalid decimals.' }).optional(),
   totalAmount: z.string().trim().max(64, { message: 'Amount is too long.' }).optional(),
   beneficiaryCount: nonNegativeInt.max(MAX_BENEFICIARIES, { message: 'Too many beneficiaries.' }),
-  inactivityLabel: z.string().trim().max(MAX_LABEL_LENGTH, { message: 'Inactivity label is too long.' }),
+  inactivityLabel: z.string().trim().max(MAX_LABEL_LENGTH, { message: 'Inactivity label is too long.' }).optional(),
   delayDays: nonNegativeInt.max(365, { message: 'Delay is too long.' }),
-  createdAt: unixMillis,
+  createdAt: unixMillis.optional(),
   timestamp: unixMillis,
   signature: signatureString,
 })

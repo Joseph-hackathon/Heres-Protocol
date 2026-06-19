@@ -1,56 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PublicKey } from '@solana/web3.js'
-import { isValidEmail } from '@/utils/validation'
 import { registerIntentSecret } from '@/lib/intent-delivery/service'
 import { sha256Hex, verifyIntentSignedRequest } from '@/lib/intent-delivery/auth'
-
-type RegisterRequestBody = {
-  owner?: string
-  recipientEmail?: string
-  // Plaintext intent statement. Encrypted at rest server-side; never stored or
-  // logged in the clear. Sent over TLS and bound by the wallet signature below.
-  message?: string
-  timestamp?: number
-  signature?: string
-}
-
-// Plaintext statement bound by the owner signature; capped to a sane size.
-const MAX_MESSAGE_LENGTH = 20_000
+import { intentRegisterBody, firstError } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
-  let body: RegisterRequestBody
+  let raw: unknown
   try {
-    body = (await request.json()) as RegisterRequestBody
+    raw = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const owner = body.owner?.trim()
-  const recipientEmail = body.recipientEmail?.trim().toLowerCase()
-  const message = typeof body.message === 'string' ? body.message : undefined
-  const timestamp = Number(body.timestamp)
-  const signature = body.signature?.trim()
-
-  if (!owner || !recipientEmail || !message || !message.trim() || !signature || !Number.isFinite(timestamp)) {
-    return NextResponse.json(
-      { error: 'owner, recipientEmail, message, timestamp, signature are required' },
-      { status: 400 }
-    )
+  // The client is untrusted: re-validate the whole body (owner pubkey, email, plaintext intent length,
+  // timestamp, signature) before doing any work. The plaintext message is encrypted at rest in the
+  // service and never logged in the clear; it stays bound by the owner signature verified below.
+  const parsed = intentRegisterBody.safeParse(raw)
+  if (!parsed.success) {
+    return NextResponse.json({ error: firstError(parsed.error) }, { status: 400 })
   }
-
-  try {
-    new PublicKey(owner)
-  } catch {
-    return NextResponse.json({ error: 'Invalid owner address' }, { status: 400 })
-  }
-
-  if (!isValidEmail(recipientEmail)) {
-    return NextResponse.json({ error: 'Invalid recipient email' }, { status: 400 })
-  }
-
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return NextResponse.json({ error: 'Intent statement is too large' }, { status: 400 })
-  }
+  const owner = parsed.data.owner
+  const recipientEmail = parsed.data.recipientEmail.toLowerCase()
+  const message = parsed.data.message
+  const { timestamp, signature } = parsed.data
 
   const recipientEmailHash = sha256Hex(recipientEmail)
   const messageHash = sha256Hex(message)
