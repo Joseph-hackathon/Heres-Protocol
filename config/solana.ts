@@ -52,6 +52,16 @@ export function getProgramId(): PublicKey {
 }
 
 /**
+ * Program ID used ONLY for aggregate dashboard/hero stats. Defaults to an earlier
+ * high-activity deploy (see constants STATS_PROGRAM_ID) so public numbers reflect
+ * the protocol's full history; falls back to the live program when unset. This is
+ * read-only display data - never use it for signing, delegation, or writes.
+ */
+export function getStatsProgramId(): PublicKey {
+  return new PublicKey(SOLANA_CONFIG.STATS_PROGRAM_ID || SOLANA_CONFIG.PROGRAM_ID)
+}
+
+/**
  * Validate Solana address
  */
 export function isValidSolanaAddress(address: string): boolean {

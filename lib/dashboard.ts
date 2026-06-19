@@ -1,6 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js'
 import { Redis } from '@upstash/redis'
-import { getProgramId, getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
+import { getProgramId, getStatsProgramId, getSolanaConnection, getSolanaFallbackConnection } from '@/config/solana'
+import { isLegacyStatsProgram, buildLegacyStatsSummary } from '@/lib/legacy-stats'
 import { HELIUS_CONFIG, MAGICBLOCK_ER } from '@/constants'
 import { inferAssetConfig, SupportedAssetSymbol } from '@/lib/assets'
 import { getRegisteredOwners, registerCapsuleOwner } from '@/lib/capsule-registry'
@@ -1354,6 +1355,16 @@ function toListItem(row: DashboardCapsuleRow): CapsuleListItem {
 }
 
 export async function getCapsulesSummary(forceRefresh = false): Promise<CapsuleSummaryResponse> {
+  // Aggregate stats (public dashboard + landing hero) can be sourced from an earlier
+  // high-activity deploy whose on-chain layout differs from the current program. When
+  // STATS_PROGRAM_ID points at such a program, decode it with its era IDL instead of
+  // the live snapshot pipeline. Functional flows and the /capsules list are unaffected.
+  const statsProgramId = getStatsProgramId()
+  if (isLegacyStatsProgram(statsProgramId)) {
+    const summary = await buildLegacyStatsSummary(getSolanaConnection(), statsProgramId, forceRefresh)
+    return { summary, timestamp: Date.now(), complete: true }
+  }
+
   const snapshot = await getDashboardSnapshot(forceRefresh, true, false)
   return {
     summary: snapshot.summary,
