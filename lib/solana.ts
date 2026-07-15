@@ -45,6 +45,10 @@ import {
   getVaultTokenAccounts,
 } from '@/lib/spl'
 import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
+import {
+  classifyCapsuleAccountOwner,
+  type CapsuleAccountLocations,
+} from '@/lib/capsule-lifecycle'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -60,6 +64,48 @@ export const CRANK_DEFAULT_ITERATIONS = 100_000
 
 // Re-export connection function
 export { getSolanaConnection as getConnection }
+
+/**
+ * Read where both lifecycle accounts currently live. Base-layer actions such as distribution,
+ * cancellation, and recreation are safe only when both accounts are owned by the Heres program.
+ */
+export async function getCapsuleAccountLocations(
+  owner: PublicKey
+): Promise<CapsuleAccountLocations> {
+  const [switchPDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
+  const programId = getProgramId().toBase58()
+  const delegationProgramId = DELEGATION_PROGRAM_ID.toBase58()
+
+  const read = async (connection: Connection) =>
+    connection.getMultipleAccountsInfo([switchPDA, beneficiarySetPDA], 'confirmed')
+
+  let infos
+  try {
+    infos = await read(getSolanaConnection())
+  } catch (primaryError) {
+    try {
+      infos = await read(getSolanaFallbackConnection())
+    } catch {
+      throw primaryError
+    }
+  }
+
+  return {
+    switch: classifyCapsuleAccountOwner(
+      infos[0]?.owner.toBase58() ?? null,
+      programId,
+      delegationProgramId
+    ),
+    beneficiarySet: classifyCapsuleAccountOwner(
+      infos[1]?.owner.toBase58() ?? null,
+      programId,
+      delegationProgramId
+    ),
+    switchAddress: switchPDA.toBase58(),
+    beneficiarySetAddress: beneficiarySetPDA.toBase58(),
+  }
+}
 
 /**
  * Get Anchor provider (base-layer connection).
@@ -1277,8 +1323,9 @@ export async function getCapsuleByAddress(
     capsule.beneficiaries = inheritance.beneficiaries
     capsule.nftAssignments = inheritance.nftAssignments
     return { ...capsule, capsuleAddress: capsulePda.toBase58() }
-  } catch {
-    return null
+  } catch (error) {
+    console.error('Error fetching capsule by address:', error, 'capsule:', capsulePda.toBase58())
+    throw error
   }
 }
 

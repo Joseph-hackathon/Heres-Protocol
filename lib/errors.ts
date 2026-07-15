@@ -29,6 +29,51 @@ export function normalizeTxError(err: unknown): string {
   const raw = rawMessage(err)
   const lower = raw.toLowerCase()
 
+  if (
+    lower.includes('accountownedbywrongprogram') ||
+    lower.includes('account owned by wrong program') ||
+    lower.includes('error number: 3007')
+  ) {
+    if (lower.includes('beneficiary')) {
+      return 'Your private beneficiary data is still in the TEE. Open My Capsule and select Finish Undelegation, then try again.'
+    }
+    return 'Part of this capsule is still in the private rollup. Open My Capsule and finish undelegation before trying again.'
+  }
+
+  if (lower.includes('capsuleactive') || lower.includes('capsule is active')) {
+    return 'This capsule is still active. Manage or cancel it from My Capsule before starting another one.'
+  }
+
+  if (lower.includes('capsuleinactive') || lower.includes('capsule is not active')) {
+    return 'This capsule is no longer active. Refresh My Capsule to see the actions currently available.'
+  }
+
+  if (
+    lower.includes('capsulenotexecuted') ||
+    lower.includes('capsule has not been executed')
+  ) {
+    return 'Execute the capsule first, then distribute its assets.'
+  }
+
+  if (
+    lower.includes('inactivityperiodnotmet') ||
+    lower.includes('inactivity period has not been met')
+  ) {
+    return 'The capsule trigger has not been reached yet. Check in or wait until its trigger date.'
+  }
+
+  if (lower.includes('nobeneficiaries') || lower.includes('no beneficiaries set')) {
+    return 'No beneficiaries are available for distribution. Reveal the private details or finish undelegation, then refresh My Capsule.'
+  }
+
+  if (lower.includes('nothingtodistribute') || lower.includes('nothing to distribute')) {
+    return 'The capsule vault is already empty. Refresh My Capsule to confirm distribution status.'
+  }
+
+  if (lower.includes('unauthorized') || lower.includes('error number: 6000')) {
+    return 'This wallet is not authorized to perform that capsule action.'
+  }
+
   // Wallet rejection (Phantom/Solflare/standard wallet adapter).
   if (
     lower.includes('user rejected') ||
@@ -85,6 +130,15 @@ export function normalizeTxError(err: unknown): string {
   // Wallet not connected / missing signer.
   if (lower.includes('wallet not connected') || lower.includes('no wallet')) {
     return 'Connect your wallet to continue.'
+  }
+
+  if (
+    lower.includes('anchorerror') ||
+    lower.includes('program log:') ||
+    lower.includes('instructionerror') ||
+    /^transaction\s+\S+\s+failed:/i.test(raw.trim())
+  ) {
+    return 'The capsule state changed before this action completed. Refresh My Capsule and follow the action shown there.'
   }
 
   const trimmed = raw.trim()
