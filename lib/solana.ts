@@ -28,14 +28,19 @@ import {
 } from './program'
 import { SOLANA_CONFIG, PLATFORM_FEE, MAGICBLOCK_ER } from '@/constants'
 import { debugLog } from '@/lib/log'
-import { decodeIntentCapsule, tryDecodeIntentCapsule, tryDecodeBeneficiarySet } from '@/lib/lean-capsule'
+import {
+  decodeIntentCapsule,
+  tryDecodeIntentCapsule,
+  tryDecodeBeneficiarySetData,
+} from '@/lib/lean-capsule'
 import { getTeeAuthToken, getCachedTeeToken, setCachedTeeToken } from '@/lib/tee'
-import type { IntentCapsule, OnChainBeneficiary } from '@/types'
+import type { IntentCapsule, OnChainBeneficiary, OnChainNftAssignment } from '@/types'
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID as SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
   ataFor,
   resolveTokenProgram,
+  validateStandardNft,
   buildCreateAtaIx,
   getVaultTokenAccounts,
 } from '@/lib/spl'
@@ -214,6 +219,11 @@ const toBenArg = (b: OnChainBeneficiary) => ({
   pubkey: b.pubkey,
   shareBps: b.shareBps,
   reserved: b.reserved ?? Array(14).fill(0),
+})
+
+const toNftAssignmentArg = (assignment: OnChainNftAssignment) => ({
+  mint: assignment.mint,
+  recipient: assignment.recipient,
 })
 
 /**
@@ -631,9 +641,11 @@ export type CreateDelegatedCapsuleParams = {
   targetDateSeconds?: number | null
   beneficiaries: OnChainBeneficiary[]
   /** Vault funding amount in lamports (SOL) or the mint's base units (SPL). */
-  depositBaseUnits: number | BN
+  depositBaseUnits?: number | BN
   /** SPL mint, or null/undefined for native SOL. */
   mint?: PublicKey | null
+  /** Standard SPL NFTs to lock, each with one explicit recipient. Mutually exclusive with mint/SOL. */
+  nftAssignments?: OnChainNftAssignment[]
   /** Liveness heartbeat authority; defaults to the protocol relayer (off-chain liveness service). */
   heartbeatAuthority?: PublicKey
   /** Override the delegation validator; defaults to the TEE node (VALIDATOR_TEE). */
@@ -678,7 +690,10 @@ export async function createDelegatedCapsule(
   const erValidator = new PublicKey(MAGICBLOCK_ER.ACTIVE_VALIDATOR) // regular ER for the Switch
   const teeValidator = params.validator ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE) // TEE for the set
   const mint = params.mint ?? null
-  const amt = params.depositBaseUnits instanceof BN ? params.depositBaseUnits : new BN(params.depositBaseUnits)
+  const nftAssignments = params.nftAssignments ?? []
+  if (nftAssignments.length > 0 && (mint || params.depositBaseUnits != null)) {
+    throw new Error('NFT funding cannot be combined with a fungible deposit during capsule creation')
+  }
 
   const platformFeeRecipient = SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
@@ -704,32 +719,60 @@ export async function createDelegatedCapsule(
         })
         .instruction()
 
-  // ---- base ix 2: deposit (fund the Vault; never delegated) ----
-  const depositTokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
-  const depositAccounts: any = mint
-    ? {
-        capsule: capsulePDA,
-        vault: vaultPDA,
-        owner,
-        systemProgram: SystemProgram.programId,
-        tokenProgram: depositTokenProgram,
-        associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
-        mint,
-        sourceTokenAccount: ataFor(mint, owner, depositTokenProgram!),
-        vaultTokenAccount: ataFor(mint, vaultPDA, depositTokenProgram!),
-      }
-    : {
-        capsule: capsulePDA,
-        vault: vaultPDA,
-        owner,
-        systemProgram: SystemProgram.programId,
-        tokenProgram: null,
-        associatedTokenProgram: null,
-        mint: null,
-        sourceTokenAccount: null,
-        vaultTokenAccount: null,
-      }
-  const depositIx = await program.methods.deposit(amt).accountsPartial(depositAccounts).instruction()
+  // ---- base ix 2+: deposit assets (Vault is never delegated) ----
+  const baseConnection = getSolanaConnection()
+  const depositIxs: TransactionInstruction[] = []
+  if (nftAssignments.length > 0) {
+    for (const assignment of nftAssignments) {
+      const tokenProgram = await validateStandardNft(baseConnection, owner, assignment.mint)
+      depositIxs.push(
+        await program.methods
+          .deposit(new BN(1))
+          .accountsPartial({
+            capsule: capsulePDA,
+            vault: vaultPDA,
+            owner,
+            systemProgram: SystemProgram.programId,
+            tokenProgram,
+            associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+            mint: assignment.mint,
+            sourceTokenAccount: ataFor(assignment.mint, owner, tokenProgram),
+            vaultTokenAccount: ataFor(assignment.mint, vaultPDA, tokenProgram),
+          })
+          .instruction()
+      )
+    }
+  } else {
+    if (params.depositBaseUnits == null) throw new Error('A deposit amount is required')
+    const amt = params.depositBaseUnits instanceof BN
+      ? params.depositBaseUnits
+      : new BN(params.depositBaseUnits)
+    const depositTokenProgram = mint ? await resolveTokenProgram(baseConnection, mint) : null
+    const depositAccounts: any = mint
+      ? {
+          capsule: capsulePDA,
+          vault: vaultPDA,
+          owner,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: depositTokenProgram,
+          associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+          mint,
+          sourceTokenAccount: ataFor(mint, owner, depositTokenProgram!),
+          vaultTokenAccount: ataFor(mint, vaultPDA, depositTokenProgram!),
+        }
+      : {
+          capsule: capsulePDA,
+          vault: vaultPDA,
+          owner,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: null,
+          associatedTokenProgram: null,
+          mint: null,
+          sourceTokenAccount: null,
+          vaultTokenAccount: null,
+        }
+    depositIxs.push(await program.methods.deposit(amt).accountsPartial(depositAccounts).instruction())
+  }
 
   // ---- base ix 3: delegate the Switch to the regular ER (no permission, 11 accounts) ----
   const [swBufferPDA] = getBufferPDA(capsulePDA, BUFFER_SEED_PROGRAM_ID)
@@ -786,7 +829,8 @@ export async function createDelegatedCapsule(
   params.onStep?.('Creating, funding & delegating capsule...')
   const baseConn = getSolanaConnection()
   const baseSigs = await sendBaseBatch(baseConn, wallet, [
-    [createIx, depositIx],
+    [createIx],
+    ...depositIxs.map((ix) => [ix]),
     [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), delegateSwitchIx],
     [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), delegateBenIx],
   ])
@@ -836,8 +880,19 @@ export async function createDelegatedCapsule(
     .updateIntent(params.beneficiaries.map(toBenArg))
     .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
     .instruction()
-  params.onStep?.('Setting private beneficiaries...')
-  const teeSig = await sendEr(teeConn, wallet, [updateIntentIx])
+  const teeIxs = [updateIntentIx]
+  if (nftAssignments.length > 0) {
+    teeIxs.push(
+      await program.methods
+        .updateNftAssignments(nftAssignments.map(toNftAssignmentArg))
+        .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
+        .instruction()
+    )
+  }
+  params.onStep?.(
+    nftAssignments.length > 0 ? 'Setting private NFT recipients...' : 'Setting private beneficiaries...'
+  )
+  const teeSig = await sendEr(teeConn, wallet, teeIxs)
 
   return { baseSigs, teeSig, scheduleSig, capsule: capsulePDA, token }
 }
@@ -850,12 +905,15 @@ export async function createDelegatedCapsule(
 export async function distributeAssets(
   wallet: HeresWallet,
   ownerPublicKey: PublicKey,
-  beneficiaries: OnChainBeneficiary[]
+  beneficiaries: OnChainBeneficiary[],
+  nftAssignments: OnChainNftAssignment[] = []
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Wallet not connected')
-  if (!beneficiaries.length) throw new Error('Capsule has no beneficiaries')
+  if (!beneficiaries.length && !nftAssignments.length) {
+    throw new Error('Capsule has no inheritance recipients')
+  }
 
   const [capsulePDA] = getCapsulePDA(ownerPublicKey)
   const [beneficiarySetPDA] = getBeneficiarySetPDA(ownerPublicKey)
@@ -873,8 +931,38 @@ export async function distributeAssets(
 
   // 1. SPL legs first - scan BOTH token programs (classic SPL + Token-2022).
   const vaultTokens = await getVaultTokenAccounts(connection, vaultPDA)
-  for (const { ata: vaultAta, mint, amount, tokenProgram } of vaultTokens) {
+  for (const { ata: vaultAta, mint, amount, decimals, tokenProgram } of vaultTokens) {
     if (amount === 0n) continue
+
+    const assignment = nftAssignments.find((item) => item.mint.equals(mint))
+    if (assignment) {
+      const supply = await connection.getTokenSupply(mint, 'confirmed')
+      if (decimals !== 0 || supply.value.amount !== '1' || supply.value.decimals !== 0) {
+        throw new Error(`Assigned NFT ${mint.toBase58()} is not a supply-1, decimals-0 mint`)
+      }
+      if (amount !== 1n) throw new Error(`NFT ${mint.toBase58()} vault balance is not exactly one`)
+      const recipientAta = ataFor(mint, assignment.recipient, tokenProgram)
+      const preIxs: TransactionInstruction[] = []
+      if (!(await connection.getAccountInfo(recipientAta))) {
+        preIxs.push(
+          buildCreateAtaIx(wallet.publicKey, recipientAta, assignment.recipient, mint, tokenProgram)
+        )
+      }
+      const ix = await program.methods
+        .distributeNft(assignment.recipient)
+        .accountsPartial({
+          capsule: capsulePDA,
+          beneficiarySet: beneficiarySetPDA,
+          vault: vaultPDA,
+          tokenProgram,
+          mint,
+          vaultTokenAccount: vaultAta,
+          recipientTokenAccount: recipientAta,
+        })
+        .instruction()
+      lastSig = await sendBase(connection, wallet, [...preIxs, ix])
+      continue
+    }
 
     const preIxs: TransactionInstruction[] = []
     const remaining = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
@@ -1044,11 +1132,15 @@ async function decodeDelegatedCapsule(
  * token - the privacy guarantee). Pre-delegation or post-reveal, reads the base account directly.
  * Never throws (returns [] on any failure / filtered read).
  */
-async function readBeneficiaries(owner: PublicKey, token?: string): Promise<OnChainBeneficiary[]> {
+async function readPrivateInheritance(
+  owner: PublicKey,
+  token?: string
+): Promise<{ beneficiaries: OnChainBeneficiary[]; nftAssignments: OnChainNftAssignment[] }> {
+  const empty = { beneficiaries: [], nftAssignments: [] }
   const [benSetPDA] = getBeneficiarySetPDA(owner)
   try {
     const baseInfo = await getSolanaConnection().getAccountInfo(benSetPDA)
-    if (!baseInfo) return []
+    if (!baseInfo) return empty
 
     if (baseInfo.owner.equals(DELEGATION_PROGRAM_ID)) {
       // Delegated to the TEE: read the enclave copy. A valid token unlocks the list; without one the
@@ -1065,16 +1157,16 @@ async function readBeneficiaries(owner: PublicKey, token?: string): Promise<OnCh
       }
       if (authToken) await tryRead(getTeeConnection(authToken))
       for (const buf of candidates) {
-        const bens = tryDecodeBeneficiarySet(buf)
-        if (bens) return bens
+        const decoded = tryDecodeBeneficiarySetData(buf)
+        if (decoded) return decoded
       }
-      return []
+      return empty
     }
 
     // Base-resident (pre-delegation or post-reveal): decode directly.
-    return tryDecodeBeneficiarySet(Buffer.from(baseInfo.data)) ?? []
+    return tryDecodeBeneficiarySetData(Buffer.from(baseInfo.data)) ?? empty
   } catch {
-    return []
+    return empty
   }
 }
 
@@ -1144,7 +1236,9 @@ export async function getCapsule(owner: PublicKey, token?: string): Promise<Inte
     if (!capsule) return null
 
     // Beneficiaries live in the separate BeneficiarySet (TEE w/ token, or base post-reveal).
-    capsule.beneficiaries = await readBeneficiaries(owner, token ?? getCachedTeeToken(owner))
+    const inheritance = await readPrivateInheritance(owner, token ?? getCachedTeeToken(owner))
+    capsule.beneficiaries = inheritance.beneficiaries
+    capsule.nftAssignments = inheritance.nftAssignments
     return capsule
   } catch (error) {
     console.error('Error fetching capsule:', error, 'owner:', owner.toString())
@@ -1175,7 +1269,12 @@ export async function getCapsuleByAddress(
 
     if (!capsule) return null
     // Beneficiaries live in the separate BeneficiarySet (TEE w/ token, or base post-reveal).
-    capsule.beneficiaries = await readBeneficiaries(capsule.owner, token ?? getCachedTeeToken(capsule.owner))
+    const inheritance = await readPrivateInheritance(
+      capsule.owner,
+      token ?? getCachedTeeToken(capsule.owner)
+    )
+    capsule.beneficiaries = inheritance.beneficiaries
+    capsule.nftAssignments = inheritance.nftAssignments
     return { ...capsule, capsuleAddress: capsulePda.toBase58() }
   } catch {
     return null
