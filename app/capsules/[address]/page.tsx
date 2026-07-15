@@ -264,8 +264,7 @@ export default function CapsuleDetailPage() {
       )
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
       toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
-      await invalidateDistribution()
-      await invalidateCapsule()
+      await Promise.all([invalidateDistribution(), invalidateVaultAssets(), invalidateCapsule()])
     } catch (err: any) {
       console.error('[Distribute Assets] Error:', err)
       const msg = normalizeTxError(err)
