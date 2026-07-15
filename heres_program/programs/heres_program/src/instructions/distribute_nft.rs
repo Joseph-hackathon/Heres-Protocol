@@ -5,6 +5,7 @@
 //! happened to be last. The assignment is instead authorized by the revealed TEE BeneficiarySet.
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -97,6 +98,11 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
             && vault_ata.amount == 1,
         ErrorCode::InvalidTokenAccount
     );
+    let registered = vault_ata.close_authority == COption::Some(ctx.accounts.vault.key());
+    require!(
+        registered || vault_ata.close_authority == COption::None,
+        ErrorCode::InvalidAssetManifest
+    );
     require!(
         recipient_ata.key()
             == get_associated_token_address_with_program_id(
@@ -137,7 +143,9 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
         },
         signer_seeds,
     ))?;
-    ctx.accounts.vault.unregister_token_asset();
+    if registered {
+        ctx.accounts.vault.unregister_token_asset();
+    }
 
     emit!(NftDistributed {
         capsule: capsule.key(),
