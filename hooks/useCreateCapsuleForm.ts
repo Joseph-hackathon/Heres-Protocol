@@ -6,7 +6,12 @@ import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { useToast } from '@/components/ui'
 import { maskAddress } from '@/lib/format'
 import { normalizeTxError } from '@/lib/errors'
-import { createDelegatedCapsule, getCapsule, registerCapsuleOwnerForAutomation } from '@/lib/solana'
+import {
+  createDelegatedCapsule,
+  getCapsule,
+  getCapsuleAccountLocations,
+  registerCapsuleOwnerForAutomation,
+} from '@/lib/solana'
 import { getCapsulePDA } from '@/lib/program'
 import { Beneficiary, OnChainNftAssignment } from '@/types'
 import {
@@ -21,7 +26,7 @@ import { buildIntentSignedMessage } from '@/utils/intentAuth'
 import { bytesToBase64, sha256Hex } from '@/utils/intentClient'
 import { isValidEmail } from '@/utils/validation'
 import {
-  createCapsuleInputSchema,
+  createMultiAssetCapsuleInputSchema,
   createNftCapsuleInputSchema,
   collectFieldErrors,
   firstError,
@@ -29,7 +34,18 @@ import {
 } from '@/lib/schemas'
 import { getSolanaConnection, isValidSolanaAddress } from '@/config/solana'
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { BN } from '@coral-xyz/anchor'
 import { queryKeys } from '@/lib/query/keys'
+import { hasExistingCapsuleAccounts } from '@/lib/capsule-lifecycle'
+import { useSolBalance } from '@/hooks/queries/useSolBalance'
+import {
+  MAX_FUNGIBLE_ASSETS,
+  SOL_ASSET_KEY,
+  parseDecimalToBaseUnits,
+  spendableSolLamports,
+  type SelectedFungibleAsset,
+  type WalletFungibleAsset,
+} from '@/lib/fungible-assets'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
@@ -80,10 +96,6 @@ export type NftItem = { mint: string; name?: string; symbol?: string; imageUri?:
 // A stable id keeps React keys correct across add/remove (index keys mis-associate inputs on removal).
 type UiBeneficiary = Beneficiary & { id: string }
 
-// A fungible SPL token detected in the connected wallet (classic SPL or Token-2022), lockable as the
-// capsule asset. `mint`/`tokenProgram` are base58; `balanceUi` is the human-readable balance.
-type WalletToken = { mint: string; decimals: number; symbol: string; balanceUi: number; tokenProgram: string }
-
 export const CREATE_STEPS = [
   { key: 'asset', label: 'Select Asset Type' },
   { key: 'beneficiary', label: 'Configure Beneficiaries' },
@@ -105,7 +117,7 @@ export const CREATE_FAQS = [
   {
     key: 'count',
     question: 'How Many Capsules Can I Create at a time?',
-    answer: 'One wallet manages one active capsule flow at a time. After execution or deactivation, you can create or recreate another capsule.',
+    answer: 'One wallet manages one current capsule. Use My Capsule to check in, change funds, undelegate, cancel, or distribute it.',
   },
   {
     key: 'representative',
@@ -135,14 +147,14 @@ export function useCreateCapsuleForm() {
   const { toast } = useToast()
   const [intent, setIntent] = useState('')
   const [capsuleType, setCapsuleType] = useState<CapsuleAssetType>(null)
-  // Asset to lock: null = native SOL; otherwise the chosen SPL token's mint (auto-detected from the
-  // connected wallet, classic SPL or Token-2022). The vault accepts any token the wallet holds.
-  const [selectedAssetMint, setSelectedAssetMint] = useState<string | null>(null)
+  // A capsule vault can hold native SOL plus multiple classic SPL / Token-2022 mints. SOL starts
+  // selected to preserve the simple default path; users can add or remove assets before creation.
+  const [selectedAssetKeys, setSelectedAssetKeys] = useState<string[]>([SOL_ASSET_KEY])
+  const [assetAmounts, setAssetAmounts] = useState<Record<string, string>>({ [SOL_ASSET_KEY]: '' })
   const beneficiaryIdRef = useRef(1)
   const [beneficiaries, setBeneficiaries] = useState<UiBeneficiary[]>([
     { id: 'b0', chain: 'solana', address: '', amount: '100', amountType: 'percentage', destinationChainSelector: '' }
   ])
-  const [totalAmount, setTotalAmount] = useState('')
   const [inactivityDays, setInactivityDays] = useState('')
   const [inactivityUnit, setInactivityUnit] = useState<InactivityUnit>('days')
   // Optional absolute fire date (YYYY-MM-DD). When set, the capsule ALSO fires on this date regardless
@@ -155,10 +167,14 @@ export function useCreateCapsuleForm() {
   const [currentStep, setCurrentStep] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Per-field validation messages, keyed by schema path (e.g. 'totalAmount', 'beneficiaries.0.address',
+  // Per-field validation messages, keyed by schema path (e.g. 'assets.0.amount', 'beneficiaries.0.address',
   // 'beneficiaries._shares'). Populated on submit; cleared the moment the user edits any input below.
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [existingCapsule, setExistingCapsule] = useState<boolean>(false)
+  const [existingCapsuleAddress, setExistingCapsuleAddress] = useState<string | null>(null)
+  const [existingCapsuleCheck, setExistingCapsuleCheck] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [existingCapsuleCheckError, setExistingCapsuleCheckError] = useState<string | null>(null)
+  const [existingCapsuleCheckAttempt, setExistingCapsuleCheckAttempt] = useState(0)
   const [modifyCount, setModifyCount] = useState<number>(0)
   const [openSection, setOpenSection] = useState<'asset' | 'beneficiaries' | 'intent' | 'review'>('asset')
   const [openFaq, setOpenFaq] = useState<string | null>(CREATE_FAQS[0].key)
@@ -221,36 +237,54 @@ export function useCreateCapsuleForm() {
   const nftList = nftQuery.data ?? []
   const nftListLoading = nftQuery.isFetching
 
-  // Check for existing capsule on mount and load modification count
+  // Check for any existing lifecycle accounts before enabling the builder. A capsule remains the
+  // wallet's current capsule after execution, so recreation must not be entered accidentally here.
   useEffect(() => {
     const checkExistingCapsule = async () => {
-      if (connected && publicKey) {
-        // Load modification count from localStorage
-        const countKey = STORAGE_KEYS.CAPSULE_MODIFY_COUNT(publicKey.toBase58())
-        const stored = localStorage.getItem(countKey)
-        setModifyCount(stored ? parseInt(stored, 10) || 0 : 0)
+      if (!connected || !publicKey) {
+        setExistingCapsule(false)
+        setExistingCapsuleAddress(null)
+        setExistingCapsuleCheck('idle')
+        setExistingCapsuleCheckError(null)
+        return
+      }
 
-        try {
-          const capsule = await getCapsule(publicKey)
-          // Only show warning if capsule is active AND not executed
-          // If capsule is executed, we can recreate it, so don't show warning
-          if (capsule && capsule.isActive && !capsule.executedAt) {
-            setExistingCapsule(true)
-          } else {
-            // Allow creation/recreation if:
-            // 1. Capsule doesn't exist
-            // 2. Capsule is executed (executedAt is set) - can recreate
-            // 3. Capsule exists but isActive is false
-            setExistingCapsule(false)
-          }
-        } catch (err) {
-          console.error('Error checking for existing capsule:', err)
+      const countKey = STORAGE_KEYS.CAPSULE_MODIFY_COUNT(publicKey.toBase58())
+      const stored = localStorage.getItem(countKey)
+      setModifyCount(stored ? parseInt(stored, 10) || 0 : 0)
+      setExistingCapsuleCheck('loading')
+      setExistingCapsuleCheckError(null)
+
+      try {
+        const locations = await getCapsuleAccountLocations(publicKey)
+        if (locations.switch !== 'missing') {
+          setExistingCapsule(true)
+          setExistingCapsuleAddress(locations.switchAddress)
+        } else if (hasExistingCapsuleAccounts(locations)) {
           setExistingCapsule(false)
+          setExistingCapsuleAddress(null)
+          setExistingCapsuleCheckError(
+            'Existing capsule data needs recovery before a new capsule can be created. Refresh once, then contact support if this message remains.'
+          )
+          setExistingCapsuleCheck('error')
+          return
+        } else {
+          setExistingCapsule(false)
+          setExistingCapsuleAddress(null)
         }
+        setExistingCapsuleCheck('ready')
+      } catch (err) {
+        console.error('Error checking for existing capsule:', err)
+        setExistingCapsule(false)
+        setExistingCapsuleAddress(null)
+        setExistingCapsuleCheckError(
+          'Heres could not check this wallet for an existing capsule. Retry before creating.'
+        )
+        setExistingCapsuleCheck('error')
       }
     }
     checkExistingCapsule()
-  }, [connected, publicKey])
+  }, [connected, publicKey, existingCapsuleCheckAttempt])
 
   // Add a recipient and re-split shares evenly so they always total 100% (1 -> 100, 2 -> 50/50, ...).
   const addBeneficiary = () => {
@@ -286,15 +320,17 @@ export function useCreateCapsuleForm() {
   const tokensQuery = useQuery({
     queryKey: queryKeys.wallet.tokens(publicKey?.toBase58() ?? ''),
     enabled: capsuleType === 'token' && connected && !!publicKey,
-    queryFn: async (): Promise<WalletToken[]> => {
+    queryFn: async (): Promise<WalletFungibleAsset[]> => {
       const accts = await getVaultTokenAccounts(getSolanaConnection(), publicKey!)
-      const tokens: WalletToken[] = accts
+      const tokens: WalletFungibleAsset[] = accts
         .filter((t) => t.amount > 0n && !(t.decimals === 0 && t.amount === 1n))
         .map((t) => ({
+          key: t.mint.toBase58(),
           mint: t.mint.toBase58(),
           decimals: t.decimals,
           symbol: maskAddress(t.mint.toBase58()),
           balanceUi: Number(t.amount) / Math.pow(10, t.decimals),
+          balanceBaseUnits: t.amount,
           tokenProgram: t.tokenProgram.toBase58(),
         }))
         .sort((a, b) => b.balanceUi - a.balanceUi)
@@ -303,12 +339,42 @@ export function useCreateCapsuleForm() {
   })
   const walletTokens = tokensQuery.data ?? []
   const tokensLoading = tokensQuery.isFetching
+  const solBalance = useSolBalance(publicKey)
+  const spendableSol = spendableSolLamports(solBalance.lamports)
+  const solAsset: WalletFungibleAsset = {
+    key: SOL_ASSET_KEY,
+    mint: null,
+    decimals: 9,
+    symbol: 'SOL',
+    balanceUi: spendableSol == null ? null : Number(spendableSol) / LAMPORTS_PER_SOL,
+    balanceBaseUnits: spendableSol,
+    tokenProgram: null,
+  }
+  const walletAssets = [solAsset, ...walletTokens]
+  const selectedAssets: SelectedFungibleAsset[] = selectedAssetKeys
+    .map((key) => walletAssets.find((asset) => asset.key === key))
+    .filter((asset): asset is WalletFungibleAsset => Boolean(asset))
+    .map((asset) => ({ ...asset, amount: assetAmounts[asset.key] ?? '' }))
+  const assetUnit = selectedAssets.length === 1 ? selectedAssets[0]?.symbol ?? 'asset' : `${selectedAssets.length} assets`
 
-  // Resolve the chosen asset from the detected wallet tokens (null mint = native SOL).
-  const selectedToken = selectedAssetMint ? walletTokens.find((t) => t.mint === selectedAssetMint) ?? null : null
-  const assetUnit = selectedToken?.symbol ?? 'SOL'
-  const assetDecimals = selectedToken?.decimals ?? 9
-  const selectedMintPk = selectedToken ? new PublicKey(selectedToken.mint) : undefined
+  const toggleAssetSelection = (key: string) => {
+    clearFieldErrors()
+    setError(null)
+    setSelectedAssetKeys((current) => {
+      if (current.includes(key)) return current.filter((assetKey) => assetKey !== key)
+      if (current.length >= MAX_FUNGIBLE_ASSETS) {
+        setError(`You can lock up to ${MAX_FUNGIBLE_ASSETS} fungible assets in one capsule.`)
+        return current
+      }
+      return [...current, key]
+    })
+    setAssetAmounts((current) => ({ ...current, [key]: current[key] ?? '' }))
+  }
+
+  const setAssetAmount = (key: string, amount: string) => {
+    clearFieldErrors()
+    setAssetAmounts((current) => ({ ...current, [key]: amount }))
+  }
 
   const formatInactivityLabel = (value: string | number, unit: InactivityUnit) => {
     const numeric = typeof value === 'number' ? value : parseInt(value, 10)
@@ -441,12 +507,21 @@ export function useCreateCapsuleForm() {
       recipient: nftRecipients[nftAssignments[mint] ?? 0]?.address ?? '',
     }))
     const validation = capsuleType === 'token'
-      ? createCapsuleInputSchema({
+      ? createMultiAssetCapsuleInputSchema({
           ownerAddress: publicKey.toBase58(),
-          maxBalance: selectedToken ? selectedToken.balanceUi : null,
+          assets: Object.fromEntries(
+            walletAssets.map((asset) => [
+              asset.key,
+              {
+                decimals: asset.decimals,
+                maxBalance: asset.balanceUi,
+                maxBaseUnits: asset.balanceBaseUnits,
+              },
+            ])
+          ),
           allowMinutes: supportsMinuteMode,
         }).safeParse({
-          totalAmount,
+          assets: selectedAssets.map((asset) => ({ assetKey: asset.key, amount: asset.amount })),
           inactivityValue: inactivityDays,
           inactivityUnit,
           targetDate,
@@ -482,8 +557,20 @@ export function useCreateCapsuleForm() {
     setIsPending(true)
 
     try {
+      const accountLocations = await getCapsuleAccountLocations(publicKey)
+      if (accountLocations.switch !== 'missing') {
+        setExistingCapsule(true)
+        setExistingCapsuleAddress(accountLocations.switchAddress)
+        setExistingCapsuleCheck('ready')
+        return
+      }
+      if (hasExistingCapsuleAccounts(accountLocations)) {
+        throw new Error(
+          'Existing capsule data needs recovery before a new capsule can be created. Refresh once, then contact support if this message remains.'
+        )
+      }
+
       const inactivityValueNum = parseInt(inactivityDays, 10)
-      const selectedMint = selectedMintPk
 
       // ---- Off-chain CRE: encrypt the human intent statement and register it (decoupled from chain).
       // The lean on-chain capsule never stores the statement; only the beneficiary split lives on-chain.
@@ -555,17 +642,19 @@ export function useCreateCapsuleForm() {
         recipient: new PublicKey(assignment.recipient.trim()),
       }))
 
-      // ---- Deposit amount: SOL lamports, SPL base units, or one unit per NFT ----
-      let depositBaseUnits: number | undefined
-      if (capsuleType === 'token') {
-        const totalAmountNum = parseFloat(totalAmount)
-        if (!Number.isFinite(totalAmountNum) || totalAmountNum <= 0) {
-          throw new Error('Enter a valid total amount to fund the capsule.')
-        }
-        depositBaseUnits = selectedMint
-          ? Math.round(totalAmountNum * Math.pow(10, assetDecimals))
-          : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
-      }
+      // ---- Deposit amounts: one transaction per fungible asset, or one unit per NFT ----
+      const fungibleDeposits = capsuleType === 'token'
+        ? selectedAssets.map((asset) => {
+            const units = parseDecimalToBaseUnits(asset.amount, asset.decimals)
+            if (units == null) {
+              throw new Error(`Enter a valid ${asset.symbol} amount with at most ${asset.decimals} decimal places.`)
+            }
+            return {
+              amountBaseUnits: new BN(units.toString()),
+              mint: asset.mint ? new PublicKey(asset.mint) : null,
+            }
+          })
+        : undefined
 
       const inactivityPeriodSeconds = inactivityUnitToSeconds(inactivityValueNum, inactivityUnit)
 
@@ -582,13 +671,6 @@ export function useCreateCapsuleForm() {
         targetDateSeconds = ts
       }
 
-      // ---- Determine create vs recreate: one capsule per wallet, reuse only after it has fired ----
-      const existingCapsule = await getCapsule(publicKey)
-      if (existingCapsule && existingCapsule.isActive) {
-        throw new Error('You already have an active capsule. It must be executed or cancelled before creating a new one. Visit /capsules to view it.')
-      }
-      const recreate = !!(existingCapsule && !existingCapsule.isActive && existingCapsule.executedAt)
-
       // ---- The single intended flow: create + fund + delegate the Switch to the TEE, then set the
       // PRIVATE beneficiary list + schedule the autonomous crank INSIDE the TEE. Beneficiaries never
       // touch the base layer - that is the privacy guarantee. There is no base-only fork. ----
@@ -596,13 +678,12 @@ export function useCreateCapsuleForm() {
         inactivitySeconds: inactivityPeriodSeconds,
         targetDateSeconds,
         beneficiaries: leanBeneficiaries,
-        depositBaseUnits,
-        mint: capsuleType === 'token' ? selectedMint ?? null : null,
+        fungibleDeposits,
         nftAssignments: capsuleType === 'nft' ? onChainNftAssignments : undefined,
         // heartbeat_authority defaults to the protocol relayer so the off-chain liveness service can
         // bump last_activity from detected wallet activity. Owner can still bump (on-chain is_owner
         // branch). Unset -> relayer default in createDelegatedCapsule.
-        recreate,
+        recreate: false,
         onStep: (label) => setCurrentStep(label),
       })
       const hash = baseSigs[0]
@@ -638,6 +719,7 @@ export function useCreateCapsuleForm() {
         if (intentReminderEnabled) {
           try {
             const reminderTimestamp = Date.now()
+            const singleFungibleAsset = selectedAssets.length === 1 ? selectedAssets[0] : null
             const reminderSignatureMessage = buildIntentSignedMessage({
               action: 'register-reminder',
               owner: publicKey.toBase58(),
@@ -655,19 +737,32 @@ export function useCreateCapsuleForm() {
                 capsuleAddress: capsulePDA.toBase58(),
                 owner: publicKey.toBase58(),
                 recipientEmail: normalizedEmail,
-                assetSymbol: capsuleType === 'nft' ? 'NFT' : assetUnit,
+                assetSymbol:
+                  capsuleType === 'nft'
+                    ? 'NFT'
+                    : singleFungibleAsset?.symbol ?? 'MULTI',
                 assetLabel:
                   capsuleType === 'nft'
                     ? `${selectedNftMints.length} standard Solana NFT${selectedNftMints.length === 1 ? '' : 's'}`
-                    : selectedToken
-                      ? `${selectedToken.symbol} (${selectedToken.mint})`
-                      : 'Solana',
+                    : singleFungibleAsset
+                      ? singleFungibleAsset.mint
+                        ? `${singleFungibleAsset.symbol} (${singleFungibleAsset.mint})`
+                        : 'Solana'
+                      : `${selectedAssets.length} assets (${selectedAssets.map((asset) => asset.symbol).join(', ')})`,
                 assetMint:
                   capsuleType === 'nft' && selectedNftMints.length === 1
                     ? selectedNftMints[0]
-                    : selectedToken?.mint ?? null,
-                assetDecimals,
-                totalAmount: capsuleType === 'token' ? totalAmount : undefined,
+                    : capsuleType === 'token' && singleFungibleAsset
+                      ? singleFungibleAsset.mint
+                      : null,
+                assetDecimals:
+                  capsuleType === 'token' && singleFungibleAsset
+                    ? singleFungibleAsset.decimals
+                    : undefined,
+                totalAmount:
+                  capsuleType === 'token' && singleFungibleAsset
+                    ? singleFungibleAsset.amount
+                    : undefined,
                 beneficiaryCount:
                   capsuleType === 'token'
                     ? beneficiaries.filter((b) => b.address.trim()).length
@@ -713,7 +808,7 @@ export function useCreateCapsuleForm() {
       toast({ message: 'Capsule created', variant: 'success' })
 
       // Redirect to capsules page after successful creation
-      window.location.href = '/capsules'
+      window.location.assign('/capsules')
     } catch (err: any) {
       console.error('Error creating capsule:', err)
       let errorMessage = err.message || 'Failed to create capsule'
@@ -730,7 +825,7 @@ export function useCreateCapsuleForm() {
             const createdCapsule = await getCapsule(publicKey)
             if (createdCapsule && createdCapsule.isActive) {
               toast({ message: 'Capsule created', variant: 'success' })
-              window.location.href = '/capsules'
+              window.location.assign('/capsules')
               setIsPending(false)
               return
             }
@@ -761,8 +856,9 @@ export function useCreateCapsuleForm() {
         }
       }
 
-      toast({ message: normalizeTxError(err), variant: 'error' })
-      setError(errorMessage)
+      const friendlyMessage = normalizeTxError(errorMessage)
+      toast({ message: friendlyMessage, variant: 'error' })
+      setError(friendlyMessage)
     } finally {
       setIsPending(false)
     }
@@ -774,7 +870,7 @@ export function useCreateCapsuleForm() {
 
   const hasAssetSelection = capsuleType !== null && (
     capsuleType === 'token'
-      ? Boolean(totalAmount.trim())
+      ? selectedAssets.length > 0 && selectedAssets.every((asset) => Boolean(asset.amount.trim()))
       : selectedNftMints.length > 0
   )
   const nftAssignmentsComplete = capsuleType === 'nft' && selectedNftMints.length > 0 &&
@@ -799,6 +895,8 @@ export function useCreateCapsuleForm() {
     hasBeneficiaryDetails &&
     hasIntentDetails &&
     !isPending &&
+    !existingCapsule &&
+    existingCapsuleCheck === 'ready' &&
     modifyCount < MAX_CAPSULE_MODIFICATIONS &&
     wallet.signMessage &&
     isValidEmail(intentEmail) &&
@@ -836,11 +934,9 @@ export function useCreateCapsuleForm() {
     setIntent: (v: string) => { clearFieldErrors(); setIntent(v) },
     capsuleType,
     setCapsuleType,
-    selectedAssetMint,
-    setSelectedAssetMint,
+    selectedAssetKeys,
+    assetAmounts,
     beneficiaries,
-    totalAmount,
-    setTotalAmount: (v: string) => { clearFieldErrors(); setTotalAmount(v) },
     inactivityDays,
     setInactivityDays: (v: string) => { clearFieldErrors(); setInactivityDays(v) },
     inactivityUnit,
@@ -859,6 +955,10 @@ export function useCreateCapsuleForm() {
     error,
     fieldErrors,
     existingCapsule,
+    existingCapsuleAddress,
+    existingCapsuleCheck,
+    existingCapsuleCheckError,
+    retryExistingCapsuleCheck: () => setExistingCapsuleCheckAttempt((attempt) => attempt + 1),
     modifyCount,
     openSection,
     setOpenSection,
@@ -878,12 +978,13 @@ export function useCreateCapsuleForm() {
     setIntentReminderEnabled,
     // wallet token reads
     walletTokens,
+    walletAssets,
     tokensLoading,
+    solBalanceLoading: solBalance.isLoading,
     // derived
     supportsMinuteMode,
-    selectedToken,
+    selectedAssets,
     assetUnit,
-    assetDecimals,
     approxFireDate,
     minTargetDate,
     // beneficiary handlers
@@ -891,6 +992,8 @@ export function useCreateCapsuleForm() {
     splitEvenly,
     removeBeneficiary,
     updateBeneficiary,
+    toggleAssetSelection,
+    setAssetAmount,
     // NFT handlers
     toggleNftSelection,
     addNftRecipient,

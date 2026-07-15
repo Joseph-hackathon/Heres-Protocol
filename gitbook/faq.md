@@ -29,8 +29,9 @@ No. Beneficiaries have absolutely no control over the capsule and cannot modify 
 ### What is the Capsule rule?
 
 *  You can only create 1 capsule per wallet.
-* Currently, you can create a new capsule only after an existing one has been fully executed. (Update coming soon)
-* Once a capsule is created and activated on-chain, it cannot be modified or canceled to ensure maximum tamper-proof security. (Update for flexible modifications is coming soon)
+* The Create page redirects you to My Capsule while lifecycle accounts from an existing capsule still remain.
+* While a capsule is active, the owner can refresh activity, add or withdraw funds, edit beneficiaries within the modification limit, undelegate, or cancel it.
+* Distribution and cancellation require the capsule switch and beneficiary data to be settled back on Solana first.
 
 ### &#xD;What is the Intent Statement?
 

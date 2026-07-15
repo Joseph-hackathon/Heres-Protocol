@@ -1,6 +1,6 @@
 # Create a Capsule
 
-An Intent Capsule is an on-chain container for asset instructions. It stores the owner, inactivity period, last activity timestamp, encrypted intent metadata, active state, and execution state.
+An Intent Capsule is an on-chain container for asset instructions. It stores the owner, inactivity period, last activity timestamp, active state, execution state, and beneficiary routing. Confidential Intent Statement delivery is registered separately.
 
 {% stepper %}
 {% step %}
@@ -10,17 +10,17 @@ Open the Heres app and connect your Solana wallet. The connected wallet becomes 
 {% endstep %}
 
 {% step %}
-### Step 2: Choose Asset Type
+### Step 2: Choose Assets
 
-Select the asset you want the capsule to manage.
+Choose either fungible assets or NFTs.
 
-Available paths depend on deployment configuration:
+For a fungible capsule, select up to eight wallet-held assets:
 
 * **SOL**: native Solana asset support.
-* **SPL token assets**: configured through token mint environment variables.
-* **NFTs, RWAs (Future)**
+* **Classic SPL tokens**: any supported mint held in the connected wallet's canonical token account.
+* **Token-2022 tokens**: any supported mint held in the connected wallet's canonical token account.
 
-For token capsules, enter the total amount to lock. For NFT capsules, select the NFT mints and assign recipients.
+Enter an exact amount for each selected fungible asset. The app keeps a SOL reserve for the creation fee, account rent, and transaction fees. For an NFT capsule, select standard Solana NFT mints and assign one recipient to each mint.
 {% endstep %}
 
 {% step %}
@@ -30,13 +30,10 @@ Add one or more beneficiaries.
 
 For each beneficiary, provide:
 
-* Destination chain type
-* Wallet address
-* Amount
-* Amount type, either fixed or percentage
-* Destination chain selector when using a cross-chain path
+* Solana wallet address
+* Percentage share
 
-The app validates supported address formats and amount totals before allowing creation.
+Shares must total 100 percent. The same percentage split applies independently to every fungible asset selected in Step 2. The app validates addresses, duplicate entries, amount precision, wallet balances, and share totals before requesting a wallet signature.
 {% endstep %}
 
 {% step %}
@@ -58,13 +55,13 @@ Do not put plain private keys, seed phrases, or production secrets into any test
 {% step %}
 ### Step 6: Add Representative Email
 
-The representative is the email recipient for confidential delivery. Heres encrypts the statement in the browser, stores delivery metadata, and later dispatches delivery through Chainlink CRE after execution.
+The representative is the email recipient for confidential delivery. Heres authorizes registration with a wallet signature, encrypts the statement at rest in the delivery service, and later dispatches delivery through Chainlink CRE after execution.
 {% endstep %}
 
 {% step %}
-### Step 7: Choose Unlock Code
+### Step 7: Authorize Intent Delivery
 
-The unlock code is used during client-side encryption. The encrypted payload uses AES-GCM with key derivation. The plaintext statement should not be stored in normal backend application state.
+Sign the intent registration message with the connected wallet. This proves the request came from the capsule owner without exposing the wallet's private key.
 {% endstep %}
 
 {% step %}
@@ -72,8 +69,8 @@ The unlock code is used during client-side encryption. The encrypted payload use
 
 Review:
 
-* Asset type and amount
-* Beneficiary addresses
+* Every selected asset and amount
+* Beneficiary addresses and percentage shares
 * Inactivity period
 * Representative email
 * Estimated fees

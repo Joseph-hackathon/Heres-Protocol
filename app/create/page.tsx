@@ -1,6 +1,8 @@
 'use client'
 
-import { Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon } from 'lucide-react'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { Shield, Eye, Plus, X, CheckCircle, ChevronDown, ChevronUp, Coins, ImageIcon, Loader2 } from 'lucide-react'
 import { Button, Field, Input, Textarea, Select, Stepper } from '@/components/ui'
 import { PrivyLoginButton } from '@/components/PrivyLoginButton'
 import {
@@ -10,21 +12,21 @@ import {
 } from '@/constants'
 import { isValidBeneficiaryAddress, isValidEmail } from '@/utils/validation'
 import { TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
+import { MAX_FUNGIBLE_ASSETS } from '@/lib/fungible-assets'
 import { SectionEyebrow, ServiceAccordionSection, ServiceMetaCard, ServicePageHeader } from '@/components/ui/service-page'
 import { useCreateCapsuleForm, CREATE_STEPS, CREATE_FAQS } from '@/hooks/useCreateCapsuleForm'
 
 export default function CreatePage() {
+  const router = useRouter()
   const {
     connected,
     intent,
     setIntent,
     capsuleType,
     setCapsuleType,
-    selectedAssetMint,
-    setSelectedAssetMint,
+    selectedAssetKeys,
+    assetAmounts,
     beneficiaries,
-    totalAmount,
-    setTotalAmount,
     inactivityDays,
     setInactivityDays,
     inactivityUnit,
@@ -39,6 +41,10 @@ export default function CreatePage() {
     error,
     fieldErrors,
     existingCapsule,
+    existingCapsuleAddress,
+    existingCapsuleCheck,
+    existingCapsuleCheckError,
+    retryExistingCapsuleCheck,
     modifyCount,
     openSection,
     setOpenSection,
@@ -55,10 +61,10 @@ export default function CreatePage() {
     setIntentReminderEnabled,
     walletTokens,
     tokensLoading,
+    selectedAssets,
     inactivityUnitOptions,
     inactivityPresets,
     inactivityPlaceholder,
-    selectedToken,
     assetUnit,
     approxFireDate,
     minTargetDate,
@@ -66,6 +72,8 @@ export default function CreatePage() {
     splitEvenly,
     removeBeneficiary,
     updateBeneficiary,
+    toggleAssetSelection,
+    setAssetAmount,
     toggleNftSelection,
     addNftRecipient,
     removeNftRecipient,
@@ -84,6 +92,64 @@ export default function CreatePage() {
     currentStepIndex,
     currentStepMeta,
   } = useCreateCapsuleForm()
+
+  useEffect(() => {
+    if (!connected || !existingCapsule || !existingCapsuleAddress) return
+    const timeout = window.setTimeout(() => {
+      router.replace(`/capsules/${existingCapsuleAddress}`)
+    }, 1800)
+    return () => window.clearTimeout(timeout)
+  }, [connected, existingCapsule, existingCapsuleAddress, router])
+
+  if (connected && existingCapsuleCheck === 'loading') {
+    return (
+      <div className="min-h-screen bg-hero px-4 pb-16 pt-24 text-Heres-white">
+        <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-Heres-border bg-Heres-card/80 p-8 text-center">
+          <Loader2 className="mb-5 h-10 w-10 animate-spin text-Heres-accent" aria-hidden />
+          <h1 className="font-serif text-2xl font-semibold">Checking your capsule</h1>
+          <p className="mt-3 text-Heres-muted">Confirming that this wallet is ready to create.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (connected && existingCapsule && existingCapsuleAddress) {
+    return (
+      <div className="min-h-screen bg-hero px-4 pb-16 pt-24 text-Heres-white">
+        <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-Heres-accent/30 bg-Heres-card/80 p-8 text-center">
+          <Shield className="mb-5 h-12 w-12 text-Heres-accent" aria-hidden />
+          <h1 className="font-serif text-2xl font-semibold">You already have a capsule</h1>
+          <p className="mt-3 max-w-md text-Heres-muted">
+            Manage its funds, beneficiary state, undelegation, and distribution from My Capsule.
+          </p>
+          <p className="mt-2 text-sm text-Heres-accent">Opening My Capsule...</p>
+          <Button
+            variant="primary"
+            size="md"
+            className="mt-6"
+            onClick={() => router.replace(`/capsules/${existingCapsuleAddress}`)}
+          >
+            Open My Capsule now
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (connected && existingCapsuleCheck === 'error') {
+    return (
+      <div className="min-h-screen bg-hero px-4 pb-16 pt-24 text-Heres-white">
+        <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-amber-400/30 bg-Heres-card/80 p-8 text-center">
+          <Shield className="mb-5 h-12 w-12 text-amber-300" aria-hidden />
+          <h1 className="font-serif text-2xl font-semibold">Capsule check unavailable</h1>
+          <p className="mt-3 max-w-md text-Heres-muted">{existingCapsuleCheckError}</p>
+          <Button variant="primary" size="md" className="mt-6" onClick={retryExistingCapsuleCheck}>
+            Retry check
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-hero pt-24 pb-16">
@@ -210,40 +276,51 @@ export default function CreatePage() {
                 {capsuleType === 'token' && (
                   <div className="mt-5 space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <div>
-                      <label className="mb-2 block text-sm text-Heres-muted">Asset to lock</label>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-Heres-white">Assets to lock</p>
+                        <p className="text-xs text-Heres-muted">{selectedAssets.length}/{MAX_FUNGIBLE_ASSETS} selected</p>
+                      </div>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {/* Native SOL is always available. */}
                         <button
                           type="button"
-                          onClick={() => setSelectedAssetMint(null)}
+                          onClick={() => toggleAssetSelection('sol')}
+                          aria-pressed={selectedAssetKeys.includes('sol')}
                           className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                            selectedAssetMint === null
+                            selectedAssetKeys.includes('sol')
                               ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
                               : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
-                          }`}
+                          } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-Heres-accent`}
                         >
-                          <p className="text-sm font-semibold">SOL</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold">SOL</p>
+                            {selectedAssetKeys.includes('sol') && <CheckCircle className="h-4 w-4" aria-hidden />}
+                          </div>
                           <p className="text-xs text-Heres-muted">Native Solana</p>
                         </button>
                         {/* Any SPL / Token-2022 the connected wallet holds. */}
                         {walletTokens.map((t) => (
                           <button
-                            key={t.mint}
+                            key={t.key}
                             type="button"
-                            onClick={() => setSelectedAssetMint(t.mint)}
-                            title={t.mint}
+                            onClick={() => toggleAssetSelection(t.key)}
+                            aria-pressed={selectedAssetKeys.includes(t.key)}
+                            title={t.mint ?? undefined}
                             className={`rounded-xl border px-4 py-3 text-left transition-colors ${
-                              selectedAssetMint === t.mint
+                              selectedAssetKeys.includes(t.key)
                                 ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
                                 : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40'
-                            }`}
+                            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-Heres-accent`}
                           >
-                            <p className="text-sm font-semibold">
-                              {t.symbol}
-                              {t.tokenProgram === TOKEN_2022_PROGRAM_ID.toBase58() && (
-                                <span className="ml-1.5 rounded bg-Heres-surface/80 px-1 py-0.5 text-[9px] uppercase tracking-wide text-Heres-muted">T-2022</span>
-                              )}
-                            </p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold">
+                                {t.symbol}
+                                {t.tokenProgram === TOKEN_2022_PROGRAM_ID.toBase58() && (
+                                  <span className="ml-1.5 rounded bg-Heres-surface/80 px-1 py-0.5 text-[9px] uppercase tracking-wide text-Heres-muted">T-2022</span>
+                                )}
+                              </p>
+                              {selectedAssetKeys.includes(t.key) && <CheckCircle className="h-4 w-4" aria-hidden />}
+                            </div>
                             <p className="text-xs text-Heres-muted">Balance: {t.balanceUi}</p>
                           </button>
                         ))}
@@ -256,19 +333,40 @@ export default function CreatePage() {
                         <p className="mt-2 text-xs text-Heres-muted">Connect your wallet to see the tokens you can lock.</p>
                       )}
                     </div>
-                    <Field
-                      label={`Total Amount (${assetUnit})`}
-                      hint={`How much ${assetUnit} to lock in the capsule. Each beneficiary receives their share of this.${selectedToken ? ` Available: ${selectedToken.balanceUi} ${assetUnit}.` : ''}`}
-                      error={fieldErrors['totalAmount']}
-                    >
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        value={totalAmount}
-                        onChange={(e) => setTotalAmount(e.target.value)}
-                        placeholder="0.0"
-                      />
-                    </Field>
+                    {selectedAssets.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-Heres-border p-4 text-sm text-Heres-muted">
+                        Select at least one asset to continue.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-xs text-Heres-muted">
+                          Enter the amount for each asset. The same beneficiary percentages apply to every asset.
+                        </p>
+                        {selectedAssets.map((asset, index) => (
+                          <Field
+                            key={asset.key}
+                            label={`Amount (${asset.symbol})`}
+                            hint={asset.balanceUi == null
+                              ? undefined
+                              : asset.key === 'sol'
+                                ? `Available after the 0.08 SOL fee and rent reserve: ${asset.balanceUi} SOL`
+                                : `Available: ${asset.balanceUi} ${asset.symbol}`}
+                            error={fieldErrors[`assets.${index}.amount`]}
+                            required
+                          >
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={assetAmounts[asset.key] ?? ''}
+                              onChange={(event) => setAssetAmount(asset.key, event.target.value)}
+                              placeholder="0.0"
+                              className="font-mono tabular-nums"
+                            />
+                          </Field>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -351,8 +449,6 @@ export default function CreatePage() {
 
                     {beneficiaries.map((beneficiary, index) => {
                       const sharePct = parseFloat(beneficiary.amount) || 0
-                      const total = parseFloat(totalAmount) || 0
-                      const tokenAmount = total > 0 ? (total * sharePct) / 100 : 0
                       const liveAddrError = beneficiary.address && !isValidBeneficiaryAddress(beneficiary) ? 'Invalid Solana address' : undefined
                       const addrError = fieldErrors[`beneficiaries.${index}.address`] ?? liveAddrError
                       const shareError = fieldErrors[`beneficiaries.${index}.share`]
@@ -396,9 +492,9 @@ export default function CreatePage() {
                           {shareError && (
                             <p role="alert" className="text-xs text-danger">{shareError}</p>
                           )}
-                          {beneficiary.address && sharePct > 0 && total > 0 && (
+                          {beneficiary.address && sharePct > 0 && selectedAssets.length > 0 && (
                             <p className="text-xs text-Heres-muted">
-                              ~ <span className="font-semibold text-Heres-accent">{tokenAmount.toFixed(4)} {assetUnit}</span> ({sharePct}% of {total} {assetUnit})
+                              Receives <span className="font-semibold text-Heres-accent">{sharePct}% of every selected asset</span> ({selectedAssets.map((asset) => asset.symbol).join(', ')}).
                             </p>
                           )}
                         </div>
@@ -681,7 +777,7 @@ export default function CreatePage() {
 
                 {error && (
                   <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-400">
-                    Error: {error}
+                    {error}
                   </div>
                 )}
                 {txHash && (
@@ -766,6 +862,16 @@ export default function CreatePage() {
                         <span className="text-Heres-muted">Execution Fee</span>
                         <span className="font-semibold text-Heres-white">None</span>
                       </div>
+                      {capsuleType === 'token' && (
+                        <div className="flex items-start justify-between gap-4 text-sm">
+                          <span className="text-Heres-muted">Vault Assets</span>
+                          <span className="max-w-[220px] text-right font-mono text-Heres-white tabular-nums">
+                            {selectedAssets.length > 0
+                              ? selectedAssets.map((asset) => `${asset.amount || '0'} ${asset.symbol}`).join(' + ')
+                              : 'Pending'}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Representative</span>
                         <span className="max-w-[180px] truncate font-medium text-Heres-white">{intentEmail || 'Pending'}</span>
@@ -783,7 +889,7 @@ export default function CreatePage() {
                           </div>
                         )}
                         <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-300 space-y-1">
-                          <p><span className="font-semibold">Irreversible action:</span> Once created, the capsule locks your funds on-chain. They cannot be recovered until the inactivity period or target date trigger fires.</p>
+                          <p><span className="font-semibold">On-chain custody:</span> Creation moves the selected funds into the capsule vault. Before it fires, you can add funds, withdraw funds, or cancel from My Capsule.</p>
                           <p><span className="font-semibold">Multiple approvals required:</span> Your wallet will prompt you to sign several times: (1) create and fund the capsule, (2) delegate it to the TEE, (3) sign the TEE authentication token, and (4) set your beneficiaries inside the TEE. Approve each prompt in sequence.</p>
                         </div>
                         <Button
@@ -857,19 +963,34 @@ export default function CreatePage() {
                     <p className="text-Heres-white">{intent || 'No intent specified'}</p>
                   </div>
                   {capsuleType === 'token' && (
-                    <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
-                      <p className="mb-2 text-xs text-Heres-accent">Beneficiaries</p>
-                      <div className="space-y-2">
-                        {beneficiaries.map((b) => (
-                          <div key={b.id} className="flex justify-between gap-3 rounded-lg bg-Heres-card/80 p-2">
-                            <p className="max-w-[200px] truncate font-mono text-sm text-Heres-white">
-                              {b.address || 'Not set'}
-                            </p>
-                            <p className="text-sm font-semibold text-Heres-accent">{b.amount || '0'}%</p>
-                          </div>
-                        ))}
+                    <>
+                      <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                        <p className="mb-2 text-xs text-Heres-accent">Vault funding</p>
+                        <div className="space-y-2">
+                          {selectedAssets.map((asset) => (
+                            <div key={asset.key} className="flex justify-between gap-3 rounded-lg bg-Heres-card/80 p-2">
+                              <p className="text-sm text-Heres-white">{asset.symbol}</p>
+                              <p className="font-mono text-sm font-semibold tabular-nums text-Heres-accent">
+                                {asset.amount || '0'} {asset.symbol}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                      <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
+                        <p className="mb-2 text-xs text-Heres-accent">Beneficiaries</p>
+                        <div className="space-y-2">
+                          {beneficiaries.map((b) => (
+                            <div key={b.id} className="flex justify-between gap-3 rounded-lg bg-Heres-card/80 p-2">
+                              <p className="max-w-[200px] truncate font-mono text-sm text-Heres-white">
+                                {b.address || 'Not set'}
+                              </p>
+                              <p className="text-sm font-semibold text-Heres-accent">{b.amount || '0'}%</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
                   )}
                   {capsuleType === 'nft' && (
                     <>
