@@ -45,6 +45,7 @@ import {
   getVaultTokenAccounts,
 } from '@/lib/spl'
 import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
+import { isDurableErConfirmation } from '@/lib/er-confirmation'
 import {
   createInheritanceCommitment,
   createInheritanceSalt,
@@ -244,7 +245,7 @@ async function sendEr(
     const s = (await connection.getSignatureStatuses([sig]))?.value?.[0]
     if (!s) continue
     if (s.err) throw new Error('ER tx err: ' + JSON.stringify(s.err))
-    if (['confirmed', 'finalized'].includes(s.confirmationStatus ?? '')) return sig
+    if (isDurableErConfirmation(s.confirmationStatus)) return sig
   }
   throw new Error('ER confirm timeout for ' + sig.slice(0, 16))
 }
