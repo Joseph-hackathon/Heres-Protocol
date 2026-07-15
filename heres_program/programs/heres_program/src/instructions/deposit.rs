@@ -66,9 +66,21 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     }
 
     if let Some(mint) = &ctx.accounts.mint {
-        let from_ata = ctx.accounts.source_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let to_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        let from_ata = ctx
+            .accounts
+            .source_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let to_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
         require!(to_ata.mint == mint.key(), ErrorCode::InvalidTokenAccount);
 
         // transfer_checked (mint + decimals) is required by Token-2022 and supported by classic SPL.

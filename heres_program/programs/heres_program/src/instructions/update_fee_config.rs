@@ -21,7 +21,10 @@ pub struct UpdateFeeConfig<'info> {
 
 /// Update the platform creation fee (authority only). Lean model: creation fee only (redesign D3).
 pub fn handler(ctx: Context<UpdateFeeConfig>, creation_fee_lamports: u64) -> Result<()> {
-    require!(creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS, ErrorCode::InvalidFeeConfig);
+    require!(
+        creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS,
+        ErrorCode::InvalidFeeConfig
+    );
     let config = &mut ctx.accounts.fee_config;
     config.creation_fee_lamports = creation_fee_lamports;
     msg!("Fee config updated: creation_fee={}", creation_fee_lamports);

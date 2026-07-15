@@ -33,12 +33,18 @@ pub fn handler(ctx: Context<ExecuteIntent>) -> Result<()> {
     // OR an absolute target_date has been reached (set => fires regardless of activity; None => silent).
     let inactivity_due = now - capsule.last_activity >= capsule.inactivity_period;
     let date_due = capsule.target_date.map_or(false, |t| now >= t);
-    require!(inactivity_due || date_due, ErrorCode::InactivityPeriodNotMet);
+    require!(
+        inactivity_due || date_due,
+        ErrorCode::InactivityPeriodNotMet
+    );
 
     capsule.is_active = false;
     capsule.executed_at = Some(now);
 
-    msg!("Switch fired (state updated) for capsule: {:?}", capsule.key());
+    msg!(
+        "Switch fired (state updated) for capsule: {:?}",
+        capsule.key()
+    );
     emit!(IntentExecuted {
         capsule: capsule.key(),
         owner: capsule.owner,

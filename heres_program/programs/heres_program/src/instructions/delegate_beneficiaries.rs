@@ -75,20 +75,28 @@ pub fn handler(ctx: Context<DelegateBeneficiariesInput>) -> Result<()> {
     let set_bump = ctx.bumps.pda;
     let set_seeds: &[&[u8]] = &[b"beneficiary_set", owner_key.as_ref(), &[set_bump]];
 
-    let members = vec![Member { flags: OWNER_FLAGS, pubkey: owner_key }];
+    let members = vec![Member {
+        flags: OWNER_FLAGS,
+        pubkey: owner_key,
+    }];
 
     let payer_ai = ctx.accounts.payer.to_account_info();
     let system_ai = ctx.accounts.system_program.to_account_info();
 
     // 1. Create the permission account (the BeneficiarySet PDA signs its own permission into existence).
     if ctx.accounts.permission.data_is_empty() {
-        msg!("Creating PER permission for BeneficiarySet ({} member)", members.len());
+        msg!(
+            "Creating PER permission for BeneficiarySet ({} member)",
+            members.len()
+        );
         CreatePermissionCpiBuilder::new(&ctx.accounts.permission_program)
             .permissioned_account(&ctx.accounts.pda)
             .permission(&ctx.accounts.permission)
             .payer(&payer_ai)
             .system_program(&system_ai)
-            .args(MembersArgs { members: Some(members) })
+            .args(MembersArgs {
+                members: Some(members),
+            })
             .invoke_signed(&[set_seeds])?;
     }
 
@@ -112,7 +120,10 @@ pub fn handler(ctx: Context<DelegateBeneficiariesInput>) -> Result<()> {
 
     // 3. Delegate the BeneficiarySet to the TEE.
     if ctx.accounts.pda.owner != &ephemeral_rollups_sdk::id() {
-        msg!("Delegating BeneficiarySet to TEE (validator {:?})", validator_key);
+        msg!(
+            "Delegating BeneficiarySet to TEE (validator {:?})",
+            validator_key
+        );
         ctx.accounts.delegate_pda(
             &ctx.accounts.payer,
             &[b"beneficiary_set", owner_key.as_ref()],

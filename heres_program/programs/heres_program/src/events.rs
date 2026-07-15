@@ -17,3 +17,11 @@ pub struct AssetsDistributed {
     pub mint: Pubkey,
     pub total: u64,
 }
+
+#[event]
+pub struct NftDistributed {
+    pub capsule: Pubkey,
+    pub owner: Pubkey,
+    pub mint: Pubkey,
+    pub recipient: Pubkey,
+}

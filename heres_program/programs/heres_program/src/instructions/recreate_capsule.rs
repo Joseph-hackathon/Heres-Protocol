@@ -1,9 +1,9 @@
 //! Reuse an executed capsule: reset its lifecycle in place.
 //!
 //! The per-owner PDA allows only one capsule per wallet, so after firing the owner cannot
-//! create_capsule again. This resets the Switch (clears beneficiaries + executed state and re-arms
-//! it). Re-fund via `deposit` and re-set beneficiaries via `update_intent` (on the PER after
-//! re-delegation). Owner-only.
+//! create_capsule again. This resets the Switch (clears beneficiaries, NFT assignments, and executed
+//! state and re-arms it). Re-fund via `deposit`, then re-set the private inheritance configuration
+//! on the PER after re-delegation. Owner-only.
 
 use anchor_lang::prelude::*;
 
@@ -59,7 +59,11 @@ pub fn handler(
     capsule.target_date = target_date;
 
     ctx.accounts.beneficiary_set.beneficiaries = Vec::new();
+    ctx.accounts.beneficiary_set.nft_assignments = Vec::new();
 
-    msg!("Capsule lifecycle reset (recreate) for owner: {:?}", capsule.owner);
+    msg!(
+        "Capsule lifecycle reset (recreate) for owner: {:?}",
+        capsule.owner
+    );
     Ok(())
 }

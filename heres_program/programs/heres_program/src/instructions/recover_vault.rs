@@ -7,7 +7,9 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
-use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token_interface::{
+    self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::error::ErrorCode;
 use crate::state::{CapsuleVault, IntentCapsule};
@@ -64,16 +66,38 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
     let signer_seeds = &[vault_seeds];
 
     if let Some(mint) = &ctx.accounts.mint {
-        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let owner_ata = ctx.accounts.owner_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let vault_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let owner_ata = ctx
+            .accounts
+            .owner_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
         let token_program_id = token_program.key();
         require!(
-            vault_ata.key() == get_associated_token_address_with_program_id(&ctx.accounts.vault.key(), &mint.key(), &token_program_id),
+            vault_ata.key()
+                == get_associated_token_address_with_program_id(
+                    &ctx.accounts.vault.key(),
+                    &mint.key(),
+                    &token_program_id
+                ),
             ErrorCode::InvalidTokenAccount
         );
         require!(
-            owner_ata.key() == get_associated_token_address_with_program_id(&owner_key, &mint.key(), &token_program_id),
+            owner_ata.key()
+                == get_associated_token_address_with_program_id(
+                    &owner_key,
+                    &mint.key(),
+                    &token_program_id
+                ),
             ErrorCode::InvalidTokenAccount
         );
 
@@ -86,7 +110,11 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
                 authority: ctx.accounts.vault.to_account_info(),
             };
             token_interface::transfer_checked(
-                CpiContext::new_with_signer(token_program.to_account_info(), cpi_accounts, signer_seeds),
+                CpiContext::new_with_signer(
+                    token_program.to_account_info(),
+                    cpi_accounts,
+                    signer_seeds,
+                ),
                 amount,
                 mint.decimals,
             )?;
@@ -102,14 +130,22 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
             close_accounts,
             signer_seeds,
         ))?;
-        msg!("Recovered {} SPL tokens of mint {:?} to owner", amount, mint.key());
+        msg!(
+            "Recovered {} SPL tokens of mint {:?} to owner",
+            amount,
+            mint.key()
+        );
     } else {
         let vault_ai = ctx.accounts.vault.to_account_info();
         let rent_floor = Rent::get()?.minimum_balance(vault_ai.data_len());
         let available = vault_ai.lamports().saturating_sub(rent_floor);
         require!(available > 0, ErrorCode::NothingToDistribute);
         **vault_ai.try_borrow_mut_lamports()? -= available;
-        **ctx.accounts.owner.to_account_info().try_borrow_mut_lamports()? += available;
+        **ctx
+            .accounts
+            .owner
+            .to_account_info()
+            .try_borrow_mut_lamports()? += available;
         msg!("Recovered {} lamports to owner", available);
     }
     Ok(())

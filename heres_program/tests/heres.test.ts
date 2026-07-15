@@ -1,10 +1,11 @@
 // Heres lean program - structured bankrun test suite.
 //
-// Coverage (13 base-layer instructions + edge cases):
+// Coverage (15 base-layer instructions + edge cases):
 //   fee config .......... update_fee_config (authority gate, fee cap)
-//   lifecycle ........... create_capsule, deposit (SOL+SPL), update_intent, cancel, recreate
+//   lifecycle ........... create_capsule, deposit (SOL+SPL/NFT), update_intent,
+//                        update_nft_assignments, cancel, recreate
 //   firing .............. execute_intent (inactivity gate), update_activity (bump + grace revive)
-//   distribution ........ distribute_assets (SOL+SPL, share split, remainder, grace gate, idempotency)
+//   distribution ........ distribute_assets (SOL+SPL) + distribute_nft (explicit recipient)
 //   escape hatch ........ recover_vault (SOL+SPL, pre-fire only)
 //
 // init_fee_config (C3 upgrade-authority gate) and the ER instructions (delegate_capsule,
@@ -92,6 +93,16 @@ const updateIntentIx = (
     owner: owner.publicKey,
   });
 
+const updateNftAssignmentsIx = (
+  env: Env,
+  owner: Keypair,
+  assignments: { mint: PublicKey; recipient: PublicKey }[]
+) =>
+  env.program.methods.updateNftAssignments(assignments).accountsPartial({
+    beneficiarySet: beneficiarySetPda(owner.publicKey),
+    owner: owner.publicKey,
+  });
+
 const depositSolIx = (env: Env, owner: Keypair, amount: number) =>
   env.program.methods.deposit(new BN(amount)).accountsPartial({
     capsule: capsulePda(owner.publicKey),
@@ -175,6 +186,23 @@ const distributeSplIx = (
     .remainingAccounts(
       recipientAtas.map((pubkey) => ({ pubkey, isWritable: true, isSigner: false }))
     );
+
+const distributeNftIx = (
+  env: Env,
+  ownerPk: PublicKey,
+  mint: PublicKey,
+  recipient: PublicKey,
+  recipientAta: PublicKey
+) =>
+  env.program.methods.distributeNft(recipient).accountsPartial({
+    capsule: capsulePda(ownerPk),
+    beneficiarySet: beneficiarySetPda(ownerPk),
+    vault: vaultPda(ownerPk),
+    tokenProgram: TOKEN_PROGRAM_ID,
+    mint,
+    vaultTokenAccount: ataFor(vaultPda(ownerPk), mint, true),
+    recipientTokenAccount: recipientAta,
+  });
 
 const recoverSolIx = (env: Env, owner: Keypair) =>
   env.program.methods.recoverVault().accountsPartial({
@@ -596,6 +624,50 @@ describe("heres: update_intent", () => {
   });
 });
 
+describe("heres: update_nft_assignments", () => {
+  it("stores private mint-to-recipient assignments", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const assignments = [
+      { mint: Keypair.generate().publicKey, recipient: Keypair.generate().publicKey },
+      { mint: Keypair.generate().publicKey, recipient: Keypair.generate().publicKey },
+    ];
+
+    assertOk(await send(env, owner, updateNftAssignmentsIx(env, owner, assignments), [owner]));
+    const bs = await fetchBeneficiarySet(env, owner.publicKey);
+    expect(bs.nftAssignments.length).to.eq(2);
+    expect(bs.nftAssignments[0].mint.toBase58()).to.eq(assignments[0].mint.toBase58());
+    expect(bs.nftAssignments[0].recipient.toBase58()).to.eq(assignments[0].recipient.toBase58());
+  });
+
+  it("rejects duplicate mint assignments", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const mint = Keypair.generate().publicKey;
+    const res = await send(
+      env,
+      owner,
+      updateNftAssignmentsIx(env, owner, [
+        { mint, recipient: Keypair.generate().publicKey },
+        { mint, recipient: Keypair.generate().publicKey },
+      ]),
+      [owner]
+    );
+    assertErr(res, "DuplicateNftAssignment");
+  });
+
+  it("rejects more than 8 NFT assignments", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const nine = Array.from({ length: 9 }, () => ({
+      mint: Keypair.generate().publicKey,
+      recipient: Keypair.generate().publicKey,
+    }));
+    const res = await send(env, owner, updateNftAssignmentsIx(env, owner, nine), [owner]);
+    assertErr(res, "TooManyNftAssignments");
+  });
+});
+
 describe("heres: execute_intent", () => {
   it("rejects firing before the inactivity period elapses", async () => {
     const env = await startEnv({ creationFee: 0 });
@@ -889,6 +961,130 @@ describe("heres: distribute_assets (SPL)", () => {
     // vault ATA drained + closed
     const vaultAta = ataFor(vaultPda(owner.publicKey), mint, true);
     expect(await accountExists(env, vaultAta)).to.eq(false);
+  });
+});
+
+describe("heres: distribute_nft", () => {
+  async function nftCapsule(env: Env) {
+    const owner = await freshCapsule(env, 100);
+    const mintAuth = await fundedKeypair(env, 5);
+    const mint = await createMint(env, mintAuth.publicKey, 0);
+    const ownerAta = await createAta(env, owner.publicKey, mint);
+    await mintTo(env, mint, ownerAta, mintAuth, 1n);
+    assertOk(await send(env, owner, depositSplIx(env, owner, 1n, mint, ownerAta), [owner]));
+
+    const recipient = Keypair.generate().publicKey;
+    const recipientAta = await createAta(env, recipient, mint);
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateNftAssignmentsIx(env, owner, [{ mint, recipient }]),
+        [owner]
+      )
+    );
+    await fire(env, owner, 100);
+    await warp(env, GRACE_PERIOD + 10);
+    return { owner, mint, recipient, recipientAta };
+  }
+
+  it("transfers one NFT to its assigned recipient and closes the vault ATA", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const { owner, mint, recipient, recipientAta } = await nftCapsule(env);
+    assertOk(
+      await send(env, env.payer, distributeNftIx(env, owner.publicKey, mint, recipient, recipientAta)),
+      "distribute nft"
+    );
+
+    expect(await tokenBalance(env, recipientAta)).to.eq(1n);
+    expect(await accountExists(env, ataFor(vaultPda(owner.publicKey), mint, true))).to.eq(false);
+  });
+
+  it("rejects a recipient that is not assigned to the NFT", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const { owner, mint } = await nftCapsule(env);
+    const attacker = Keypair.generate().publicKey;
+    const attackerAta = await createAta(env, attacker, mint);
+    const res = await send(
+      env,
+      env.payer,
+      distributeNftIx(env, owner.publicKey, mint, attacker, attackerAta)
+    );
+    assertErr(res, "NftAssignmentNotFound");
+  });
+
+  it("rejects bypassing an NFT assignment through proportional SPL distribution", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const { owner, mint } = await nftCapsule(env);
+    const b0 = Keypair.generate().publicKey;
+    const b1 = Keypair.generate().publicKey;
+    const b0Ata = await createAta(env, b0, mint);
+    const b1Ata = await createAta(env, b1, mint);
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [
+          { pubkey: b0, shareBps: 5000 },
+          { pubkey: b1, shareBps: 5000 },
+        ]),
+        [owner]
+      )
+    );
+
+    const res = await send(
+      env,
+      env.payer,
+      distributeSplIx(env, owner.publicKey, mint, [b0Ata, b1Ata])
+    );
+    assertErr(res, "NftRequiresAssignedDistribution");
+  });
+
+  it("rejects NFT distribution for a fungible mint but permits proportional fallback", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    const mintAuth = await fundedKeypair(env, 5);
+    const mint = await createMint(env, mintAuth.publicKey, 6);
+    const ownerAta = await createAta(env, owner.publicKey, mint);
+    await mintTo(env, mint, ownerAta, mintAuth, 1n);
+    assertOk(await send(env, owner, depositSplIx(env, owner, 1n, mint, ownerAta), [owner]));
+    const recipient = Keypair.generate().publicKey;
+    const recipientAta = await createAta(env, recipient, mint);
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateNftAssignmentsIx(env, owner, [{ mint, recipient }]),
+        [owner]
+      )
+    );
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [{ pubkey: recipient, shareBps: 10000 }]),
+        [owner]
+      )
+    );
+    await fire(env, owner, 100);
+    await warp(env, GRACE_PERIOD + 10);
+
+    const res = await send(
+      env,
+      env.payer,
+      distributeNftIx(env, owner.publicKey, mint, recipient, recipientAta)
+    );
+    assertErr(res, "InvalidNftMint");
+
+    assertOk(
+      await send(
+        env,
+        env.payer,
+        distributeSplIx(env, owner.publicKey, mint, [recipientAta])
+      ),
+      "proportional fallback"
+    );
+    expect(await tokenBalance(env, recipientAta)).to.eq(1n);
   });
 });
 

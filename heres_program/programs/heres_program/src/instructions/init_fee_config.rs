@@ -40,7 +40,10 @@ pub fn handler(
     creation_fee_lamports: u64,
 ) -> Result<()> {
     // Cap the fee authority's reach (audit M2): creation fee <= 1 SOL.
-    require!(creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS, ErrorCode::InvalidFeeConfig);
+    require!(
+        creation_fee_lamports <= MAX_CREATION_FEE_LAMPORTS,
+        ErrorCode::InvalidFeeConfig
+    );
     let config = &mut ctx.accounts.fee_config;
     config.authority = ctx.accounts.authority.key();
     config.fee_recipient = fee_recipient;

@@ -39,7 +39,10 @@ pub struct ScheduleExecuteIntent<'info> {
 /// Schedule a crank that runs execute_intent at intervals (MagicBlock ScheduleTask). The Vault is
 /// not delegated and execute_intent is flip-only, so the inner ix references only the Switch.
 pub fn handler(ctx: Context<ScheduleExecuteIntent>, args: ScheduleExecuteIntentArgs) -> Result<()> {
-    msg!("Scheduling execute_intent crank for capsule: {:?}", ctx.accounts.capsule.key());
+    msg!(
+        "Scheduling execute_intent crank for capsule: {:?}",
+        ctx.accounts.capsule.key()
+    );
 
     let inner_accounts = vec![AccountMeta::new(ctx.accounts.capsule.key(), false)];
     let execute_ix = Instruction {
