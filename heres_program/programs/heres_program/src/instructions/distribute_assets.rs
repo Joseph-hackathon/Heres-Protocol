@@ -1,8 +1,8 @@
 //! Distribute one asset from the Vault to the capsule's beneficiaries, split by share_bps.
 //!
 //! Per-asset, drain-and-close: call once per asset (None mint = native SOL). Permissionless (a
-//! crank or any beneficiary can trigger it) but gated on a fired + grace-elapsed Switch, and the
-//! fixed on-chain share_bps mean no caller can misdirect funds. Idempotency is structural, not a
+//! crank or any beneficiary can trigger it) but gated on a fired Switch, and the fixed on-chain
+//! share_bps mean no caller can misdirect funds. Idempotency is structural, not a
 //! flag: re-running SOL distribution finds an already-drained vault (sends nothing); re-running an
 //! SPL distribution finds the vault ATA already closed (fails -> natural no-op).
 
@@ -12,7 +12,7 @@ use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-use crate::constants::{BPS_DENOMINATOR, GRACE_PERIOD};
+use crate::constants::BPS_DENOMINATOR;
 use crate::error::ErrorCode;
 use crate::events::AssetsDistributed;
 use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
@@ -58,13 +58,7 @@ pub struct DistributeAssets<'info> {
 pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) -> Result<()> {
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
-    let executed_at = capsule.executed_at.ok_or(ErrorCode::CapsuleNotExecuted)?;
-    let now = Clock::get()?.unix_timestamp;
-    // Honor the post-fire grace window: the owner may still revive during it (update_activity).
-    require!(
-        now >= executed_at + GRACE_PERIOD,
-        ErrorCode::GracePeriodNotElapsed
-    );
+    require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
     require!(
         !ctx.accounts.beneficiary_set.beneficiaries.is_empty(),
         ErrorCode::NoBeneficiaries

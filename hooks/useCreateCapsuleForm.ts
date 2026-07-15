@@ -148,7 +148,7 @@ export function useCreateCapsuleForm() {
   // Optional absolute fire date (YYYY-MM-DD). When set, the capsule ALSO fires on this date regardless
   // of activity - whichever trigger (inactivity or this date) comes first wins. Empty = inactivity-only.
   const [targetDate, setTargetDate] = useState('')
-  // The on-chain grace window is a fixed 48h constant; delayDays is kept only as reminder metadata.
+  // delayDays is reminder metadata only; settlement can begin as soon as the capsule fires.
   const delayDays = DEFAULT_VALUES.DELAY_DAYS
   const [showSimulation, setShowSimulation] = useState(false)
   const [isPending, setIsPending] = useState(false)

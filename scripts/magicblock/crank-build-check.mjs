@@ -4,7 +4,7 @@
  * The crank is server-only TS (path aliases, 'server-only'), so this mirrors its exact Anchor
  * builder calls against the same fresh-build IDL and asserts the account layouts match the lean
  * program (Workstream A: Switch on a regular ER, BeneficiarySet on the TEE). Catches account-order /
- * permission-seed / None-sentinel bugs without a live fire or the 48h distribute grace (those stay
+ * permission-seed / None-sentinel bugs without a live fire or asset distribution (those stay
  * covered by er-roundtrip + bankrun). Also round-trips the BorshAccountsCoder decodes the crank uses.
  *
  * Run: node scripts/magicblock/crank-build-check.mjs

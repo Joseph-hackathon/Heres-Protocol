@@ -109,19 +109,19 @@ pub mod heres_program {
         instructions::execute_intent::handler(ctx)
     }
 
-    /// Proof-of-life: bump last_activity or revive during grace (owner OR heartbeat authority).
+    /// Proof-of-life: bump last_activity while active (owner OR heartbeat authority).
     pub fn update_activity(ctx: Context<UpdateActivity>) -> Result<()> {
         instructions::update_activity::handler(ctx)
     }
 
-    /// Distribute one asset from the Vault to beneficiaries by share_bps (base layer, post-grace).
+    /// Distribute one asset from the Vault to beneficiaries by share_bps after the capsule fires.
     pub fn distribute_assets<'info>(
         ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>,
     ) -> Result<()> {
         instructions::distribute_assets::handler(ctx)
     }
 
-    /// Transfer one standard SPL NFT to its explicitly assigned recipient after the grace period.
+    /// Transfer one standard SPL NFT to its explicitly assigned recipient after the capsule fires.
     pub fn distribute_nft(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
         instructions::distribute_nft::handler(ctx, recipient)
     }

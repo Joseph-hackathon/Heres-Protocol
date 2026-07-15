@@ -26,8 +26,8 @@ const WRAP_OPEN =
 const WRAP_CLOSE = '</div>'
 
 /**
- * Sent to the named recipient once a capsule has fired (the owner went silent
- * past the grace period). Carries the owner's plaintext intent statement.
+ * Sent to the named recipient once a capsule has fired after the owner exceeded
+ * the configured inactivity period. Carries the owner's plaintext intent statement.
  */
 export function renderIntentEmail(args: { message: string; capsuleAddress: string }): RenderedEmail {
   const subject = 'A message has been left for you via Heres Protocol'

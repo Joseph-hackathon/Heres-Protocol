@@ -44,6 +44,7 @@ import {
   buildCreateAtaIx,
   getVaultTokenAccounts,
 } from '@/lib/spl'
+import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -168,7 +169,7 @@ async function sendBase(
   instructions.forEach((ix) => tx.add(ix))
   const signed = await wallet.signTransaction!(tx)
   const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true })
-  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+  await confirmTransactionOrThrow(connection, { signature: sig, blockhash, lastValidBlockHeight })
   return sig
 }
 
@@ -258,7 +259,7 @@ async function sendBaseBatch(
   const sigs: string[] = []
   for (const tx of signed) {
     const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true })
-    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+    await confirmTransactionOrThrow(connection, { signature: sig, blockhash, lastValidBlockHeight })
     sigs.push(sig)
   }
   return sigs

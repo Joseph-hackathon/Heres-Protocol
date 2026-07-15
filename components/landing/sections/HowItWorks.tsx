@@ -54,7 +54,7 @@ export function HowItWorks() {
             <h3>Silence triggers settlement</h3>
             <p>
               If your wallet stays quiet past the window, your capsule <b>executes on Solana</b> and your
-              people receive what you set aside, automatically. Reappear in the grace window and it resets.
+              people receive what you set aside automatically, with no additional release delay.
             </p>
             <span className="step__icon">
               <HeartHandshake className="ph-icon" aria-hidden />

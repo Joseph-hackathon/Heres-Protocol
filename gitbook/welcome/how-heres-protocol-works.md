@@ -30,7 +30,7 @@ We call this a **Passive Heartbeat**. You don't need to press any manual "I'm al
 
 If not a single valid transaction occurs from your wallet within the Silence Limit you set, the protocol considers you absent.&#x20;
 
-After passing a short Grace Window for final verification, the smart contract automatically unlocks and safely distributes your assets to your designated heirs according to your exact preset ratios.&#x20;
+Once the Capsule fires, the smart contract can immediately unlock and distribute your assets to your designated heirs according to your exact preset ratios.&#x20;
 {% endstep %}
 {% endstepper %}
 

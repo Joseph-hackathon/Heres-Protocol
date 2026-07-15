@@ -1,8 +1,8 @@
 // Shared test helpers for the Heres lean program (bankrun harness).
 //
-// Bankrun runs the exact compiled .so in a local SVM with a controllable Clock, which is what makes
-// the time-gated logic (inactivity firing + the 48h grace window) testable in milliseconds instead
-// of real time. The program is loaded NON-upgradeable here (no ProgramData), so init_fee_config's
+// Bankrun runs the exact compiled .so in a local SVM with a controllable Clock, which makes the
+// inactivity firing logic testable in milliseconds instead of real time. The program is loaded
+// NON-upgradeable here (no ProgramData), so init_fee_config's
 // C3 gate is not exercisable in bankrun - we pre-seed the fee_config account instead and cover
 // init_fee_config on devnet. The 3 ER instructions (delegate/crank/schedule) CPI into MagicBlock
 // programs absent from the local SVM and are covered separately on devnet.
@@ -38,7 +38,6 @@ export const PROGRAM_ID = new PublicKey((idl as any).address);
 export const PERMISSION_PROGRAM_ID = new PublicKey(
   "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
 );
-export const GRACE_PERIOD = 48 * 60 * 60; // constants.rs GRACE_PERIOD
 export const MAX_CREATION_FEE_LAMPORTS = 1_000_000_000; // constants.rs MAX_CREATION_FEE_LAMPORTS
 export const MAX_BENEFICIARIES = 8;
 export const BPS_DENOMINATOR = 10_000;

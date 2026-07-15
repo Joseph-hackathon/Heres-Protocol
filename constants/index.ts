@@ -110,7 +110,7 @@ export const SOLANA_CONFIG = {
       process.env.SOLANA_FALLBACK_RPC_URL ||
       process.env.NEXT_PUBLIC_SOLANA_FALLBACK_RPC_URL ||
       getDefaultSolanaRpcUrl(normalizeSolanaNetwork(process.env.NEXT_PUBLIC_SOLANA_NETWORK)),
-    /** Platform wallet for creation/execution fees */
+    /** Platform wallet for the one-time creation fee */
     PLATFORM_FEE_RECIPIENT: process.env.NEXT_PUBLIC_PLATFORM_FEE_RECIPIENT || 'Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb',
     // Relayer / crank wallet pubkey. Doubles as the default heartbeat_authority on new capsules so the
     // off-chain liveness service can bump last_activity. MUST match the keypair behind
@@ -141,11 +141,10 @@ export const DEFAULT_VALUES = {
   DELAY_DAYS: '30',
 } as const
 
-/** Platform fee: creation = 0.05 SOL, execution = 3% of transferred amount */
+/** Default one-time capsule creation fee. The program does not charge an execution fee. */
 export const PLATFORM_FEE = {
   CREATION_FEE_SOL: 0.05,
   CREATION_FEE_LAMPORTS: 50_000_000,
-  EXECUTION_FEE_BPS: 300,
 } as const
 
 // Magicblock ER (Ephemeral Rollup) - Devnet validators

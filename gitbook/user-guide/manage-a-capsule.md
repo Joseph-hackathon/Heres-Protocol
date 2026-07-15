@@ -43,7 +43,7 @@ Execution sets:
 
 ## Distribute Assets
 
-After execution, distribution transfers assets from the vault to the configured beneficiaries and deducts the execution fee where configured.
+After execution, distribution transfers the full available vault balance to the configured beneficiaries. The current program does not deduct an execution fee.
 
 In the current protocol design, execution and distribution are separate operations. This lets private execution and base-layer settlement coordinate safely.
 
@@ -61,4 +61,3 @@ If the capsule includes an Intent Statement, the detail page can show delivery s
 - Failed.
 
 Delivery status is checked with wallet-signed requests where required.
-

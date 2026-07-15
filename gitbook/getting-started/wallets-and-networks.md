@@ -20,4 +20,4 @@ The information you input during Capsule creation is the most critical data that
 
 
 
-* **Grace Window:** Even if the Silence Limit is exceeded and the Capsule enters a 'Triggered' state, the assets are not transferred immediately. The Grace Window is a brief waiting period acting as a secondary fail-safe, just in case you forgot to use your wallet or were on an extended vacation.
+* **Settlement:** Once the Silence Limit is exceeded and the Capsule fires, settlement can begin immediately. Check in before the Silence Limit expires to reset the inactivity timer.

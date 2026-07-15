@@ -1,9 +1,9 @@
 /**
  * Live devnet NFT inheritance check.
  *
- * This script expects a devnet verification build with GRACE_PERIOD set to zero. It exercises the
- * complete base-layer contract path: mint NFT, create capsule, deposit NFT, assign recipient, fire
- * the switch, distribute the NFT, and verify the recipient balance plus vault ATA closure.
+ * Exercises the complete base-layer contract path: mint NFT, create capsule, deposit NFT, assign
+ * recipient, fire the switch, distribute the NFT immediately, and verify the recipient balance plus
+ * vault ATA closure.
  *
  * Run: node scripts/magicblock/nft-inheritance-check.mjs
  */

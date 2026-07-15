@@ -15,6 +15,7 @@ import { getRegisteredOwners } from './capsule-registry'
 import { loadSyncCheckpoint, saveSyncCheckpoint } from './dashboard-store'
 import { getWalletActivity } from './helius'
 import { MAGICBLOCK_ER } from '@/constants'
+import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
 
 /**
  * Off-chain liveness service: the missing half of the dead-man's-switch.
@@ -66,7 +67,7 @@ async function sendBase(connection: Connection, kp: Keypair, ixs: TransactionIns
   ixs.forEach((ix) => tx.add(ix))
   tx.sign(kp)
   const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true })
-  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+  await confirmTransactionOrThrow(connection, { signature: sig, blockhash, lastValidBlockHeight })
   return sig
 }
 

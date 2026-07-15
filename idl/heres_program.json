@@ -1107,7 +1107,7 @@
     {
       "name": "distribute_assets",
       "docs": [
-        "Distribute one asset from the Vault to beneficiaries by share_bps (base layer, post-grace)."
+        "Distribute one asset from the Vault to beneficiaries by share_bps after the capsule fires."
       ],
       "discriminator": [
         239,
@@ -1242,7 +1242,7 @@
     {
       "name": "distribute_nft",
       "docs": [
-        "Transfer one standard SPL NFT to its explicitly assigned recipient after the grace period."
+        "Transfer one standard SPL NFT to its explicitly assigned recipient after the capsule fires."
       ],
       "discriminator": [
         162,
@@ -1793,7 +1793,7 @@
     {
       "name": "update_activity",
       "docs": [
-        "Proof-of-life: bump last_activity or revive during grace (owner OR heartbeat authority)."
+        "Proof-of-life: bump last_activity while active (owner OR heartbeat authority)."
       ],
       "discriminator": [
         137,
@@ -2165,8 +2165,8 @@
     },
     {
       "code": 6007,
-      "name": "GracePeriodNotElapsed",
-      "msg": "Grace period has not elapsed since execution"
+      "name": "ReservedLegacyError",
+      "msg": "Reserved error code"
     },
     {
       "code": 6008,
@@ -2482,7 +2482,7 @@
     {
       "name": "NftAssignment",
       "docs": [
-        "One standard SPL NFT and the wallet that receives it after the grace period. The mint must have",
+        "One standard SPL NFT and the wallet that receives it after the capsule fires. The mint must have",
         "supply 1 and decimals 0 when `distribute_nft` executes. Assignments live inside the same TEE-",
         "resident account as proportional beneficiaries, so the intended heir stays private while alive."
       ],

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PublicKey } from '@solana/web3.js'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
-import { Check, Eye, RefreshCw, HeartPulse, RotateCcw, Plus, Pencil } from 'lucide-react'
+import { Check, Eye, RefreshCw, HeartPulse, Plus, Pencil } from 'lucide-react'
 import {
   executeIntent,
   distributeAssets,
@@ -264,8 +264,7 @@ export default function CapsuleDetailPage() {
       )
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
       toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
-      await invalidateDistribution()
-      await invalidateCapsule()
+      await Promise.all([invalidateDistribution(), invalidateVaultAssets(), invalidateCapsule()])
     } catch (err: any) {
       console.error('[Distribute Assets] Error:', err)
       const msg = normalizeTxError(err)
@@ -305,24 +304,19 @@ export default function CapsuleDetailPage() {
     await Promise.all([invalidateVaultAssets(), invalidateCapsule()])
   }
 
-  // Proof-of-life: bump last_activity so the inactivity deadline slides forward. Owner-signed; works
-  // on an active capsule (and the on-chain handler also revives a just-fired one inside the grace
-  // window). actionKey lets the Check In and Revive buttons show their own spinner.
-  const handleUpdateActivity = async (actionKey: 'checkin' | 'revive') => {
+  // Proof-of-life: bump last_activity so the inactivity deadline slides forward while active.
+  const handleUpdateActivity = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
-    setActionLoading(actionKey)
+    setActionLoading('checkin')
     setActionResult(null)
     try {
       const tx = await updateActivity(wallet as any, capsule.owner)
       await invalidateCapsule()
       setActionResult({
         type: 'success',
-        message: actionKey === 'revive' ? `Capsule revived. TX: ${tx}` : `Liveness updated. TX: ${tx}`,
+        message: `Liveness updated. TX: ${tx}`,
       })
-      toast({
-        message: actionKey === 'revive' ? 'Capsule revived.' : 'Liveness updated - timer reset.',
-        variant: 'success',
-      })
+      toast({ message: 'Liveness updated - timer reset.', variant: 'success' })
     } catch (err: any) {
       console.error('[Update Activity] Error:', err)
       const msg = normalizeTxError(err)
@@ -514,13 +508,8 @@ export default function CapsuleDetailPage() {
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
   const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
 
-  // Proof-of-life surfaces: an active capsule can be "checked in" (bump last_activity); a capsule that
-  // just fired can be revived by the owner within the on-chain 48h grace window (update_activity).
-  const GRACE_PERIOD_SECONDS = 48 * 60 * 60
+  // Proof-of-life is available only before the capsule fires.
   const canCheckIn = Boolean(isOwner && capsule.isActive)
-  const reviveEligible = Boolean(
-    isOwner && !capsule.isActive && capsule.executedAt && nowSec < capsule.executedAt + GRACE_PERIOD_SECONDS
-  )
   // Owner may edit the private beneficiary list pre-fire, but only once it is visible (revealed or on
   // base). When still hidden behind the TEE, the Reveal action must run first.
   const canEditBeneficiaries = Boolean(
@@ -880,11 +869,6 @@ export default function CapsuleDetailPage() {
                       Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} <strong>Check In</strong> any time to reset the inactivity timer. Execute and Distribute unlock once it expires; you can <strong>Add Funds</strong> or <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
                     </p>
                   )}
-                  {reviveEligible && (
-                    <p className="text-sm text-amber-400">
-                      This capsule fired but is still within the 48h grace window. You can <strong>Revive Capsule</strong> to reactivate it before assets are distributed.
-                    </p>
-                  )}
                   {canExecute && (
                     <p className="text-sm text-amber-400">
                       {targetDateMs != null ? 'A trigger condition has been met' : 'Inactivity period has elapsed'}. You can now <strong>Execute Intent</strong> to deactivate the capsule, then distribute assets.
@@ -1017,27 +1001,13 @@ export default function CapsuleDetailPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => handleUpdateActivity('checkin')}
+                      onClick={handleUpdateActivity}
                       disabled={!!actionLoading}
                       loading={actionLoading === 'checkin'}
                       title="Prove liveness now - resets the inactivity timer so the capsule does not fire."
                     >
                       <HeartPulse className="h-4 w-4" aria-hidden />
                       Check In
-                    </Button>
-                  )}
-                  {/* Owner post-fire safety net: revive within the 48h grace window before distribution. */}
-                  {reviveEligible && (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => handleUpdateActivity('revive')}
-                      disabled={!!actionLoading}
-                      loading={actionLoading === 'revive'}
-                      title="Reactivate this just-fired capsule (owner only, within the 48h grace window)."
-                    >
-                      <RotateCcw className="h-4 w-4" aria-hidden />
-                      Revive Capsule
                     </Button>
                   )}
                   {/* Owner early-exit (pre-fire): add funds, withdraw funds, or fully cancel + close. */}

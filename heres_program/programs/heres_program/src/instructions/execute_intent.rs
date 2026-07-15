@@ -1,7 +1,7 @@
 //! Fire the Switch when the inactivity period elapses OR the absolute target_date is reached
 //! (whichever comes first). Permissionless (no owner signature) and
 //! state-only: it flips is_active -> false and stamps executed_at. Funds never move here; payout
-//! happens on the base layer via distribute_assets after undelegation + the grace window.
+//! happens on the base layer via distribute_assets after undelegation.
 //!
 //! The Switch lives on a *regular* ER (no PER permission), so this references only the Switch. The
 //! MagicBlock ScheduleTask runs it autonomously on that ER.

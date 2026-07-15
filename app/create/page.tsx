@@ -563,7 +563,7 @@ export default function CreatePage() {
                       {inactivityDays && parseInt(inactivityDays, 10) > 0 ? (
                         <>
                           After <span className="font-semibold text-Heres-white">{formatInactivityLabel(inactivityDays, inactivityUnit)}</span> of inactivity
-                          {approxFireDate ? <> (around <span className="font-semibold text-Heres-white">{approxFireDate}</span> if silent from today)</> : ''}, a fixed <span className="font-semibold text-Heres-white">48h grace</span> applies before assets are released.
+                          {approxFireDate ? <> (around <span className="font-semibold text-Heres-white">{approxFireDate}</span> if silent from today)</> : ''}, assets can be released as soon as the capsule fires.
                         </>
                       ) : (
                         'Set how long you can be inactive before the capsule fires.'
@@ -601,7 +601,7 @@ export default function CreatePage() {
                       )}
                       {targetDate && (
                         <p className="mt-2 text-sm text-Heres-muted">
-                          Fires on <span className="font-semibold text-Heres-white">{new Date(targetDate + 'T00:00:00').toLocaleDateString()}</span> even if you stay active, then a fixed <span className="font-semibold text-Heres-white">48h grace</span> before release.
+                          Fires on <span className="font-semibold text-Heres-white">{new Date(targetDate + 'T00:00:00').toLocaleDateString()}</span> even if you stay active, with immediate release available after firing.
                         </p>
                       )}
                     </div>
@@ -764,7 +764,7 @@ export default function CreatePage() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Execution Fee</span>
-                        <span className="font-semibold text-Heres-white">{PLATFORM_FEE.EXECUTION_FEE_BPS / 100}%</span>
+                        <span className="font-semibold text-Heres-white">None</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-Heres-muted">Representative</span>
@@ -902,7 +902,7 @@ export default function CreatePage() {
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">
                     <p className="mb-1 text-xs text-Heres-accent">Trigger</p>
                     <p className="text-Heres-white">
-                      After {formatInactivityLabel(inactivityDays, inactivityUnit) || '0 days'} of inactivity, a fixed 48h grace applies before assets are released.
+                      After {formatInactivityLabel(inactivityDays, inactivityUnit) || '0 days'} of inactivity, assets can be released as soon as the capsule fires.
                     </p>
                   </div>
                   <div className="rounded-xl border border-Heres-border bg-Heres-surface/50 p-4">

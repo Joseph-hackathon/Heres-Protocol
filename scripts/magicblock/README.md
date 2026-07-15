@@ -34,14 +34,13 @@ config, falling back to public devnet), `INACTIVITY`, `SCHEDULE_INTERVAL_MS`, `S
 
 Notes:
 
-- Uses a throwaway generated owner funded from `~/.config/solana/id.json`. Each run strands
-  ~`FUND_SOL` devnet SOL in that owner/vault (the capsule fires, so it can't be cancelled, and
-  `distribute_assets` is grace-gated). Harmless on devnet.
+- Uses a throwaway generated owner funded from `~/.config/solana/id.json`. The roundtrip does not
+  settle its deposited SOL, so each run leaves ~`FUND_SOL` devnet SOL in that owner/vault.
 - `heartbeat_authority` = `heres-relayer`; `crank_undelegate` payer = `heres-crank`.
-- `distribute_assets` is gated by a 48h `GRACE_PERIOD`, so it is NOT run here - it stays covered
-  by the clock-warped bankrun suite. This script validates the ER mechanics + the Tier-1 privacy
-  property (beneficiaries set on the ER are invisible on base while delegated, then revealed on
-  undelegate).
+- `distribute_assets` is not run here. The bankrun suite covers immediate settlement, while
+  `nft-inheritance-check.mjs` covers the same path on devnet. This script validates the ER mechanics
+  + the Tier-1 privacy property (beneficiaries set on
+  the ER are invisible on base while delegated, then revealed on undelegate).
 - Last green run: 10/10 checks, autonomous fire ~3s after scheduling. The Asia ER is a regular
   (non-TEE) ER; a PER/TEE pass (which would also test the permission-ACL read/write model,
   redesign Open Q7) is a separate follow-on.

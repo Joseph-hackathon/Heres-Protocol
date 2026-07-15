@@ -254,18 +254,10 @@ export function useCapsuleDetail({
       const [vaultInfo, rentExemptLamports, tokenAccts] = await Promise.all([
         connection.getAccountInfo(vaultPDA),
         connection.getMinimumBalanceForRentExemption(9),
-        connection
-          .getParsedTokenAccountsByOwner(vaultPDA, {
-            programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-          })
-          .catch(() => null),
+        getVaultTokenAccounts(connection, vaultPDA),
       ])
       const spendableLamports = Math.max(0, (vaultInfo?.lamports || 0) - rentExemptLamports)
-      const tokensDrained =
-        !tokenAccts ||
-        tokenAccts.value.every(
-          (t: any) => Number(t.account.data?.parsed?.info?.tokenAmount?.amount || '0') === 0
-        )
+      const tokensDrained = tokenAccts.every((token) => token.amount === 0n)
       return spendableLamports === 0 && tokensDrained
     },
   })

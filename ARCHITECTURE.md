@@ -30,7 +30,6 @@
 │                           │  │                                       │
 │  FeeConfig PDA            │  │  /api/cron/reconcile-cre-delivery      │
 │  · creation_fee: 0.05 SOL │  │    → Auto-dispatch pending deliveries │
-│  · execution_fee: 3% BPS  │  └──────────────┬────────────────────────┘
 │                           │                  │
 └──────────┬────────────────┘                  │
            │                                   │
@@ -84,7 +83,7 @@ When beneficiaries include EVM addresses, the `distribute_assets` instruction ro
                                                             │                  │
       User locks SOL     Capsule delegated    Crank checks      State change:       SOL/SPL sent to
       in vault PDA       to MagicBlock ER     inactivity         is_active=false     beneficiaries
-      + pays 0.05 SOL    for private          period every       executed_at=now     (3% fee deducted)
+      + pays 0.05 SOL    for private          period every       executed_at=now     in full
       creation fee       monitoring           1 minute                             │
                                                                                      ▼
                                                                               ┌──────────────┐
@@ -212,7 +211,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 │  6. distribute_assets (on base layer)                          │
 │     · Parse beneficiaries from intent_data                     │
 │     · Transfer SOL/SPL from vault to each beneficiary          │
-│     · Deduct 3% execution fee to platform wallet               │
+│     · No execution fee; distribute the full available balance  │
 │     · If EVM beneficiary → route via Chainlink CCIP            │
 │                                                                │
 └──────────────────────────────────────────────────────────────┘
@@ -236,10 +235,10 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 
 | Item | Value |
 |------|-------|
-| **Program ID** | `26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6` |
+| **Program ID** | `sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz` |
 | **Cluster** | Solana Devnet |
 | **Framework** | Anchor (Rust) |
-| **Explorer** | [View on Solana Explorer](https://explorer.solana.com/address/26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6?cluster=devnet) |
+| **Explorer** | [View on Solana Explorer](https://explorer.solana.com/address/sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz?cluster=devnet) |
 | **Source** | [`heres_program/programs/heres_program/src/lib.rs`](heres_program/programs/heres_program/src/lib.rs) |
 
 ### Account Structures
@@ -260,7 +259,6 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 |-------|------|-------------|
 | `fee_recipient` | `PublicKey` | Platform wallet for fee collection |
 | `creation_fee` | `u64` | Flat fee for capsule creation (lamports) |
-| `execution_fee_bps` | `u16` | Basis points deducted at distribution |
 
 ### PDA Seeds
 
@@ -280,9 +278,9 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 |-------------|-------------|------------|
 | `create_capsule` | Create capsule, lock SOL in vault, pay creation fee | Owner (signs TX) |
 | `update_intent` | Modify intent data (beneficiaries, amounts) | Owner only |
-| `update_activity` | Refresh last_activity timestamp (heartbeat) | Owner or anyone |
+| `update_activity` | Refresh last_activity timestamp (heartbeat) | Owner or heartbeat authority |
 | `execute_intent` | Trigger execution when inactivity period elapsed | **Permissionless** |
-| `distribute_assets` | Transfer SOL/SPL to beneficiaries with fee deduction | **Permissionless** |
+| `distribute_assets` | Transfer the full available SOL/SPL balance to beneficiaries | **Permissionless** |
 | `delegate_capsule` | Delegate capsule to MagicBlock ER/PER | Owner |
 | `crank_undelegate` | Commit ER state + undelegate (separate from execute) | **Permissionless** |
 | `schedule_execute_intent` | Schedule MagicBlock crank for auto-execution | After delegation |
@@ -294,7 +292,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | Fee | Amount | When |
 |-----|--------|------|
 | **Creation Fee** | 0.05 SOL | At capsule creation |
-| **Execution Fee** | 3% (300 BPS) | Deducted from vault at distribution |
+| **Execution Fee** | None | Distribution sends the full available vault balance |
 | **Fee Recipient** | `Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb` | Platform treasury |
 
 ### Intent Data Schema
@@ -335,8 +333,8 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 
 | Component | Address |
 |-----------|---------|
-| **Heres Program** | `26pDfWXnq9nm1Y5J6siwQsVfHXKxKo5vKvRMVCpqXms6` |
-| **Fee Config PDA** | `BUjGKZEYBETkBebtZYA5Mom3trjbvP6Enq8X1X3qRnaC` |
+| **Heres Program** | `sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz` |
+| **Fee Config PDA** | `5y7eczWLCkDus2fkEgaDYRk4YyeWvNHESCgD4dcNaT53` |
 | **Fee Recipient** | `Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb` |
 | **Delegation Program** | `DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh` |
 | **Magic Program** | `Magic11111111111111111111111111111111111111` |
