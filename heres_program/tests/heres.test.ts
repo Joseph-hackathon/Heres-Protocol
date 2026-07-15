@@ -803,6 +803,76 @@ describe("heres: sealed inheritance boundary", () => {
     assertErr(res, "InvalidConfigurationCommitment");
   });
 
+  it("rejects a zero salt", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    const zeroSalt = Array(32).fill(0);
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      env.program.methods
+        .sealInheritance(
+          zeroSalt,
+          inheritanceCommitment(owner.publicKey, beneficiaries, [], zeroSalt)
+        )
+        .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey }),
+      [owner]
+    );
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+
+  it("rejects a zero configuration commitment", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      env.program.methods
+        .sealInheritance(TEST_CONFIG_SALT, Array(32).fill(0))
+        .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey }),
+      [owner]
+    );
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+
+  it("rejects re-arming an active capsule", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    const commitment = inheritanceCommitment(owner.publicKey, beneficiaries, []);
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+    assertOk(await send(env, owner, armCapsuleIx(env, owner, commitment), [owner]));
+
+    const res = await send(env, owner, armCapsuleIx(env, owner, Array(32).fill(55)), [owner]);
+    assertErr(res, "CapsuleNotDraft");
+  });
+
+  it("rejects NFT assignment edits after sealing", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      updateNftAssignmentsIx(env, owner, [{
+        mint: Keypair.generate().publicKey,
+        recipient: beneficiaries[0].pubkey,
+      }]),
+      [owner]
+    );
+    assertErr(res, "InheritanceAlreadySealed");
+  });
+
   it("refuses settlement if the Switch was armed with a different commitment", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
