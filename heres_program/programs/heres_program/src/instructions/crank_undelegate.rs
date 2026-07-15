@@ -63,10 +63,11 @@ mod tests {
     use crate::instructions::delegate_capsule::DelegateCapsuleInput;
     use ephemeral_rollups_sdk::anchor::{DelegationProgram, MagicProgram};
 
-    // Compile-time regression guard: changing any security-sensitive program field back to a raw
-    // AccountInfo makes this helper fail to compile.
+    // Compile-time regression guard for the execution boundary. ER instructions invoke the Magic
+    // Program and must pin it. Base-layer delegate instructions do not invoke it, so their retained
+    // ABI account stays unchecked while the Delegation Program remains pinned.
     #[allow(dead_code)]
-    fn assert_program_accounts_are_typed(
+    fn assert_program_account_boundaries(
         crank: &CrankUndelegateInput<'_>,
         beneficiary_crank: &CrankUndelegateBeneficiariesInput<'_>,
         delegate_capsule: &DelegateCapsuleInput<'_>,
@@ -74,9 +75,9 @@ mod tests {
     ) {
         let _: &Program<'_, MagicProgram> = &crank.magic_program;
         let _: &Program<'_, MagicProgram> = &beneficiary_crank.magic_program;
-        let _: &Program<'_, MagicProgram> = &delegate_capsule.magic_program;
+        let _: &AccountInfo<'_> = &delegate_capsule.magic_program;
         let _: &Program<'_, DelegationProgram> = &delegate_capsule.delegation_program;
-        let _: &Program<'_, MagicProgram> = &delegate_beneficiaries.magic_program;
+        let _: &AccountInfo<'_> = &delegate_beneficiaries.magic_program;
         let _: &Program<'_, DelegationProgram> = &delegate_beneficiaries.delegation_program;
     }
 

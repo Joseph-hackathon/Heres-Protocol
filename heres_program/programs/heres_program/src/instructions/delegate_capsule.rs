@@ -10,7 +10,7 @@
 //! undelegate.
 
 use anchor_lang::prelude::*;
-use ephemeral_rollups_sdk::anchor::{delegate, DelegationProgram, MagicProgram};
+use ephemeral_rollups_sdk::anchor::{delegate, DelegationProgram};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
 
 use crate::constants::DEFAULT_ER_VALIDATOR;
@@ -26,7 +26,9 @@ pub struct DelegateCapsuleInput<'info> {
     /// CHECK: the Switch PDA to delegate; seeds [b"intent_capsule", owner].
     #[account(mut, del, seeds = [b"intent_capsule", owner.key().as_ref()], bump)]
     pub pda: AccountInfo<'info>,
-    pub magic_program: Program<'info, MagicProgram>,
+    /// CHECK: retained for the stable client ABI. Base-layer delegation does not invoke the Magic
+    /// Program, which is only executable inside an ER, so it must not be executable-checked here.
+    pub magic_program: AccountInfo<'info>,
     pub delegation_program: Program<'info, DelegationProgram>,
     pub system_program: Program<'info, System>,
 }

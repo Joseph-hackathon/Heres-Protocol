@@ -18,7 +18,7 @@ use ephemeral_rollups_sdk::access_control::structs::{
     Member, MembersArgs, ACCOUNT_SIGNATURES_FLAG, AUTHORITY_FLAG, PERMISSION_SEED,
     TX_BALANCES_FLAG, TX_LOGS_FLAG, TX_MESSAGE_FLAG,
 };
-use ephemeral_rollups_sdk::anchor::{delegate, DelegationProgram, MagicProgram};
+use ephemeral_rollups_sdk::anchor::{delegate, DelegationProgram};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
 use ephemeral_rollups_sdk::pda::{
     DELEGATE_BUFFER_TAG, DELEGATION_METADATA_TAG, DELEGATION_RECORD_TAG,
@@ -41,7 +41,9 @@ pub struct DelegateBeneficiariesInput<'info> {
     /// CHECK: the BeneficiarySet PDA to delegate; seeds [b"beneficiary_set", owner].
     #[account(mut, del, seeds = [b"beneficiary_set", owner.key().as_ref()], bump)]
     pub pda: AccountInfo<'info>,
-    pub magic_program: Program<'info, MagicProgram>,
+    /// CHECK: retained for the stable client ABI. Base-layer delegation does not invoke the Magic
+    /// Program, which is only executable inside an ER, so it must not be executable-checked here.
+    pub magic_program: AccountInfo<'info>,
     pub delegation_program: Program<'info, DelegationProgram>,
     pub system_program: Program<'info, System>,
 

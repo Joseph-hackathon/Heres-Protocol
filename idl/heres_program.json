@@ -781,7 +781,9 @@
         },
         {
           "name": "magic_program",
-          "address": "Magic11111111111111111111111111111111111111"
+          "docs": [
+            "Program, which is only executable inside an ER, so it must not be executable-checked here."
+          ]
         },
         {
           "name": "delegation_program",
@@ -1191,7 +1193,9 @@
         },
         {
           "name": "magic_program",
-          "address": "Magic11111111111111111111111111111111111111"
+          "docs": [
+            "Program, which is only executable inside an ER, so it must not be executable-checked here."
+          ]
         },
         {
           "name": "delegation_program",
