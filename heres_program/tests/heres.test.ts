@@ -4,7 +4,7 @@
 //   fee config .......... update_fee_config (authority gate, fee cap)
 //   lifecycle ........... create_capsule, deposit (SOL+SPL/NFT), update_intent,
 //                        update_nft_assignments, cancel, recreate
-//   firing .............. execute_intent (inactivity gate), update_activity (bump + grace revive)
+//   firing .............. execute_intent (inactivity gate), update_activity (active-only bump)
 //   distribution ........ distribute_assets (SOL+SPL) + distribute_nft (explicit recipient)
 //   escape hatch ........ recover_vault (SOL+SPL, pre-fire only)
 //
@@ -35,7 +35,6 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
   TOKEN_PROGRAM_ID,
-  GRACE_PERIOD,
   MAX_CREATION_FEE_LAMPORTS,
   capsulePda,
   vaultPda,
@@ -785,19 +784,18 @@ describe("heres: update_activity", () => {
     );
   });
 
-  it("heartbeat authority CANNOT revive a fired capsule (owner-only revive)", async () => {
+  it("rejects heartbeat updates after the capsule fires", async () => {
     const env = await startEnv({ creationFee: 0 });
     const heartbeat = await fundedKeypair(env, 5);
     const owner = await freshCapsule(env, 100, heartbeat.publicKey);
     await fire(env, owner, 100);
-    await warp(env, 60); // still well inside the 48h grace
     const res = await send(
       env,
       heartbeat,
       updateActivityIx(env, owner.publicKey, heartbeat.publicKey),
       [heartbeat]
     );
-    assertErr(res, "Unauthorized");
+    assertErr(res, "CapsuleInactive");
   });
 
   it("rejects a stranger", async () => {
@@ -813,25 +811,10 @@ describe("heres: update_activity", () => {
     assertErr(res, "Unauthorized");
   });
 
-  it("revives a fired capsule within the grace window", async () => {
+  it("rejects owner updates after the capsule fires", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
     await fire(env, owner, 100);
-    await warp(env, 60); // still well inside the 48h grace
-    assertOk(
-      await send(env, owner, updateActivityIx(env, owner.publicKey, owner.publicKey), [owner]),
-      "revive"
-    );
-    const cap = await fetchCapsule(env, owner.publicKey);
-    expect(cap.isActive).to.eq(true);
-    expect(cap.executedAt).to.eq(null);
-  });
-
-  it("cannot revive after the grace window closes", async () => {
-    const env = await startEnv({ creationFee: 0 });
-    const owner = await freshCapsule(env, 100);
-    await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 60); // grace elapsed
     const res = await send(
       env,
       owner,
@@ -859,21 +842,23 @@ describe("heres: distribute_assets (SOL)", () => {
     assertErr(res, "CapsuleActive");
   });
 
-  it("rejects distribution before the grace window elapses", async () => {
+  it("settles immediately after firing", async () => {
     const env = await startEnv({ creationFee: 0 });
-    const { owner, recipients } = await armed(env, [10000], LAMPORTS_PER_SOL);
+    const deposit = LAMPORTS_PER_SOL;
+    const { owner, recipients } = await armed(env, [10000], deposit);
     await fire(env, owner, 100);
-    await warp(env, 60); // fired, but grace not elapsed
-    const res = await send(env, env.payer, distributeSolIx(env, owner.publicKey, recipients));
-    assertErr(res, "GracePeriodNotElapsed");
+    assertOk(
+      await send(env, env.payer, distributeSolIx(env, owner.publicKey, recipients)),
+      "immediate distribution"
+    );
+    expect(await lamportsOf(env, recipients[0])).to.eq(deposit);
   });
 
-  it("splits SOL by share_bps after grace", async () => {
+  it("splits SOL by share_bps", async () => {
     const env = await startEnv({ creationFee: 0 });
     const deposit = LAMPORTS_PER_SOL;
     const { owner, recipients } = await armed(env, [6000, 4000], deposit);
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
     assertOk(
       await send(env, env.payer, distributeSolIx(env, owner.publicKey, recipients)),
       "distribute sol"
@@ -888,7 +873,6 @@ describe("heres: distribute_assets (SOL)", () => {
     const shares = [3333, 3333, 3334];
     const { owner, recipients } = await armed(env, shares, deposit);
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
     assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, recipients)));
 
     const b0 = Math.floor((deposit * shares[0]) / 10000);
@@ -904,7 +888,6 @@ describe("heres: distribute_assets (SOL)", () => {
     const env = await startEnv({ creationFee: 0 });
     const { owner, recipients } = await armed(env, [10000], LAMPORTS_PER_SOL);
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
     assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, recipients)));
     // distinct fee payer so the second call is a fresh signature, not a rejected duplicate
     const cranker = await fundedKeypair(env, 5);
@@ -917,7 +900,6 @@ describe("heres: distribute_assets (SOL)", () => {
     const owner = await freshCapsule(env, 100);
     assertOk(await send(env, owner, depositSolIx(env, owner, LAMPORTS_PER_SOL), [owner]));
     await fire(env, owner, 100); // never set beneficiaries
-    await warp(env, GRACE_PERIOD + 10);
     const res = await send(env, env.payer, distributeSolIx(env, owner.publicKey, []));
     assertErr(res, "NoBeneficiaries");
   });
@@ -950,7 +932,6 @@ describe("heres: distribute_assets (SPL)", () => {
     );
 
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
     assertOk(
       await send(env, env.payer, distributeSplIx(env, owner.publicKey, mint, [b0Ata, b1Ata])),
       "distribute spl"
@@ -984,7 +965,6 @@ describe("heres: distribute_nft", () => {
       )
     );
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
     return { owner, mint, recipient, recipientAta };
   }
 
@@ -1067,7 +1047,6 @@ describe("heres: distribute_nft", () => {
       )
     );
     await fire(env, owner, 100);
-    await warp(env, GRACE_PERIOD + 10);
 
     const res = await send(
       env,

@@ -30,7 +30,6 @@
 │                           │  │                                       │
 │  FeeConfig PDA            │  │  /api/cron/reconcile-cre-delivery      │
 │  · creation_fee: 0.05 SOL │  │    → Auto-dispatch pending deliveries │
-│  · execution_fee: 3% BPS  │  └──────────────┬────────────────────────┘
 │                           │                  │
 └──────────┬────────────────┘                  │
            │                                   │
@@ -84,7 +83,7 @@ When beneficiaries include EVM addresses, the `distribute_assets` instruction ro
                                                             │                  │
       User locks SOL     Capsule delegated    Crank checks      State change:       SOL/SPL sent to
       in vault PDA       to MagicBlock ER     inactivity         is_active=false     beneficiaries
-      + pays 0.05 SOL    for private          period every       executed_at=now     (3% fee deducted)
+      + pays 0.05 SOL    for private          period every       executed_at=now     in full
       creation fee       monitoring           1 minute                             │
                                                                                      ▼
                                                                               ┌──────────────┐
@@ -212,7 +211,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 │  6. distribute_assets (on base layer)                          │
 │     · Parse beneficiaries from intent_data                     │
 │     · Transfer SOL/SPL from vault to each beneficiary          │
-│     · Deduct 3% execution fee to platform wallet               │
+│     · No execution fee; distribute the full available balance  │
 │     · If EVM beneficiary → route via Chainlink CCIP            │
 │                                                                │
 └──────────────────────────────────────────────────────────────┘
@@ -260,7 +259,6 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 |-------|------|-------------|
 | `fee_recipient` | `PublicKey` | Platform wallet for fee collection |
 | `creation_fee` | `u64` | Flat fee for capsule creation (lamports) |
-| `execution_fee_bps` | `u16` | Basis points deducted at distribution |
 
 ### PDA Seeds
 
@@ -282,7 +280,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | `update_intent` | Modify intent data (beneficiaries, amounts) | Owner only |
 | `update_activity` | Refresh last_activity timestamp (heartbeat) | Owner or anyone |
 | `execute_intent` | Trigger execution when inactivity period elapsed | **Permissionless** |
-| `distribute_assets` | Transfer SOL/SPL to beneficiaries with fee deduction | **Permissionless** |
+| `distribute_assets` | Transfer the full available SOL/SPL balance to beneficiaries | **Permissionless** |
 | `delegate_capsule` | Delegate capsule to MagicBlock ER/PER | Owner |
 | `crank_undelegate` | Commit ER state + undelegate (separate from execute) | **Permissionless** |
 | `schedule_execute_intent` | Schedule MagicBlock crank for auto-execution | After delegation |
@@ -294,7 +292,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | Fee | Amount | When |
 |-----|--------|------|
 | **Creation Fee** | 0.05 SOL | At capsule creation |
-| **Execution Fee** | 3% (300 BPS) | Deducted from vault at distribution |
+| **Execution Fee** | None | Distribution sends the full available vault balance |
 | **Fee Recipient** | `Covn3moA8qstPgXPgueRGMSmi94yXvuDCWTjQVBxHpzb` | Platform treasury |
 
 ### Intent Data Schema

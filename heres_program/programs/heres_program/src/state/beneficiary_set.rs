@@ -32,7 +32,7 @@ impl Beneficiary {
     pub const LEN: usize = 32 + 2 + 14; // 48
 }
 
-/// One standard SPL NFT and the wallet that receives it after the grace period. The mint must have
+/// One standard SPL NFT and the wallet that receives it after the capsule fires. The mint must have
 /// supply 1 and decimals 0 when `distribute_nft` executes. Assignments live inside the same TEE-
 /// resident account as proportional beneficiaries, so the intended heir stays private while alive.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, PartialEq, Eq)]

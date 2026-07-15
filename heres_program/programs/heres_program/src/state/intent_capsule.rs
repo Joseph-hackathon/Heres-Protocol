@@ -14,14 +14,14 @@ pub struct IntentCapsule {
     pub inactivity_period: i64, // seconds of silence before the switch may fire
     pub last_activity: i64,     // unix timestamp of the last proof-of-life
     pub is_active: bool,
-    pub executed_at: Option<i64>, // set when the switch fires; doubles as the grace-window anchor
+    pub executed_at: Option<i64>, // set when the switch fires
     pub bump: u8,
     pub vault_bump: u8,
     pub beneficiaries_bump: u8, // bump of the paired BeneficiarySet PDA (TEE), to derive/sign for it
     pub heartbeat_authority: Pubkey, // off-chain relayer allowed to bump last_activity (regular ER)
     pub version: u8,
     pub target_date: Option<i64>, // absolute unix ts; fires regardless of activity once reached (None = inactivity-only)
-    pub reserved: [u8; 55], // future liveness fields (per-capsule grace, HA validator) - no resize
+    pub reserved: [u8; 55],       // future liveness fields (HA validator, policy flags) - no resize
 }
 
 impl IntentCapsule {

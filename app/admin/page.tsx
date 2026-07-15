@@ -273,7 +273,7 @@ export default function AdminPage() {
                   <div>
                     <h2 className="text-lg font-semibold text-Heres-white">Fee Config Setup</h2>
                     <p className="text-sm text-Heres-muted mt-0.5">
-                      No fee config found. Run once to initialize. Create 0.05 SOL, execute 3%.
+                      No fee config found. Run once to initialize the 0.05 SOL creation fee. There is no execution fee.
                     </p>
                   </div>
                 </div>

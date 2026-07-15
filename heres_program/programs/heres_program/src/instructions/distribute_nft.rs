@@ -10,7 +10,6 @@ use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-use crate::constants::GRACE_PERIOD;
 use crate::error::ErrorCode;
 use crate::events::NftDistributed;
 use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
@@ -48,11 +47,7 @@ pub struct DistributeNft<'info> {
 pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
-    let executed_at = capsule.executed_at.ok_or(ErrorCode::CapsuleNotExecuted)?;
-    require!(
-        Clock::get()?.unix_timestamp >= executed_at + GRACE_PERIOD,
-        ErrorCode::GracePeriodNotElapsed
-    );
+    require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
 
     let mint = &ctx.accounts.mint;
     require!(

@@ -26,7 +26,8 @@
  *   - the BeneficiarySet is private in the TEE while the Switch is public-but-harmless on a regular ER;
  *   - the reveal is gated cross-ER and only opens AFTER the Switch fires + commits to base.
  *
- * distribute_assets is NOT exercised here (48h GRACE_PERIOD; covered by clock-warped bankrun).
+ * distribute_assets is NOT exercised here. Immediate settlement is covered by bankrun and the
+ * live devnet NFT path is covered by nft-inheritance-check.mjs.
  *
  * Run:  node scripts/magicblock/er-roundtrip.mjs
  * Env:  BASE_RPC, SWITCH_ER_RPC (regular ER), TEE_RPC, SWITCH_VALIDATOR, TEE_VALIDATOR,
@@ -547,7 +548,7 @@ try {
       && nftAssignments[0].recipient.equals(ben1.publicKey);
     check('base: private NFT assignment round-tripped intact (now public)', nftRoundTrip,
       `count=${nftAssignments.length}`);
-    console.log('   distribute_assets is grace-gated (48h) -> covered by bankrun, not run here.');
+    console.log('   distribute_assets is covered separately and is not run here.');
   }
 } catch (e) {
   console.error('\nFATAL:', e.message);

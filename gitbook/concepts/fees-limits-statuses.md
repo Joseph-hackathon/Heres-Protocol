@@ -7,9 +7,9 @@ Default repository configuration:
 | Fee | Default | Purpose |
 | --- | --- | --- |
 | Creation fee | 0.05 SOL | Paid when creating a capsule. |
-| Execution fee | 300 basis points, or 3% | Deducted during distribution where configured. |
+| Execution fee | None | Distribution sends the full available vault balance. |
 
-Fee values are controlled by on-chain fee configuration and application constants. Production deployments should display current fee values before every signing step.
+The creation fee is controlled by the on-chain fee configuration. Production deployments should display its current value before every signing step.
 
 ## Modification Limit
 
@@ -43,4 +43,3 @@ Devnet builds may expose minute-based testing to make demos easier.
 | Dispatched | Delivery request was sent to CRE. |
 | Delivered | CRE reported successful message delivery. |
 | Failed | Delivery failed and may need retry or operator review. |
-

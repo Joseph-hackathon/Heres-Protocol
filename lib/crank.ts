@@ -24,9 +24,6 @@ const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
 const MAGIC_CONTEXT_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_CONTEXT)
 const MAGIC_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.MAGIC_PROGRAM_ID)
 
-// distribute_assets is gated on-chain by this post-fire grace window (constants.rs GRACE_PERIOD).
-const GRACE_PERIOD = 48 * 60 * 60
-
 // Workstream A: the Switch lives on a REGULAR ER (token-free), so crank_undelegate goes here. Defaults
 // to the regular ER RPC. The TEE is only touched for the rare BeneficiarySet reveal (see below).
 const CRANK_ER_RPC_URL = process.env.CRANK_ER_RPC_URL || MAGICBLOCK_ER.ER_RPC_URL
@@ -41,8 +38,8 @@ function permissionPda(account: PublicKey): PublicKey {
 
 // ---- Server-side TEE auth token (BeneficiarySet reveal only) ----------------------------------------
 //
-// The hot path (heartbeats, Switch undelegate) is token-free. Only the rare privacy reveal -
-// crank_undelegate_beneficiaries, run once per fired capsule after the grace window - touches the TEE,
+// The hot path (heartbeats, Switch undelegate) is token-free. Only the privacy reveal -
+// crank_undelegate_beneficiaries, run once per fired capsule - touches the TEE,
 // which requires a per-key auth token. The crank wallet mints its own with nacl (no browser wallet).
 // An operator can instead pin a pre-authed URL via CRANK_TEE_RPC_URL (...&token=...).
 let crankTeeTokenCache: string | null = null
@@ -401,7 +398,7 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
  *
  * Reads ONLY the base layer, tracking the Switch and the BeneficiarySet independently (each is
  * delegated to a different ER). The hot path is TOKEN-FREE; the TEE auth token is minted lazily and
- * used only for the rare privacy reveal. The two-step undelegate is the crux: the BeneficiarySet's
+ * used only for the privacy reveal after firing. The two-step undelegate is the crux: the BeneficiarySet's
  * reveal is gated on the Switch already being fired + back on base, so the Switch must undelegate
  * first. State machine per due capsule:
  *
@@ -409,9 +406,7 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
  *                                        Fired-gate no-ops pre-fire; the autonomous ScheduleTask fires.
  *   switch base + active + elapsed     -> execute_intent on base (never-delegated / pre-delegation path).
  *   switch base + active + not-elapsed -> self-heal the due index from the real on-chain fire-time.
- *   switch base + fired + in grace     -> wait (set due index to grace end). BeneficiarySet STAYS on
- *                                        the TEE - the list is never revealed until payout time.
- *   switch base + fired + grace done:
+ *   switch base + fired:
  *       benSet delegated  -> crank_undelegate_beneficiaries on the TEE (the privacy reveal; token).
  *       benSet on base    -> distribute every Vault asset to the now-public list, then unregister.
  *
@@ -513,14 +508,7 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
 
       if (cap.executedAt == null) continue // inactive and never executed -> anomaly, skip.
 
-      // ---- Fired Switch on base. Hold the reveal until the grace window elapses ----
-      const graceEnd = cap.executedAt + GRACE_PERIOD
-      if (now < graceEnd) {
-        await setCapsuleDue(ownerStr, graceEnd) // BeneficiarySet stays private on the TEE until payout
-        continue
-      }
-
-      // ---- Grace elapsed: reveal the BeneficiarySet (if still on the TEE), else distribute ----
+      // ---- Fired Switch on base: reveal the BeneficiarySet (if still on the TEE), else distribute ----
       const benSetDelegated = !!info.benSet && info.benSet.accountOwner.equals(DELEGATION_PROGRAM_ID)
       if (benSetDelegated) {
         // Privacy reveal: commit + undelegate the BeneficiarySet from the TEE back to base. Gated
@@ -545,7 +533,7 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
 
       // BeneficiarySet is on base (revealed): decode the now-public list and pay out.
       if (!info.benSet) {
-        result.errors.push(`${ownerStr}: fired + grace elapsed but BeneficiarySet account missing`)
+        result.errors.push(`${ownerStr}: fired but BeneficiarySet account missing`)
         continue
       }
       const inheritance = decodeBeneficiarySet(info.benSet.data)

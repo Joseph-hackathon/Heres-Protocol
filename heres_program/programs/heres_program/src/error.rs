@@ -18,8 +18,8 @@ pub enum ErrorCode {
     InvalidInactivityPeriod,
     #[msg("Target date must be in the future")]
     InvalidTargetDate,
-    #[msg("Grace period has not elapsed since execution")]
-    GracePeriodNotElapsed,
+    #[msg("Reserved error code")]
+    ReservedLegacyError,
     #[msg("Invalid fee config or fee recipient")]
     InvalidFeeConfig,
     #[msg("Invalid token account provided")]

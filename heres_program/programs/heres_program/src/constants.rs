@@ -34,8 +34,3 @@ pub const MAX_NFT_ASSIGNMENTS: usize = 8;
 
 /// Basis-points denominator. Beneficiary shares must sum to exactly this value (= 100%).
 pub const BPS_DENOMINATOR: u16 = 10_000;
-
-/// Grace window (seconds) after the switch fires before `distribute_assets` may run. During this
-/// window the owner can still prove liveness via `update_activity` and revive the capsule.
-/// 48h default. TEAM: confirm (lean-contract-redesign Open Q4 suggests 48-72h).
-pub const GRACE_PERIOD: i64 = 48 * 60 * 60;

@@ -2,8 +2,8 @@
  * Live-devnet proof that the vault accepts BOTH the classic SPL Token program AND Token-2022, via the
  * token_interface migration (deposit + recover_vault). The vault is never delegated, so this needs no
  * ER: create capsule (base) -> for each token program, mint a fresh token to the owner, deposit it,
- * assert the vault holds it, recover it, assert it returned. distribute is grace-gated (48h) and
- * covered by bankrun, so it is not exercised here.
+ * assert the vault holds it, recover it, assert it returned. Distribution behavior is covered by
+ * bankrun, so it is not exercised here.
  *
  * Run:  node scripts/magicblock/token2022-check.mjs
  */
