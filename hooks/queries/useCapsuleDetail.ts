@@ -4,15 +4,19 @@ import { useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { PublicKey } from '@solana/web3.js'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
-import { getCapsuleByAddress } from '@/lib/solana'
+import { getCapsuleAccountLocations, getCapsuleByAddress } from '@/lib/solana'
 import { getCachedTeeToken } from '@/lib/tee'
 import { getCapsuleVaultPDA } from '@/lib/program'
 import { getVaultTokenAccounts, type VaultTokenAccount } from '@/lib/spl'
 import { getSolanaConnection } from '@/config/solana'
-import { MAGICBLOCK_ER } from '@/constants'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
 import { bytesToBase64 } from '@/utils/intentClient'
 import { queryKeys } from '@/lib/query/keys'
+import {
+  areCapsuleAccountsOnBase,
+  type CapsuleAccountLocations,
+} from '@/lib/capsule-lifecycle'
+import { normalizeTxError } from '@/lib/errors'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,15 +95,18 @@ export interface UseCapsuleDetail {
   isOwner: boolean
   isIntentEnabled: boolean
 
-  vaultSplMint: PublicKey | null
-  vaultMintLoading: boolean
+  accountLocations: CapsuleAccountLocations | null
+  accountLocationsLoading: boolean
+  accountLocationsError: string | null
 
   /** Full multi-asset vault snapshot (SOL + every held SPL mint). */
   vaultAssets: VaultAssets
   vaultAssetsLoading: boolean
+  vaultAssetsError: string | null
 
   distributionComplete: boolean
   distributionLoading: boolean
+  distributionError: string | null
 
   intentDeliveryStatus: IntentDeliveryStatus
   intentDeliveryLoading: boolean
@@ -146,6 +153,18 @@ export function useCapsuleDetail({
 
   const capsule = capsuleQuery.data ?? null
   const ownerPubkey = capsule?.owner
+
+  const accountLocationsQuery = useQuery({
+    queryKey: queryKeys.capsule.accountLocations(ownerPubkey?.toBase58() ?? ''),
+    enabled: Boolean(ownerPubkey),
+    staleTime: 10_000,
+    retry: 1,
+    queryFn: async () => {
+      if (!ownerPubkey) return null
+      return getCapsuleAccountLocations(ownerPubkey)
+    },
+  })
+  const accountLocations = accountLocationsQuery.data ?? null
 
   // -------------------------------------------------------------------------
   // 2. Off-chain metadata (Effect 2 equivalent)
@@ -230,17 +249,14 @@ export function useCapsuleDetail({
   })
 
   const vaultAssets = vaultAssetsQuery.data ?? EMPTY_VAULT_ASSETS
-  // First held SPL mint - kept for the single-asset cancel path.
-  const vaultSplMint = vaultAssets.tokens[0]?.mint ?? null
 
   // -------------------------------------------------------------------------
   // 4. Distribution complete check (Effect 4 equivalent)
   //    Guard: skip if not executed, still delegated, or owner missing.
   // -------------------------------------------------------------------------
   const isExecuted = Boolean(capsule?.executedAt)
-  const isDelegated =
-    capsule?.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
-  const distributionEnabled = Boolean(ownerPubkey) && isExecuted && !isDelegated
+  const distributionEnabled =
+    Boolean(ownerPubkey) && isExecuted && areCapsuleAccountsOnBase(accountLocations)
 
   const distributionQuery = useQuery({
     queryKey: queryKeys.capsule.distribution(address ?? ''),
@@ -342,11 +358,18 @@ export function useCapsuleDetail({
   // -------------------------------------------------------------------------
   const invalidateCapsule = useCallback(async () => {
     if (!address) return
-    await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.byAddress(address) })
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.capsule.byAddress(address) }),
+      ownerPubkey
+        ? queryClient.invalidateQueries({
+            queryKey: queryKeys.capsule.accountLocations(ownerPubkey.toBase58()),
+          })
+        : Promise.resolve(),
+    ])
     if (distributionEnabled) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.distribution(address) })
     }
-  }, [queryClient, address, distributionEnabled])
+  }, [queryClient, address, distributionEnabled, ownerPubkey])
 
   const invalidateDistribution = useCallback(async () => {
     if (!address) return
@@ -372,9 +395,7 @@ export function useCapsuleDetail({
   }
 
   const intentDeliveryError = intentDeliveryQuery.isError
-    ? (intentDeliveryQuery.error instanceof Error
-        ? intentDeliveryQuery.error.message
-        : String(intentDeliveryQuery.error))
+    ? normalizeTxError(intentDeliveryQuery.error)
     : null
 
   return {
@@ -388,14 +409,23 @@ export function useCapsuleDetail({
     isOwner,
     isIntentEnabled,
 
-    vaultSplMint,
-    vaultMintLoading: vaultAssetsQuery.isLoading,
+    accountLocations,
+    accountLocationsLoading: accountLocationsQuery.isLoading || accountLocationsQuery.isFetching,
+    accountLocationsError: accountLocationsQuery.isError
+      ? 'Could not verify the capsule account state. Refresh and try again.'
+      : null,
 
     vaultAssets,
     vaultAssetsLoading: vaultAssetsQuery.isLoading,
+    vaultAssetsError: vaultAssetsQuery.isError
+      ? 'Could not verify the capsule vault balance. Retry before withdrawing or cancelling.'
+      : null,
 
     distributionComplete: distributionQuery.data ?? false,
     distributionLoading: distributionQuery.isLoading,
+    distributionError: distributionQuery.isError
+      ? 'Could not verify whether the vault has already been distributed. Retry this check before distributing.'
+      : null,
 
     intentDeliveryStatus: intentDeliveryQuery.data ?? null,
     intentDeliveryLoading: intentDeliveryQuery.isLoading || intentDeliveryQuery.isFetching,
