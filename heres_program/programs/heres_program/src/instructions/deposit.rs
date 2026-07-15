@@ -10,7 +10,11 @@ use anchor_spl::token_2022::spl_token_2022::{
     extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions},
     state::Mint as Token2022Mint,
 };
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_lang::solana_program::program_option::COption;
+use anchor_spl::token_2022::spl_token_2022::instruction::AuthorityType;
+use anchor_spl::token_interface::{
+    self, Mint, SetAuthority, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::error::ErrorCode;
 use crate::state::{CapsuleVault, IntentCapsule};
@@ -128,7 +132,14 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         );
         validate_mint_extensions(&mint.to_account_info(), &token_program_id)?;
         require!(to_ata.mint == mint.key(), ErrorCode::InvalidTokenAccount);
-        if to_ata.amount == 0 {
+        let vault_key = ctx.accounts.vault.key();
+        let registered = to_ata.close_authority == COption::Some(vault_key);
+        require!(
+            registered || to_ata.close_authority == COption::None,
+            ErrorCode::InvalidAssetManifest
+        );
+        let register_token = ctx.accounts.vault.uses_registered_token_markers() && !registered;
+        if register_token {
             require!(
                 ctx.accounts.vault.register_token_asset(),
                 ErrorCode::InvalidAssetManifest
@@ -147,6 +158,23 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
             amount,
             mint.decimals,
         )?;
+        if register_token {
+            let owner_key = ctx.accounts.owner.key();
+            let vault_bump = ctx.bumps.vault;
+            let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
+            token_interface::set_authority(
+                CpiContext::new_with_signer(
+                    token_program.to_account_info(),
+                    SetAuthority {
+                        current_authority: ctx.accounts.vault.to_account_info(),
+                        account_or_mint: to_ata.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                AuthorityType::CloseAccount,
+                Some(vault_key),
+            )?;
+        }
         msg!("Deposited {} of mint {:?} into vault", amount, mint.key());
     } else {
         let vault_ai = ctx.accounts.vault.to_account_info();

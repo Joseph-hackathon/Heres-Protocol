@@ -1225,6 +1225,65 @@ describe("heres: distribute_assets (SPL)", () => {
     const vaultAta = ataFor(vaultPda(owner.publicKey), mint, true);
     expect(await accountExists(env, vaultAta)).to.eq(false);
   });
+
+  it("does not let an unregistered mint consume a registered manifest leg", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    const mintAuth = await fundedKeypair(env, 5);
+    const registeredMint = await createMint(env, mintAuth.publicKey);
+    const spamMint = await createMint(env, mintAuth.publicKey);
+    const ownerAta = await createAta(env, owner.publicKey, registeredMint);
+    await mintTo(env, registeredMint, ownerAta, mintAuth, 10n);
+    assertOk(
+      await send(env, owner, depositSplIx(env, owner, 10n, registeredMint, ownerAta), [owner])
+    );
+
+    // A third party can create and fund the vault's canonical ATA directly, but cannot set its
+    // close-authority marker because only the vault PDA can sign for that change.
+    const spamVaultAta = await createAta(env, vaultPda(owner.publicKey), spamMint, true);
+    await mintTo(env, spamMint, spamVaultAta, mintAuth, 20n);
+
+    const recipient = Keypair.generate().publicKey;
+    const registeredRecipientAta = await createAta(env, recipient, registeredMint);
+    const spamRecipientAta = await createAta(env, recipient, spamMint);
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [{ pubkey: recipient, shareBps: 10000 }]),
+        [owner]
+      )
+    );
+    await fire(env, owner, 100);
+
+    assertOk(
+      await send(env, env.payer, distributeSplIx(env, owner.publicKey, spamMint, [spamRecipientAta]))
+    );
+    assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient])));
+
+    const premature = await send(
+      env,
+      owner,
+      finalizeIx(env, owner.publicKey, owner.publicKey),
+      [owner]
+    );
+    assertErr(premature, "VaultNotEmpty");
+    expect(await tokenBalance(env, registeredRecipientAta)).to.eq(0n);
+
+    assertOk(
+      await send(
+        env,
+        env.payer,
+        distributeSplIx(env, owner.publicKey, registeredMint, [registeredRecipientAta])
+      )
+    );
+    assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient])));
+    assertOk(
+      await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner])
+    );
+    expect(await tokenBalance(env, registeredRecipientAta)).to.eq(10n);
+    expect(await tokenBalance(env, spamRecipientAta)).to.eq(20n);
+  });
 });
 
 describe("heres: distribute_nft", () => {
@@ -1497,6 +1556,30 @@ describe("heres: finalize_capsule", () => {
       [attacker]
     );
     assertErr(res, "Unauthorized");
+  });
+
+  it("lets the owner close a settled legacy capsule", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100, env.payer.publicKey);
+    await fire(env, owner, 100);
+
+    const vaultAddress = vaultPda(owner.publicKey);
+    const legacyVault = await env.client.getAccount(vaultAddress);
+    expect(legacyVault).to.not.eq(null);
+    const data = Buffer.from(legacyVault!.data);
+    data[8] = 1;
+    env.context.setAccount(vaultAddress, { ...legacyVault!, data });
+
+    const relayerAttempt = await send(
+      env,
+      env.payer,
+      finalizeIx(env, owner.publicKey, env.payer.publicKey)
+    );
+    assertErr(relayerAttempt, "Unauthorized");
+    assertOk(
+      await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner])
+    );
+    expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(false);
   });
 
   it("closes settled accounts to the protocol and permits fresh creation at the same PDAs", async () => {

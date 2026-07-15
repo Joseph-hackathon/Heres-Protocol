@@ -7,6 +7,7 @@
 //! SPL distribution finds the vault ATA already closed (fails -> natural no-op).
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -118,6 +119,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
         );
         let pool = vault_ata.amount;
         require!(pool > 0, ErrorCode::NothingToDistribute);
+        let registered = vault_ata.close_authority == COption::Some(ctx.accounts.vault.key());
+        require!(
+            registered || vault_ata.close_authority == COption::None,
+            ErrorCode::InvalidAssetManifest
+        );
 
         let mut distributed: u64 = 0;
         for (idx, b) in beneficiaries.iter().enumerate() {
@@ -169,7 +175,12 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             close_accounts,
             signer_seeds,
         ))?;
-        ctx.accounts.vault.unregister_token_asset();
+        // Only program-deposited ATAs carry the vault close-authority marker and consume a manifest
+        // leg. A directly transferred spam mint is still distributed and closed, but cannot reduce
+        // the count belonging to a different registered mint.
+        if registered {
+            ctx.accounts.vault.unregister_token_asset();
+        }
 
         emit!(AssetsDistributed {
             capsule: capsule.key(),

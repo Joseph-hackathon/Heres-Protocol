@@ -58,14 +58,20 @@ pub fn handler(ctx: Context<FinalizeCapsule>) -> Result<()> {
     );
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
-    require!(
-        ctx.accounts.vault.tracks_assets(),
-        ErrorCode::InvalidAssetManifest
-    );
-    require!(
-        ctx.accounts.vault.asset_count() == 0,
-        ErrorCode::VaultNotEmpty
-    );
+    let vault_ai = ctx.accounts.vault.to_account_info();
+    let rent_floor = Rent::get()?.minimum_balance(vault_ai.data_len());
+    require!(vault_ai.lamports() <= rent_floor, ErrorCode::VaultNotEmpty);
+    if ctx.accounts.vault.uses_registered_token_markers() {
+        require!(
+            ctx.accounts.vault.asset_count() == 0,
+            ErrorCode::VaultNotEmpty
+        );
+    } else {
+        // Legacy vaults have no trustworthy mint manifest. Only the owner may acknowledge that the
+        // client-side token scan is empty and close the settled lifecycle; the protocol relayer may
+        // not make that irreversible compatibility decision on the owner's behalf.
+        require!(authority == capsule.owner, ErrorCode::Unauthorized);
+    }
 
     let rent_reclaimed = ctx
         .accounts
