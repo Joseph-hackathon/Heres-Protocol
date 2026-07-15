@@ -185,7 +185,7 @@ async function sendER(ixs, signers, feePayer, conn) {
       const s = (await conn.getSignatureStatuses([sig]))?.value?.[0];
       if (!s) continue;
       if (s.err) throw new Error('tx err: ' + JSON.stringify(s.err));
-      if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus)) return sig;
+      if (s.confirmationStatus === 'finalized') return sig;
     }
     throw new Error('confirm timeout for ' + sig.slice(0, 16));
   }, 3, 2000);
