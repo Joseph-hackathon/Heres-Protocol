@@ -16,7 +16,9 @@
  *   crank_undelegate (REG ER)          commit + undelegate the Switch back to base (fired state lands)
  *   crank_undelegate_beneficiaries (TEE)  *** THE CROSS-ER PROOF *** the TEE ix reads the now-base
  *                                      Switch to confirm it fired, then reveals the BeneficiarySet
- *   verify (base)                      Switch fired; beneficiaries round-tripped, now public
+ *   distribute_assets (base)           pay beneficiaries after both delegated accounts settle
+ *   finalize_capsule (base)            close the three core PDAs to the protocol fee recipient
+ *   verify (base)                       payouts landed and all capsule accounts are gone
  *
  * THE LOAD-BEARING ASSERTION (the whole split rests on it): a TEE-ER instruction can read the
  * just-undelegated base Switch to gate the privacy reveal. If this passes, the split ships; if it
@@ -26,9 +28,6 @@
  *   - the relayer heartbeat uses NO TEE auth token (it hits the regular ER) - the hot path is token-free;
  *   - the BeneficiarySet is private in the TEE while the Switch is public-but-harmless on a regular ER;
  *   - the reveal is gated cross-ER and only opens AFTER the Switch fires + commits to base.
- *
- * distribute_assets is NOT exercised here. Immediate settlement is covered by bankrun and the
- * live devnet NFT path is covered by nft-inheritance-check.mjs.
  *
  * Run:  node scripts/magicblock/er-roundtrip.mjs
  * Env:  BASE_RPC, SWITCH_ER_RPC (regular ER), TEE_RPC, SWITCH_VALIDATOR, TEE_VALIDATOR,
@@ -279,6 +278,11 @@ try {
   console.log(`1. funded owner ${FUND_SOL} SOL`);
 
   // ---- 2. create_capsule (base; 3 PDAs; no beneficiaries; heartbeat_authority = relayer) ----
+  const feeConfigInfo = await getAcct(baseConn, feeConfig);
+  if (!feeConfigInfo) throw new Error('FeeConfig is missing on base devnet');
+  const feeState = accountsCoder.decode('FeeConfig', feeConfigInfo.data);
+  const feeRecipient = feeState.fee_recipient ?? feeState.feeRecipient;
+  if (!feeRecipient) throw new Error('FeeConfig has no fee recipient');
   // In date mode use a long inactivity so the date is the only trigger that can fire the switch.
   const effectiveInactivity = MODE === 'date' ? Math.max(INACTIVITY, 3600) : INACTIVITY;
   const targetDateUnix = MODE === 'date' ? Math.floor(Date.now() / 1000) + DATE_OFFSET_S : null;
@@ -287,7 +291,7 @@ try {
     .createCapsule(new BN(effectiveInactivity), relayerKp.publicKey, targetDateUnix != null ? new BN(targetDateUnix) : null)
     .accountsPartial({
       capsule, beneficiarySet: benSet, vault, owner: ownerKp.publicKey, feeConfig,
-      platformFeeRecipient: PROGRAM_ID,
+      platformFeeRecipient: feeRecipient,
       systemProgram: SystemProgram.programId,
     })
     .instruction();
@@ -467,6 +471,13 @@ try {
   } catch (e) { rDetail = 'recover err: ' + (e.message?.slice(0, 90) ?? ''); }
   check('escape hatch: owner recover_vault while Switch DELEGATED returns funds', recovered, rDetail);
 
+  // Re-fund after proving recovery so the post-fire path must perform a real payout before it can
+  // finalize. Deposit accepts the delegated Switch as a raw account and remains a base-layer action.
+  await sendBase([depositIx], [ownerKp]);
+  const refilledVault = await retry(() => baseConn.getBalance(vault));
+  check('deposit SOL while Switch DELEGATED re-funds settlement',
+    refilledVault >= Math.floor(DEPOSIT_SOL * LAMPORTS_PER_SOL), `vault=${sol(refilledVault)} SOL`);
+
   // ---- 7. wait out the trigger, then schedule the autonomous crank on the regular ER ----
   // Schedule only once the capsule is actually due, so the first ScheduleTask iteration succeeds.
   // Inactivity mode: wait the inactivity window. Date mode: the delegations already took longer than
@@ -578,7 +589,59 @@ try {
       && nftAssignments[0].recipient.equals(ben1.publicKey);
     check('base: private NFT assignment round-tripped intact (now public)', nftRoundTrip,
       `count=${nftAssignments.length}`);
-    console.log('   distribute_assets is covered separately and is not run here.');
+  }
+
+  // ---- 12. distribute the live SOL leg on base, then verify the exact 60/40 beneficiary split ----
+  if (switchBack && benBack) {
+    const vaultBeforeDistribution = await retry(() => baseConn.getBalance(vault));
+    const vaultInfoBeforeDistribution = await getAcct(baseConn, vault);
+    const rentFloor = await baseConn.getMinimumBalanceForRentExemption(vaultInfoBeforeDistribution.data.length);
+    const distributable = vaultBeforeDistribution - rentFloor;
+    const ben1Before = await retry(() => baseConn.getBalance(ben1.publicKey));
+    const ben2Before = await retry(() => baseConn.getBalance(ben2.publicKey));
+    const distributeIx = await program.methods
+      .distributeAssets()
+      .accountsPartial({
+        capsule, beneficiarySet: benSet, vault, systemProgram: SystemProgram.programId,
+        tokenProgram: null, mint: null, vaultTokenAccount: null,
+      })
+      .remainingAccounts([
+        { pubkey: ben1.publicKey, isSigner: false, isWritable: true },
+        { pubkey: ben2.publicKey, isSigner: false, isWritable: true },
+      ])
+      .instruction();
+    const distributeSig = await sendBase([distributeIx], [ownerKp]);
+    console.log('12. distributed live SOL leg on base:', distributeSig);
+    const ben1After = await retry(() => baseConn.getBalance(ben1.publicKey));
+    const ben2After = await retry(() => baseConn.getBalance(ben2.publicKey));
+    const expectedBen1 = Math.floor(distributable * 6000 / 10_000);
+    const expectedBen2 = distributable - expectedBen1;
+    check('base payout: beneficiary 1 receives exact 60% share', ben1After - ben1Before === expectedBen1,
+      `${ben1After - ben1Before} lamports`);
+    check('base payout: beneficiary 2 receives exact 40% + remainder', ben2After - ben2Before === expectedBen2,
+      `${ben2After - ben2Before} lamports`);
+
+    // ---- 13. close the settled lifecycle and prove every core PDA is actually gone ----
+    const protocolBefore = await retry(() => baseConn.getBalance(feeRecipient));
+    const finalizeIx = await program.methods
+      .finalizeCapsule()
+      .accountsPartial({
+        capsule, beneficiarySet: benSet, vault, authority: ownerKp.publicKey,
+        feeConfig, feeRecipient,
+      })
+      .instruction();
+    const finalizeSig = await sendBase([finalizeIx], [ownerKp]);
+    console.log('13. finalized capsule on base:', finalizeSig);
+    const [capsuleAfter, benSetAfter, vaultAfter] = await Promise.all([
+      getAcct(baseConn, capsule).catch(() => null),
+      getAcct(baseConn, benSet).catch(() => null),
+      getAcct(baseConn, vault).catch(() => null),
+    ]);
+    const protocolAfter = await retry(() => baseConn.getBalance(feeRecipient));
+    check('finalize closes Switch + BeneficiarySet + Vault on base',
+      capsuleAfter === null && benSetAfter === null && vaultAfter === null);
+    check('finalize sends reclaimed rent to configured protocol recipient', protocolAfter > protocolBefore,
+      `reclaimed=${protocolAfter - protocolBefore} lamports`);
   }
 } catch (e) {
   console.error('\nFATAL:', e.message);
