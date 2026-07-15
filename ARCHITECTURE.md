@@ -285,7 +285,7 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | `crank_undelegate` | Commit ER state + undelegate (separate from execute) | **Permissionless** |
 | `schedule_execute_intent` | Schedule MagicBlock crank for auto-execution | After delegation |
 | `deactivate_capsule` | Deactivate capsule | Owner only |
-| `recreate_capsule` | Create new capsule after execution | Owner |
+| `finalize_capsule` | Close a fully settled capsule to the configured protocol fee recipient | Owner or heartbeat authority |
 
 ### Fee Structure
 

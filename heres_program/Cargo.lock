@@ -1132,6 +1132,7 @@ dependencies = [
  "bincode",
  "ephemeral-rollups-sdk",
  "magicblock-magic-program-api",
+ "solana-sha256-hasher 3.1.0",
 ]
 
 [[package]]

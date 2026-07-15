@@ -35,6 +35,8 @@ export interface OnChainNftAssignment {
  */
 export interface BeneficiarySet {
   owner: PublicKey
+  version?: number
+  isSealed?: boolean
   beneficiaries: OnChainBeneficiary[]
   nftAssignments: OnChainNftAssignment[]
 }
@@ -54,6 +56,11 @@ export interface IntentCapsule {
   vaultBump?: number
   beneficiariesBump?: number
   heartbeatAuthority?: PublicKey
+  version?: number
+  /** True when the TEE settlement configuration is immutable for this lifecycle. */
+  inheritanceSealed?: boolean
+  /** Runtime delegation state of the separate BeneficiarySet account. */
+  inheritanceDelegated?: boolean
   /** Absolute unix ts (seconds) the switch fires regardless of activity; null = inactivity-only. */
   targetDate?: number | null
   /** Populated from a BeneficiarySet read (TEE w/ token, or base post-reveal); [] otherwise. */

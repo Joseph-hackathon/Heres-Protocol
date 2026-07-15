@@ -26,6 +26,7 @@ import {
   mintTo,
 } from '@solana/spl-token'
 import anchor from '@coral-xyz/anchor'
+import { createHash, randomBytes } from 'crypto'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -71,6 +72,20 @@ const [vault] = PublicKey.findProgramAddressSync(
 const [feeConfig] = PublicKey.findProgramAddressSync([Buffer.from('fee_config')], PROGRAM_ID)
 
 const signatures = {}
+const u16le = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes }
+const u32le = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes }
+const configCommitment = (ownerKey, beneficiaries, nftAssignments, salt) => {
+  const parts = [Buffer.from('heres:inheritance-config:v1'), ownerKey.toBuffer(), u32le(beneficiaries.length)]
+  for (const beneficiary of beneficiaries) {
+    parts.push(beneficiary.pubkey.toBuffer(), u16le(beneficiary.shareBps))
+  }
+  parts.push(u32le(nftAssignments.length))
+  for (const assignment of nftAssignments) {
+    parts.push(assignment.mint.toBuffer(), assignment.recipient.toBuffer())
+  }
+  parts.push(salt)
+  return Array.from(createHash('sha256').update(Buffer.concat(parts)).digest())
+}
 
 try {
   console.log('=== Heres live devnet NFT inheritance check ===')
@@ -133,16 +148,29 @@ try {
     })
     .rpc()
 
+  const beneficiaries = [
+    { pubkey: recipient.publicKey, shareBps: 10000, reserved: Array(14).fill(0) },
+  ]
+  const nftAssignments = [{ mint, recipient: recipient.publicKey }]
   signatures.beneficiary = await program.methods
-    .updateIntent([
-      { pubkey: recipient.publicKey, shareBps: 10000, reserved: Array(14).fill(0) },
-    ])
+    .updateIntent(beneficiaries)
     .accountsPartial({ beneficiarySet, owner: owner.publicKey })
     .rpc()
 
   signatures.assignment = await program.methods
-    .updateNftAssignments([{ mint, recipient: recipient.publicKey }])
+    .updateNftAssignments(nftAssignments)
     .accountsPartial({ beneficiarySet, owner: owner.publicKey })
+    .rpc()
+
+  const salt = randomBytes(32)
+  const commitment = configCommitment(owner.publicKey, beneficiaries, nftAssignments, salt)
+  signatures.seal = await program.methods
+    .sealInheritance(Array.from(salt), commitment)
+    .accountsPartial({ beneficiarySet, owner: owner.publicKey })
+    .rpc()
+  signatures.arm = await program.methods
+    .armCapsule(commitment)
+    .accountsPartial({ capsule, owner: owner.publicKey })
     .rpc()
 
   const stored = await program.account.beneficiarySet.fetch(beneficiarySet)

@@ -25,3 +25,11 @@ pub struct NftDistributed {
     pub mint: Pubkey,
     pub recipient: Pubkey,
 }
+
+#[event]
+pub struct CapsuleFinalized {
+    pub capsule: Pubkey,
+    pub owner: Pubkey,
+    pub fee_recipient: Pubkey,
+    pub rent_reclaimed: u64,
+}

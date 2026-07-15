@@ -48,6 +48,17 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    if capsule.requires_config_commitment() {
+        require!(
+            ctx.accounts.beneficiary_set.requires_seal()
+                && ctx.accounts.beneficiary_set.is_sealed(),
+            ErrorCode::InheritanceNotSealed
+        );
+        require!(
+            capsule.config_commitment() == ctx.accounts.beneficiary_set.config_commitment(),
+            ErrorCode::InvalidConfigurationCommitment
+        );
+    }
 
     let mint = &ctx.accounts.mint;
     require!(
@@ -126,6 +137,7 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
         },
         signer_seeds,
     ))?;
+    ctx.accounts.vault.unregister_token_asset();
 
     emit!(NftDistributed {
         capsule: capsule.key(),

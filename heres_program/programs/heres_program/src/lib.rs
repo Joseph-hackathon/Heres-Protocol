@@ -9,6 +9,7 @@ pub mod state;
 
 // Bring each instruction's Accounts context + Anchor-generated client modules into the crate root
 // so the #[program] dispatcher can resolve them. Private (no re-export) to avoid glob ambiguity.
+use instructions::arm_capsule::*;
 use instructions::cancel_capsule::*;
 use instructions::crank_undelegate::*;
 use instructions::crank_undelegate_beneficiaries::*;
@@ -19,10 +20,11 @@ use instructions::deposit::*;
 use instructions::distribute_assets::*;
 use instructions::distribute_nft::*;
 use instructions::execute_intent::*;
+use instructions::finalize_capsule::*;
 use instructions::init_fee_config::*;
 use instructions::recover_vault::*;
-use instructions::recreate_capsule::*;
 use instructions::schedule_execute_intent::*;
+use instructions::seal_inheritance::*;
 use instructions::update_activity::*;
 use instructions::update_fee_config::*;
 use instructions::update_intent::*;
@@ -85,6 +87,20 @@ pub mod heres_program {
         instructions::update_nft_assignments::handler(ctx, assignments)
     }
 
+    /// Seal the private inheritance configuration inside the TEE before the Switch is armed.
+    pub fn seal_inheritance(
+        ctx: Context<SealInheritance>,
+        salt: [u8; 32],
+        expected_commitment: [u8; 32],
+    ) -> Result<()> {
+        instructions::seal_inheritance::handler(ctx, salt, expected_commitment)
+    }
+
+    /// Arm a draft Switch on the regular ER with the sealed inheritance commitment.
+    pub fn arm_capsule(ctx: Context<ArmCapsule>, config_commitment: [u8; 32]) -> Result<()> {
+        instructions::arm_capsule::handler(ctx, config_commitment)
+    }
+
     /// Lock SOL or SPL into the Vault (repeatable; owner only).
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         instructions::deposit::handler(ctx, amount)
@@ -93,15 +109,6 @@ pub mod heres_program {
     /// Cancel an active capsule (owner only): refund assets and close the accounts.
     pub fn cancel_capsule(ctx: Context<CancelCapsule>) -> Result<()> {
         instructions::cancel_capsule::handler(ctx)
-    }
-
-    /// Reuse an executed capsule by resetting its lifecycle in place (owner only).
-    pub fn recreate_capsule(
-        ctx: Context<RecreateCapsule>,
-        inactivity_period: i64,
-        target_date: Option<i64>,
-    ) -> Result<()> {
-        instructions::recreate_capsule::handler(ctx, inactivity_period, target_date)
     }
 
     /// Fire the Switch when the inactivity period elapses (permissionless; state-only).
@@ -124,6 +131,11 @@ pub mod heres_program {
     /// Transfer one standard SPL NFT to its explicitly assigned recipient after the capsule fires.
     pub fn distribute_nft(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
         instructions::distribute_nft::handler(ctx, recipient)
+    }
+
+    /// Close a fully settled capsule and reclaim its account rent to the configured fee recipient.
+    pub fn finalize_capsule(ctx: Context<FinalizeCapsule>) -> Result<()> {
+        instructions::finalize_capsule::handler(ctx)
     }
 
     /// Owner escape hatch: recover one Vault asset while active, without touching the Switch.

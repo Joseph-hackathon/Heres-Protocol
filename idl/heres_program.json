@@ -8,6 +8,70 @@
   },
   "instructions": [
     {
+      "name": "arm_capsule",
+      "docs": [
+        "Arm a draft Switch on the regular ER with the sealed inheritance commitment."
+      ],
+      "discriminator": [
+        197,
+        222,
+        104,
+        43,
+        101,
+        40,
+        103,
+        114
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "config_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "cancel_capsule",
       "docs": [
         "Cancel an active capsule (owner only): refund assets and close the accounts."
@@ -205,11 +269,13 @@
           }
         },
         {
-          "name": "magic_context",
-          "writable": true
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
         },
         {
-          "name": "magic_program"
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
         }
       ],
       "args": []
@@ -309,18 +375,48 @@
         },
         {
           "name": "permission",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "beneficiary_set"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "permission_program"
+            }
+          }
         },
         {
           "name": "permission_program",
           "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
         },
         {
-          "name": "magic_context",
-          "writable": true
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
         },
         {
-          "name": "magic_program"
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
         }
       ],
       "args": []
@@ -684,10 +780,12 @@
           }
         },
         {
-          "name": "magic_program"
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
         },
         {
-          "name": "delegation_program"
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
         },
         {
           "name": "system_program",
@@ -699,19 +797,199 @@
         },
         {
           "name": "permission",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  105,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  58
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "permission_program"
+            }
+          }
         },
         {
           "name": "buffer_permission",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "permission"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "permission_program"
+            }
+          }
         },
         {
           "name": "delegation_record_permission",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "permission"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                181,
+                183,
+                0,
+                225,
+                242,
+                87,
+                58,
+                192,
+                204,
+                6,
+                34,
+                1,
+                52,
+                74,
+                207,
+                151,
+                184,
+                53,
+                6,
+                235,
+                140,
+                229,
+                25,
+                152,
+                204,
+                98,
+                126,
+                24,
+                147,
+                128,
+                167,
+                62
+              ]
+            }
+          }
         },
         {
           "name": "delegation_metadata_permission",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "permission"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                181,
+                183,
+                0,
+                225,
+                242,
+                87,
+                58,
+                192,
+                204,
+                6,
+                34,
+                1,
+                52,
+                74,
+                207,
+                151,
+                184,
+                53,
+                6,
+                235,
+                140,
+                229,
+                25,
+                152,
+                204,
+                98,
+                126,
+                24,
+                147,
+                128,
+                167,
+                62
+              ]
+            }
+          }
         },
         {
           "name": "owner_program",
@@ -912,10 +1190,12 @@
           }
         },
         {
-          "name": "magic_program"
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
         },
         {
-          "name": "delegation_program"
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
         },
         {
           "name": "system_program",
@@ -1423,6 +1703,151 @@
       "args": []
     },
     {
+      "name": "finalize_capsule",
+      "docs": [
+        "Close a fully settled capsule and reclaim its account rent to the configured fee recipient."
+      ],
+      "discriminator": [
+        169,
+        40,
+        217,
+        191,
+        161,
+        145,
+        42,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "fee_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "init_fee_config",
       "docs": [
         "Initialize the platform fee config (call once after deploy; authority = deployer)."
@@ -1647,23 +2072,39 @@
       "args": []
     },
     {
-      "name": "recreate_capsule",
+      "name": "schedule_execute_intent",
       "docs": [
-        "Reuse an executed capsule by resetting its lifecycle in place (owner only)."
+        "Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals."
       ],
       "discriminator": [
-        178,
-        120,
-        136,
-        142,
-        127,
-        219,
-        159,
-        143
+        88,
+        30,
+        30,
+        42,
+        9,
+        75,
+        31,
+        189
       ],
       "accounts": [
         {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Payer who signs the schedule transaction (on the ER RPC)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
           "name": "capsule",
+          "docs": [
+            "Switch PDA delegated to the regular ER. New-version capsules can only be scheduled after the",
+            "sealed configuration commitment has been armed."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1688,17 +2129,42 @@
               },
               {
                 "kind": "account",
-                "path": "owner"
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
               }
             ]
           }
-        },
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "ScheduleExecuteIntentArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "seal_inheritance",
+      "docs": [
+        "Seal the private inheritance configuration inside the TEE before the Switch is armed."
+      ],
+      "discriminator": [
+        60,
+        180,
+        30,
+        59,
+        87,
+        17,
+        221,
+        102
+      ],
+      "accounts": [
         {
           "name": "beneficiary_set",
-          "docs": [
-            "Reset alongside the Switch. Must be back on base (undelegated) - same as the Switch after a",
-            "completed distribution. Re-delegate + re-set beneficiaries via update_intent to re-arm privacy."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1736,56 +2202,21 @@
       ],
       "args": [
         {
-          "name": "inactivity_period",
-          "type": "i64"
-        },
-        {
-          "name": "target_date",
+          "name": "salt",
           "type": {
-            "option": "i64"
+            "array": [
+              "u8",
+              32
+            ]
           }
-        }
-      ]
-    },
-    {
-      "name": "schedule_execute_intent",
-      "docs": [
-        "Register a MagicBlock ScheduleTask crank that re-runs execute_intent at intervals."
-      ],
-      "discriminator": [
-        88,
-        30,
-        30,
-        42,
-        9,
-        75,
-        31,
-        189
-      ],
-      "accounts": [
-        {
-          "name": "magic_program"
         },
         {
-          "name": "payer",
-          "docs": [
-            "Payer who signs the schedule transaction (on the ER RPC)."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "capsule",
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "args",
+          "name": "expected_commitment",
           "type": {
-            "defined": {
-              "name": "ScheduleExecuteIntentArgs"
-            }
+            "array": [
+              "u8",
+              32
+            ]
           }
         }
       ]
@@ -2101,6 +2532,19 @@
       ]
     },
     {
+      "name": "CapsuleFinalized",
+      "discriminator": [
+        250,
+        157,
+        174,
+        147,
+        198,
+        200,
+        226,
+        140
+      ]
+    },
+    {
       "name": "IntentExecuted",
       "discriminator": [
         179,
@@ -2242,6 +2686,41 @@
       "code": 6022,
       "name": "NftRequiresAssignedDistribution",
       "msg": "NFT has an explicit recipient and must use the NFT distribution instruction"
+    },
+    {
+      "code": 6023,
+      "name": "UnsupportedTokenExtension",
+      "msg": "Token-2022 mint uses an extension that Heres cannot settle safely"
+    },
+    {
+      "code": 6024,
+      "name": "InheritanceAlreadySealed",
+      "msg": "Inheritance configuration is already sealed"
+    },
+    {
+      "code": 6025,
+      "name": "InheritanceNotSealed",
+      "msg": "Inheritance configuration must be sealed before activation"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidConfigurationCommitment",
+      "msg": "Inheritance configuration does not match the sealed commitment"
+    },
+    {
+      "code": 6027,
+      "name": "CapsuleNotDraft",
+      "msg": "Capsule is not an unarmed draft"
+    },
+    {
+      "code": 6028,
+      "name": "VaultNotEmpty",
+      "msg": "Vault still contains funded assets"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidAssetManifest",
+      "msg": "Vault asset manifest is full or inconsistent"
     }
   ],
   "types": [
@@ -2355,6 +2834,30 @@
                 64
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "CapsuleFinalized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "capsule",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_reclaimed",
+            "type": "u64"
           }
         ]
       }

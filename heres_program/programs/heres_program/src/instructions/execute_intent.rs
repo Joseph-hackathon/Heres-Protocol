@@ -27,6 +27,12 @@ pub struct ExecuteIntent<'info> {
 pub fn handler(ctx: Context<ExecuteIntent>) -> Result<()> {
     let capsule = &mut ctx.accounts.capsule;
     require!(capsule.is_active, ErrorCode::CapsuleInactive);
+    if capsule.requires_config_commitment() {
+        require!(
+            capsule.has_config_commitment(),
+            ErrorCode::InheritanceNotSealed
+        );
+    }
 
     let now = Clock::get()?.unix_timestamp;
     // Fire on EITHER trigger, whichever comes first: the owner has been silent for inactivity_period,

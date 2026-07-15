@@ -680,7 +680,7 @@ export default function CreatePage() {
                 <p className="text-xs text-amber-400">Do not put private keys, seed phrases, or master passwords in the intent statement.</p>
 
                 {error && (
-                  <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-400">
+                  <div className="min-w-0 break-words rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-400 [overflow-wrap:anywhere]">
                     Error: {error}
                   </div>
                 )}
@@ -750,7 +750,7 @@ export default function CreatePage() {
                     </div>
                     {existingCapsule && (
                       <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
-                        An active capsule already exists for this wallet. Creating a new one may require deactivation or execution of the current capsule first.
+                        This wallet already has an active or incomplete capsule. Open My Capsule to manage or cancel it before creating another.
                       </div>
                     )}
                   </div>
@@ -778,7 +778,7 @@ export default function CreatePage() {
                       </div>
                       <div className="border-t border-Heres-border pt-4">
                         {error && (
-                          <div className="mb-3 rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-400">
+                          <div className="mb-3 min-w-0 break-words rounded-xl border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-400 [overflow-wrap:anywhere]">
                             {error}
                           </div>
                         )}

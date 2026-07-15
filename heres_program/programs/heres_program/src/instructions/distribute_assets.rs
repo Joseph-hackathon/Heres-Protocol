@@ -59,6 +59,17 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    if capsule.requires_config_commitment() {
+        require!(
+            ctx.accounts.beneficiary_set.requires_seal()
+                && ctx.accounts.beneficiary_set.is_sealed(),
+            ErrorCode::InheritanceNotSealed
+        );
+        require!(
+            capsule.config_commitment() == ctx.accounts.beneficiary_set.config_commitment(),
+            ErrorCode::InvalidConfigurationCommitment
+        );
+    }
     require!(
         !ctx.accounts.beneficiary_set.beneficiaries.is_empty(),
         ErrorCode::NoBeneficiaries
@@ -73,20 +84,16 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
 
     if let Some(mint) = &ctx.accounts.mint {
         // ---- SPL asset ----
-        // An explicitly assigned mint that still has the NFT custody shape must never pass through
-        // proportional distribution. Without this guard, a permissionless caller could bypass its
-        // mint-to-recipient route and send the indivisible token to the last proportional
-        // beneficiary through rounding. If the mint no longer qualifies as an NFT, fall back to
-        // proportional settlement so malformed or mutated assignments cannot strand vault funds.
+        // An explicitly assigned mint must never pass through proportional distribution. This is
+        // based on the immutable inheritance route, not mutable mint supply: otherwise a mint
+        // authority could increase an assigned NFT's supply after setup and redirect the vault's
+        // token to the last proportional beneficiary through rounding.
         require!(
-            !(mint.decimals == 0
-                && mint.supply == 1
-                && ctx
-                    .accounts
-                    .beneficiary_set
-                    .nft_assignments
-                    .iter()
-                    .any(|assignment| assignment.mint == mint.key())),
+            !ctx.accounts
+                .beneficiary_set
+                .nft_assignments
+                .iter()
+                .any(|assignment| assignment.mint == mint.key()),
             ErrorCode::NftRequiresAssignedDistribution
         );
         let token_program = ctx
@@ -162,6 +169,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             close_accounts,
             signer_seeds,
         ))?;
+        ctx.accounts.vault.unregister_token_asset();
 
         emit!(AssetsDistributed {
             capsule: capsule.key(),
@@ -202,6 +210,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             **recipient.to_account_info().try_borrow_mut_lamports()? += to_send;
             distributed = distributed.saturating_add(to_send);
         }
+        ctx.accounts.vault.unregister_native_asset();
 
         emit!(AssetsDistributed {
             capsule: capsule.key(),

@@ -9,6 +9,7 @@ import { Check, Eye, RefreshCw, HeartPulse, Plus, Pencil } from 'lucide-react'
 import {
   executeIntent,
   distributeAssets,
+  finalizeCapsule,
   undelegateCapsule,
   cancelCapsule,
   updateActivity,
@@ -141,6 +142,7 @@ export default function CapsuleDetailPage() {
   // ConfirmDialog open state for destructive actions
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmUndelegate, setConfirmUndelegate] = useState(false)
+  const [confirmFinalize, setConfirmFinalize] = useState(false)
   // Asset-management dialogs
   const [showWithdraw, setShowWithdraw] = useState(false)
   const [showAddFunds, setShowAddFunds] = useState(false)
@@ -275,6 +277,26 @@ export default function CapsuleDetailPage() {
     }
   }
 
+  const handleFinalizeCapsule = async () => {
+    if (!wallet.connected || !wallet.publicKey || !capsule) return
+    setActionLoading('finalize')
+    setActionResult(null)
+    try {
+      const tx = await finalizeCapsule(wallet as any, capsule.owner)
+      toast({ message: 'Capsule finalized and on-chain accounts closed.', variant: 'success' })
+      setActionResult({ type: 'success', message: `Finalize Capsule TX: ${tx}` })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.all })
+      router.push('/capsules')
+    } catch (err: any) {
+      console.error('[Finalize Capsule] Error:', err)
+      const msg = normalizeTxError(err)
+      setActionResult({ type: 'error', message: err.message || 'Finalization failed' })
+      toast({ message: msg, variant: 'error' })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const handleUndelegate = async () => {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
     setActionLoading('undelegate')
@@ -396,8 +418,11 @@ export default function CapsuleDetailPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'CRE dispatch failed')
-      setIntentDispatchResult({ type: 'success', message: `Intent Statement delivery dispatched (${data.status || 'queued'})` })
-      toast({ message: 'Intent Statement delivery dispatched.', variant: 'success' })
+      setIntentDispatchResult({ type: 'success', message: `Intent Statement delivery ${data.status || 'completed'}` })
+      toast({ message: 'Intent Statement delivery completed.', variant: 'success' })
+      if (address) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.intentDelivery(address) })
+      }
     } catch (err: any) {
       const msg = normalizeTxError(err)
       setIntentDispatchResult({ type: 'error', message: err.message || 'CRE dispatch failed' })
@@ -498,22 +523,26 @@ export default function CapsuleDetailPage() {
   const status = capsule.executedAt
     ? 'Executed'
     : !capsule.isActive
-      ? 'Waiting'
+      ? 'Draft'
       : effectiveDueTs < nowSec
         ? 'Expired'
         : 'Active'
-  const isDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
+  const switchDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
+  const isDelegated = switchDelegated || Boolean(capsule.inheritanceDelegated)
   const lastUpdatedMs = capsule.lastActivity ? capsule.lastActivity * 1000 : null
   const targetDateMs = capsule.targetDate != null ? capsule.targetDate * 1000 : null
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
-  const privateStateHidden = isDelegated && isOwner && capsule.beneficiaries.length === 0
+  const privateStateHidden = Boolean(capsule.inheritanceDelegated && isOwner && capsule.beneficiaries.length === 0)
 
   // Proof-of-life is available only before the capsule fires.
   const canCheckIn = Boolean(isOwner && capsule.isActive)
-  // Owner may edit the private beneficiary list pre-fire, but only once it is visible (revealed or on
-  // base). When still hidden behind the TEE, the Reveal action must run first.
+  // Legacy capsules remain editable. New lifecycles seal the TEE configuration before arming.
   const canEditBeneficiaries = Boolean(
-    isToken && isOwner && capsule.isActive && capsule.beneficiaries.length > 0
+    isToken
+      && isOwner
+      && !capsule.inheritanceSealed
+      && !capsule.executedAt
+      && capsule.beneficiaries.length > 0
   )
 
   return (
@@ -575,6 +604,17 @@ export default function CapsuleDetailPage() {
         variant="danger"
         typedConfirm="undelegate"
         loading={actionLoading === 'undelegate'}
+      />
+      <ConfirmDialog
+        open={confirmFinalize}
+        onClose={() => setConfirmFinalize(false)}
+        onConfirm={() => { setConfirmFinalize(false); handleFinalizeCapsule() }}
+        title="Finalize Capsule"
+        description="Finalize this settled capsule? This permanently closes its capsule, beneficiary, and vault accounts. Their reclaimed rent is sent to the Heres protocol fee account. You can create a fresh capsule afterward using the same wallet."
+        confirmLabel="Finalize Capsule"
+        variant="danger"
+        typedConfirm="finalize"
+        loading={actionLoading === 'finalize'}
       />
 
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
@@ -665,7 +705,7 @@ export default function CapsuleDetailPage() {
             <div className="rounded-xl border border-Heres-border/50 bg-Heres-surface/30 p-4 mb-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-Heres-accent mb-1">Where is private monitoring?</p>
               <p className="text-sm text-Heres-muted">
-                Private monitoring runs inside the TEE automatically after capsule creation. Conditions (inactivity, intent) are checked confidentially and are not visible on the public chain. The beneficiary list lives only inside the TEE while delegated; the owner can read it with a one-time auth signature.
+                Private monitoring runs inside the TEE automatically after capsule creation. Conditions (inactivity, intent) are checked confidentially and are not visible on the public chain. The beneficiary list lives only inside the TEE while delegated; the owner can read it with a one-time auth signature. New capsules seal this list before activation so settlement cannot change after the Switch is armed.
               </p>
               {privateStateHidden && (
                 <div className="mt-3">
@@ -733,6 +773,11 @@ export default function CapsuleDetailPage() {
                   <Pencil className="h-4 w-4" aria-hidden />
                   Edit
                 </Button>
+              )}
+              {capsule.inheritanceSealed && (
+                <span className="shrink-0 rounded-lg border border-Heres-accent/40 px-2.5 py-1 text-xs font-medium text-Heres-accent">
+                  Settlement sealed
+                </span>
               )}
             </div>
             {isNft && (capsule.nftAssignments?.length ?? 0) > 0 ? (
@@ -831,18 +876,21 @@ export default function CapsuleDetailPage() {
             const isExecuted = status === 'Executed' || (!capsule.isActive && capsule.executedAt)
             const isExpired = status === 'Expired'
             const isActive = status === 'Active'
-            const isIntentDelivered = intentDeliveryStatus?.status === 'delivered'
+            const isIntentDelivered =
+              intentDeliveryStatus?.status === 'delivered' || intentDeliveryStatus?.status === 'dispatched'
             const isDistributed = Boolean(isExecuted && distributionComplete)
             const canExecute = isExpired && !isExecuted
             const canUndelegate = Boolean(isDelegated)
             const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
             const canDispatchCre = Boolean(isExecuted && isDistributed && isIntentEnabled && !isIntentDelivered)
+            const settlementReady = Boolean(isExecuted && isDistributed && (!isIntentEnabled || isIntentDelivered))
+            const canFinalize = Boolean(settlementReady && !isDelegated)
             const canRefreshAutomation = Boolean((isExpired || isActive) && !isExecuted)
             // Owner early-exit (pre-fire only). Recover works even while delegated; full cancel needs
             // the accounts undelegated to base first, so it is gated on !isDelegated. Withdraw also
             // requires the vault to actually hold something - the button no longer lingers on an
             // emptied vault.
-            const preFire = Boolean(capsule.isActive)
+            const preFire = !capsule.executedAt
             const canRecover = preFire && vaultAssets.hasWithdrawable
             const canCancel = preFire && !isDelegated
             // Deposit works regardless of delegation state: the program reads the capsule as a raw
@@ -850,15 +898,22 @@ export default function CapsuleDetailPage() {
             // delegated to the ER. Both deposit and withdraw work while delegated.
             const canAddFunds = preFire && isToken
 
+            const finalizeStep = isIntentEnabled ? 4 : 3
             const steps = [
               { num: 1, label: 'Execute Intent', desc: 'Deactivate capsule when inactivity condition met' },
               { num: 2, label: 'Distribute Assets', desc: `Transfer ${assetConfig.symbol}/tokens to beneficiaries` },
               ...(isIntentEnabled ? [{ num: 3, label: 'Deliver Intent Statement', desc: 'Dispatch encrypted intent via CRE' }] : []),
+              { num: finalizeStep, label: 'Finalize Capsule', desc: 'Close settled accounts and complete this lifecycle' },
             ]
-            const allDone = Boolean(isExecuted && isDistributed && (!isIntentEnabled || isIntentDelivered))
 
             // Determine current step (1-based)
-            const currentStep = allDone ? steps.length + 1 : canDispatchCre ? 3 : isExecuted ? 2 : canExecute ? 1 : 0
+            const currentStep = !isExecuted
+              ? (canExecute ? 1 : 0)
+              : !isDistributed
+                ? 2
+                : isIntentEnabled && !isIntentDelivered
+                  ? 3
+                  : finalizeStep
 
             return (
               <ServiceSection title="Actions" className="mb-6" tone="warning">
@@ -867,6 +922,11 @@ export default function CapsuleDetailPage() {
                   {isActive && (
                     <p className="text-sm text-Heres-muted">
                       Capsule is <span className="text-Heres-accent font-medium">Active</span>. {targetDateMs != null ? 'Neither the inactivity period nor the fixed fire date has been reached yet.' : 'The inactivity period has not elapsed yet.'} <strong>Check In</strong> any time to reset the inactivity timer. Execute and Distribute unlock once it expires; you can <strong>Add Funds</strong> or <strong>Withdraw Funds</strong> any time, or <strong>Cancel Capsule</strong> after undelegating from the ER.
+                    </p>
+                  )}
+                  {status === 'Draft' && (
+                    <p className="text-sm text-amber-400">
+                      Capsule setup did not finish arming. Its assets are safe and it cannot execute. Undelegate any remaining private accounts, then cancel this draft and create it again.
                     </p>
                   )}
                   {canExecute && (
@@ -889,21 +949,16 @@ export default function CapsuleDetailPage() {
                       Assets already reached the beneficiary. Proceed to <strong>Deliver Intent Statement</strong> via CRE.
                     </p>
                   )}
-                  {isExecuted && !isDistributed && !allDone && !isDelegated && (
+                  {isExecuted && !isDistributed && !isDelegated && (
                     <p className="text-sm text-Heres-accent">
                       Capsule executed. Proceed to <strong>Distribute Assets</strong>{isIntentEnabled ? ' and then dispatch Intent Statement delivery via CRE.' : '.'}
                     </p>
                   )}
-                  {allDone && (
+                  {settlementReady && (
                     <p className="text-sm text-green-400">
                       {isIntentEnabled
-                        ? 'All steps complete. Assets distributed and intent statement delivered.'
-                        : 'All steps complete. Assets distributed to the beneficiary.'}
-                    </p>
-                  )}
-                  {status === 'Waiting' && (
-                    <p className="text-sm text-Heres-purple">
-                      Capsule is in <span className="font-medium">Waiting</span> state. No actions available.
+                        ? 'Assets are distributed and the intent statement is delivered. Finalize the capsule to close its on-chain accounts.'
+                        : 'Assets are distributed. Finalize the capsule to close its on-chain accounts.'}
                     </p>
                   )}
                 </div>
@@ -911,8 +966,8 @@ export default function CapsuleDetailPage() {
                 {/* Step indicator */}
                 <div className="flex items-center gap-2 mb-5 overflow-x-auto">
                   {steps.map((step, i) => {
-                    const done = step.num < currentStep || (step.num === 3 && allDone)
-                    const active = step.num === currentStep || (step.num === 2 && currentStep === 2) || (step.num === 3 && currentStep >= 2 && !allDone)
+                    const done = step.num < currentStep
+                    const active = step.num === currentStep
                     return (
                       <div key={step.num} className="flex items-center gap-2">
                         {i > 0 && <div className={`w-8 h-px ${done ? 'bg-green-500' : 'bg-Heres-border'}`} />}
@@ -996,6 +1051,16 @@ export default function CapsuleDetailPage() {
                       Deliver Intent Statement
                     </Button>
                   )}
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setConfirmFinalize(true)}
+                    disabled={!canFinalize || !!actionLoading || intentDispatchLoading}
+                    loading={actionLoading === 'finalize'}
+                    title={!canFinalize ? 'Distribute every asset and complete intent delivery first' : 'Close the settled capsule accounts permanently'}
+                  >
+                    Finalize Capsule
+                  </Button>
                   {/* Owner liveness: prove you are alive to slide the inactivity deadline forward. */}
                   {canCheckIn && (
                     <Button

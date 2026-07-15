@@ -38,6 +38,7 @@ export function decodeIntentCapsule(data: Buffer | Uint8Array): IntentCapsule {
     vaultBump: c.vault_bump,
     beneficiariesBump: c.beneficiaries_bump,
     heartbeatAuthority: c.heartbeat_authority,
+    version: c.version,
     targetDate: c.target_date == null ? null : c.target_date.toNumber(),
     beneficiaries: [],
     nftAssignments: [],
@@ -60,6 +61,8 @@ export function tryDecodeIntentCapsule(data: Buffer | Uint8Array): IntentCapsule
  */
 export function decodeBeneficiarySet(data: Buffer | Uint8Array): {
   owner: OnChainBeneficiary['pubkey']
+  version: number
+  isSealed: boolean
   beneficiaries: OnChainBeneficiary[]
   nftAssignments: OnChainNftAssignment[]
 } {
@@ -72,7 +75,13 @@ export function decodeBeneficiarySet(data: Buffer | Uint8Array): {
     mint: assignment.mint,
     recipient: assignment.recipient,
   }))
-  return { owner: s.owner, beneficiaries, nftAssignments }
+  return {
+    owner: s.owner,
+    version: s.version,
+    isSealed: s.version >= 3 && s.reserved?.[0] === 1,
+    beneficiaries,
+    nftAssignments,
+  }
 }
 
 /** Best-effort BeneficiarySet decode: returns null instead of throwing (delegated/filtered reads). */

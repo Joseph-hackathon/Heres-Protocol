@@ -236,7 +236,7 @@ export async function fetchFeeConfig(env: Env): Promise<any | null> {
 }
 
 // The private beneficiary list now lives in its own account (split out of the Switch). In bankrun it
-// is never delegated, so update_intent / distribute / cancel / recreate operate on it directly.
+// is never delegated, so update_intent / distribute / cancel / finalize operate on it directly.
 export async function fetchBeneficiarySet(env: Env, owner: PublicKey): Promise<any | null> {
   const acct = await env.client.getAccount(beneficiarySetPda(owner));
   if (!acct) return null;

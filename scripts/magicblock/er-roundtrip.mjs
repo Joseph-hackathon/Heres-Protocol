@@ -8,8 +8,9 @@
  *   deposit SOL    (base)              fund the Vault (Vault is NEVER delegated)
  *   delegate_capsule (base)            delegate the Switch to a REGULAR ER (no permission, no TEE)
  *   delegate_beneficiaries (base)      delegate the BeneficiarySet to the TEE (owner-only permission)
+ *   update_intent + seal (TEE, owner)  atomically set and seal the PRIVATE beneficiary list
+ *   arm_capsule (REGULAR ER)           bind the Switch to the sealed settlement commitment
  *   update_activity (REGULAR ER)       heartbeat path: relayer bumps last_activity - NO TEE TOKEN
- *   update_intent   (TEE, owner)       set the PRIVATE beneficiary list inside the enclave
  *   schedule_execute_intent (REG ER)   register the autonomous ScheduleTask crank on the Switch
  *   <wait>                             MagicBlock fires execute_intent on the regular ER (no crank)
  *   crank_undelegate (REG ER)          commit + undelegate the Switch back to base (fired state lands)
@@ -42,7 +43,7 @@ import anchor from '@coral-xyz/anchor';
 import nacl from 'tweetnacl';
 import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk';
 import { getCollateral, verify, Quote } from '@phala/dcap-qvl';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -98,6 +99,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const sol = n => (n / LAMPORTS_PER_SOL).toFixed(6);
 const loadKp = p => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(p, 'utf-8'))));
 const sk = p => join(homedir(), '.config/solana', p);
+const u16le = n => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
+const u32le = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+const configCommitment = (owner, beneficiaries, nftAssignments, salt) => {
+  const parts = [Buffer.from('heres:inheritance-config:v1'), owner.toBuffer(), u32le(beneficiaries.length)];
+  for (const beneficiary of beneficiaries) {
+    parts.push(beneficiary.pubkey.toBuffer(), u16le(beneficiary.shareBps));
+  }
+  parts.push(u32le(nftAssignments.length));
+  for (const assignment of nftAssignments) {
+    parts.push(assignment.mint.toBuffer(), assignment.recipient.toBuffer());
+  }
+  parts.push(salt);
+  return Array.from(createHash('sha256').update(Buffer.concat(parts)).digest());
+};
 
 const timeoutFetch = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(15000) });
 const connOpts = { commitment: 'confirmed', fetch: timeoutFetch };
@@ -356,7 +371,35 @@ try {
   const vaultInfo = await getAcct(baseConn, vault);
   check('Vault NOT delegated (still owned by program)', vaultInfo?.owner.equals(PROGRAM_ID));
 
-  // ---- 5. heartbeat via the relayer on the REGULAR ER - NO TEE TOKEN (the hot-path win) ----
+  // ---- 5. atomically set + seal private beneficiaries, then arm the regular-ER Switch ----
+  const beneficiaries = [
+    { pubkey: ben1.publicKey, shareBps: 6000, reserved: Array(14).fill(0) },
+    { pubkey: ben2.publicKey, shareBps: 4000, reserved: Array(14).fill(0) },
+  ];
+  const nftAssignments = [{ mint: nftMint, recipient: ben1.publicKey }];
+  const salt = randomBytes(32);
+  const commitment = configCommitment(ownerKp.publicKey, beneficiaries, nftAssignments, salt);
+  const setIx = await program.methods
+    .updateIntent(beneficiaries)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  const setNftIx = await program.methods
+    .updateNftAssignments(nftAssignments)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  const sealIx = await program.methods
+    .sealInheritance(Array.from(salt), commitment)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  await sendER([setIx, setNftIx, sealIx], [ownerKp], ownerKp, ownerTee);
+  const armIx = await program.methods
+    .armCapsule(commitment)
+    .accountsPartial({ capsule, owner: ownerKp.publicKey })
+    .instruction();
+  await sendER([armIx], [ownerKp], ownerKp, switchEr);
+  console.log('5. sealed private settlement configuration and armed Switch');
+
+  // ---- 5a. heartbeat via the relayer on the REGULAR ER - NO TEE TOKEN (the hot-path win) ----
   let hbOk = false;
   try {
     const hbIx = await program.methods
@@ -370,22 +413,9 @@ try {
   check('relayer heartbeat on regular ER (token-free hot path)', hbOk && tokenFree,
     tokenFree ? 'no TEE auth token used' : 'WARNING: switchEr carries a token');
 
-  // ---- 6. set PRIVATE beneficiaries on the TEE (owner) ----
-  const beneficiaries = [
-    { pubkey: ben1.publicKey, shareBps: 6000, reserved: Array(14).fill(0) },
-    { pubkey: ben2.publicKey, shareBps: 4000, reserved: Array(14).fill(0) },
-  ];
-  const setIx = await program.methods
-    .updateIntent(beneficiaries)
-    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
-    .instruction();
-  const setNftIx = await program.methods
-    .updateNftAssignments([{ mint: nftMint, recipient: ben1.publicKey }])
-    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
-    .instruction();
-  await sendER([setIx, setNftIx], [ownerKp], ownerKp, ownerTee);
-  console.log('6. set beneficiaries on TEE:', ben1.publicKey.toBase58().slice(0, 8), '60% /', ben2.publicKey.toBase58().slice(0, 8), '40%');
-  console.log('   set NFT assignment on TEE:', nftMint.toBase58().slice(0, 8), '->', ben1.publicKey.toBase58().slice(0, 8));
+  // ---- 6. verify the sealed configuration remains private on the TEE ----
+  console.log('6. beneficiaries sealed on TEE:', ben1.publicKey.toBase58().slice(0, 8), '60% /', ben2.publicKey.toBase58().slice(0, 8), '40%');
+  console.log('   NFT assignment sealed on TEE:', nftMint.toBase58().slice(0, 8), '->', ben1.publicKey.toBase58().slice(0, 8));
 
   // not visible on the base BeneficiarySet (delegated/empty there)
   const baseBen = await getAcct(baseConn, benSet);

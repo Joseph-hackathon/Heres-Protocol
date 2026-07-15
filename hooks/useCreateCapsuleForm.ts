@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { useToast } from '@/components/ui'
@@ -105,7 +106,7 @@ export const CREATE_FAQS = [
   {
     key: 'count',
     question: 'How Many Capsules Can I Create at a time?',
-    answer: 'One wallet manages one active capsule flow at a time. After execution or deactivation, you can create or recreate another capsule.',
+    answer: 'One wallet manages one capsule flow at a time. After execution, finish distribution and intent delivery, then finalize the capsule. You can then create a fresh capsule with the same wallet.',
   },
   {
     key: 'representative',
@@ -130,6 +131,7 @@ function evenShares(n: number): string[] {
 }
 
 export function useCreateCapsuleForm() {
+  const router = useRouter()
   const wallet = useHeresWallet()
   const { publicKey, connected } = wallet
   const { toast } = useToast()
@@ -232,15 +234,19 @@ export function useCreateCapsuleForm() {
 
         try {
           const capsule = await getCapsule(publicKey)
-          // Only show warning if capsule is active AND not executed
-          // If capsule is executed, we can recreate it, so don't show warning
-          if (capsule && capsule.isActive && !capsule.executedAt) {
+          // Any existing account occupies the wallet's deterministic capsule PDAs. Executed capsules
+          // stay here until their assets, intent delivery, and finalization are complete.
+          if (capsule) {
             setExistingCapsule(true)
+            const [capsulePda] = getCapsulePDA(publicKey)
+            toast({
+              message: capsule.executedAt
+                ? 'Finish settling and finalizing your existing capsule before creating another.'
+                : 'This wallet already has a capsule. Opening it now.',
+              variant: 'info',
+            })
+            router.replace(`/capsules/${capsulePda.toBase58()}`)
           } else {
-            // Allow creation/recreation if:
-            // 1. Capsule doesn't exist
-            // 2. Capsule is executed (executedAt is set) - can recreate
-            // 3. Capsule exists but isActive is false
             setExistingCapsule(false)
           }
         } catch (err) {
@@ -250,7 +256,7 @@ export function useCreateCapsuleForm() {
       }
     }
     checkExistingCapsule()
-  }, [connected, publicKey])
+  }, [connected, publicKey, router, toast])
 
   // Add a recipient and re-split shares evenly so they always total 100% (1 -> 100, 2 -> 50/50, ...).
   const addBeneficiary = () => {
@@ -582,16 +588,21 @@ export function useCreateCapsuleForm() {
         targetDateSeconds = ts
       }
 
-      // ---- Determine create vs recreate: one capsule per wallet, reuse only after it has fired ----
+      // ---- One live capsule account set per wallet. Executed accounts must be fully settled and
+      // finalized before create_capsule can initialize the same deterministic PDAs again. ----
       const existingCapsule = await getCapsule(publicKey)
       if (existingCapsule && existingCapsule.isActive) {
         throw new Error('You already have an active capsule. It must be executed or cancelled before creating a new one. Visit /capsules to view it.')
       }
-      const recreate = !!(existingCapsule && !existingCapsule.isActive && existingCapsule.executedAt)
+      if (existingCapsule && !existingCapsule.executedAt) {
+        throw new Error('An incomplete capsule draft already exists. Visit /capsules, undelegate it if needed, then cancel it before creating a new capsule.')
+      }
+      if (existingCapsule?.executedAt) {
+        throw new Error('Your previous capsule still needs to be finalized. Open My Capsule, finish distribution and intent delivery, then finalize it before creating a new capsule.')
+      }
 
-      // ---- The single intended flow: create + fund + delegate the Switch to the TEE, then set the
-      // PRIVATE beneficiary list + schedule the autonomous crank INSIDE the TEE. Beneficiaries never
-      // touch the base layer - that is the privacy guarantee. There is no base-only fork. ----
+      // ---- Create a draft, fund + delegate it, atomically seal the private TEE configuration, then
+      // arm and schedule the regular-ER Switch. Beneficiaries never touch the base layer. ----
       const { baseSigs } = await createDelegatedCapsule(wallet as any, {
         inactivitySeconds: inactivityPeriodSeconds,
         targetDateSeconds,
@@ -602,7 +613,6 @@ export function useCreateCapsuleForm() {
         // heartbeat_authority defaults to the protocol relayer so the off-chain liveness service can
         // bump last_activity from detected wallet activity. Owner can still bump (on-chain is_owner
         // branch). Unset -> relayer default in createDelegatedCapsule.
-        recreate,
         onStep: (label) => setCurrentStep(label),
       })
       const hash = baseSigs[0]
@@ -716,11 +726,12 @@ export function useCreateCapsuleForm() {
       window.location.href = '/capsules'
     } catch (err: any) {
       console.error('Error creating capsule:', err)
-      let errorMessage = err.message || 'Failed to create capsule'
+      const rawErrorMessage = err.message || 'Failed to create capsule'
+      let errorMessage = normalizeTxError(err)
 
       // Check if error is "already processed" - this might mean the transaction succeeded
       // but we got an error response. Verify if capsule was actually created.
-      if (errorMessage.includes('already processed') || errorMessage.includes('This transaction has already been processed')) {
+      if (rawErrorMessage.includes('already processed') || rawErrorMessage.includes('This transaction has already been processed')) {
         try {
           // Wait a bit for the transaction to be confirmed
           await new Promise(resolve => setTimeout(resolve, 2000))
@@ -741,18 +752,20 @@ export function useCreateCapsuleForm() {
 
         // If capsule wasn't created, show appropriate error
         errorMessage = 'Transaction was already processed or duplicate submission. Please try again in a moment.'
-      } else if (errorMessage.includes('already in use') || errorMessage.includes('custom program error: 0x0')) {
+      } else if (rawErrorMessage.includes('already in use') || rawErrorMessage.includes('custom program error: 0x0')) {
         errorMessage = 'A capsule already exists for this wallet. Please visit /capsules to view or update your existing capsule.'
-      } else if (errorMessage.includes('Simulation failed')) {
-        if (errorMessage.includes('already in use') || errorMessage.includes('already processed')) {
+      } else if (rawErrorMessage.includes('Simulation failed')) {
+        if (rawErrorMessage.includes('already in use') || rawErrorMessage.includes('already processed')) {
           errorMessage = 'A capsule already exists for this wallet. Please visit /capsules to view or update your existing capsule.'
         } else {
           // For other simulation failures, check if it's because capsule already exists
           try {
             if (publicKey) {
               const existingCapsule = await getCapsule(publicKey)
-              if (existingCapsule && existingCapsule.isActive && !existingCapsule.executedAt) {
-                errorMessage = 'You already have an active capsule. Please deactivate it first or update the existing one.'
+              if (existingCapsule && !existingCapsule.executedAt) {
+                errorMessage = existingCapsule.isActive
+                  ? 'You already have an active capsule. Please cancel it or wait for execution.'
+                  : 'An incomplete capsule draft exists. Open My Capsule, undelegate it if needed, then cancel it before retrying.'
               }
             }
           } catch (checkError) {
@@ -761,7 +774,7 @@ export function useCreateCapsuleForm() {
         }
       }
 
-      toast({ message: normalizeTxError(err), variant: 'error' })
+      toast({ message: errorMessage, variant: 'error' })
       setError(errorMessage)
     } finally {
       setIsPending(false)

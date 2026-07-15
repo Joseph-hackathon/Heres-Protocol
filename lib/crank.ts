@@ -13,12 +13,13 @@ import nacl from 'tweetnacl'
 import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk'
 import idl from '../idl/heres_program.json'
 import { getSolanaConnection } from '@/config/solana'
-import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA } from './program'
+import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA, getFeeConfigPDA } from './program'
 import { decodeBeneficiarySet } from './lean-capsule'
 import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
 import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
 import { ataFor, buildCreateAtaIx, getVaultTokenAccounts } from '@/lib/spl'
 import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
+import { dispatchIntentDeliveryForCapsule } from '@/lib/intent-delivery/service'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -367,6 +368,35 @@ async function distributeAll(
   return solDrained && tokensDrained
 }
 
+/** Close the settled core PDAs. FeeConfig pins the rent destination on-chain. */
+async function finalizeCapsuleAccounts(
+  connection: Connection,
+  program: Program,
+  keypair: Keypair,
+  owner: PublicKey
+): Promise<string> {
+  const [capsulePDA] = getCapsulePDA(owner)
+  const [benSetPDA] = getBeneficiarySetPDA(owner)
+  const [vaultPDA] = getCapsuleVaultPDA(owner)
+  const [feeConfigPDA] = getFeeConfigPDA()
+  const feeConfig = await (program.account as any).feeConfig.fetch(feeConfigPDA)
+  const feeRecipientRaw = feeConfig.feeRecipient ?? feeConfig.fee_recipient
+  if (!feeRecipientRaw) throw new Error('protocol fee recipient is not configured')
+  const feeRecipient = new PublicKey(feeRecipientRaw)
+  const ix = await program.methods
+    .finalizeCapsule()
+    .accountsPartial({
+      capsule: capsulePDA,
+      beneficiarySet: benSetPDA,
+      vault: vaultPDA,
+      authority: keypair.publicKey,
+      feeConfig: feeConfigPDA,
+      feeRecipient,
+    })
+    .instruction()
+  return sendRaw(connection, keypair, [ix])
+}
+
 export type PipelineResult = {
   ok: boolean
   dueSelected: number
@@ -378,6 +408,7 @@ export type PipelineResult = {
   /** BeneficiarySet TEE -> base reveals (crank_undelegate_beneficiaries) this tick. */
   revealed: number
   distributed: number
+  finalized: number
   errors: string[]
 }
 
@@ -409,7 +440,8 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
  *   switch base + active + not-elapsed -> self-heal the due index from the real on-chain fire-time.
  *   switch base + fired:
  *       benSet delegated  -> crank_undelegate_beneficiaries on the TEE (the privacy reveal; token).
- *       benSet on base    -> distribute every Vault asset to the now-public list, then unregister.
+ *       benSet on base    -> distribute every Vault asset, deliver any intent statement, finalize,
+ *                            then unregister.
  *
  * On-chain guards make every step idempotent (structural drain-and-close, not a flag), so a mid-tick
  * failure is recovered on the next tick.
@@ -429,6 +461,7 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
     undelegated: 0,
     revealed: 0,
     distributed: 0,
+    finalized: 0,
     errors: [],
   }
 
@@ -547,7 +580,27 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
         inheritance.nftAssignments
       )
       result.distributed += 1
-      if (drained) await unregisterCapsuleOwner(ownerStr)
+      if (!drained) continue
+
+      // Intent delivery needs the live capsule state to derive its idempotency key. It must complete
+      // before finalization removes that state. Capsules without an intent statement are explicitly
+      // skipped by the delivery service and can be finalized immediately.
+      const [capsulePDA] = getCapsulePDA(owner)
+      const delivery = await dispatchIntentDeliveryForCapsule(capsulePDA.toBase58())
+      const deliveryComplete =
+        (delivery.ok && (delivery.status === 'delivered' || delivery.status === 'dispatched')) ||
+        (delivery.ok && delivery.skipped && delivery.reason === 'Intent delivery is not enabled')
+      if (!deliveryComplete) {
+        if (!delivery.ok) {
+          result.ok = false
+          result.errors.push(`${ownerStr}: intent delivery failed: ${delivery.error ?? 'unknown error'}`)
+        }
+        continue
+      }
+
+      await finalizeCapsuleAccounts(connection, baseProgram, crankKeypair, owner)
+      result.finalized += 1
+      await unregisterCapsuleOwner(ownerStr)
     } catch (e) {
       result.ok = false
       result.errors.push(`${ownerStr}: ${e instanceof Error ? e.message : String(e)}`)

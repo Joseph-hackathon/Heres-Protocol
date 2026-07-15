@@ -2,13 +2,13 @@
 //!
 //! The per-owner PDA allows only one capsule per wallet, so after firing the owner cannot
 //! create_capsule again. This resets the Switch (clears beneficiaries, NFT assignments, and executed
-//! state and re-arms it). Re-fund via `deposit`, then re-set the private inheritance configuration
-//! on the PER after re-delegation. Owner-only.
+//! state and returns it to a draft). Re-fund via `deposit`, then re-set and seal the private
+//! inheritance configuration on the PER before arming it again. Owner-only.
 
 use anchor_lang::prelude::*;
 
 use crate::error::ErrorCode;
-use crate::state::{BeneficiarySet, IntentCapsule};
+use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
 
 #[derive(Accounts)]
 pub struct RecreateCapsule<'info> {
@@ -30,6 +30,12 @@ pub struct RecreateCapsule<'info> {
     )]
     pub beneficiary_set: Box<Account<'info, BeneficiarySet>>,
 
+    #[account(
+        seeds = [b"capsule_vault", owner.key().as_ref()],
+        bump = capsule.vault_bump,
+    )]
+    pub vault: Box<Account<'info, CapsuleVault>>,
+
     pub owner: Signer<'info>,
 }
 
@@ -46,6 +52,16 @@ pub fn handler(
     // Only reuse a capsule that has already fired (lifecycle reset after distribution).
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    // Legacy vaults have no reliable asset inventory. They can finish their current lifecycle,
+    // but must not be upgraded into a new lifecycle that claims settlement completeness.
+    require!(
+        ctx.accounts.vault.tracks_assets(),
+        ErrorCode::InvalidAssetManifest
+    );
+    require!(
+        ctx.accounts.vault.asset_count() == 0,
+        ErrorCode::VaultNotEmpty
+    );
 
     let now = Clock::get()?.unix_timestamp;
     if let Some(t) = target_date {
@@ -54,12 +70,16 @@ pub fn handler(
 
     capsule.inactivity_period = inactivity_period;
     capsule.last_activity = now;
-    capsule.is_active = true;
+    capsule.is_active = false;
     capsule.executed_at = None;
     capsule.target_date = target_date;
+    capsule.version = IntentCapsule::CURRENT_VERSION;
+    capsule.reserved = [0u8; 55];
 
+    ctx.accounts.beneficiary_set.version = BeneficiarySet::CURRENT_VERSION;
     ctx.accounts.beneficiary_set.beneficiaries = Vec::new();
     ctx.accounts.beneficiary_set.nft_assignments = Vec::new();
+    ctx.accounts.beneficiary_set.reserved = [0u8; 64];
 
     msg!(
         "Capsule lifecycle reset (recreate) for owner: {:?}",
