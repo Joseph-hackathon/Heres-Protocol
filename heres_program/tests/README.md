@@ -19,12 +19,12 @@ yarn install
 yarn test               # copies the .so into tests/fixtures/ then runs ts-mocha
 ```
 
-Covered (15 base-layer instructions + edge cases, 58 cases):
+Covered (14 base-layer instructions + edge cases, 74 cases):
 
 | Area          | Instructions                              | Notable edge cases |
 |---------------|-------------------------------------------|--------------------|
 | fee config    | `update_fee_config`                       | non-authority rejected; fee cap (1 SOL) |
-| lifecycle     | `create_capsule`, `deposit`, `update_intent`, `update_nft_assignments`, `cancel_capsule`, `finalize_capsule` | inactivity>0; one-per-owner; fee path + recipient validation; SOL + SPL/NFT deposit; cross-owner deposit blocked; share sum != 10000; beneficiary and NFT assignment caps; duplicate NFT assignment; deposit-after-fire; settled-account closure to the configured fee recipient; fresh creation at the same PDAs |
+| lifecycle     | `create_capsule`, `deposit`, `update_intent`, `update_nft_assignments`, `seal_inheritance`, `arm_capsule`, `cancel_capsule`, `finalize_capsule` | draft creation; inactivity>0; one-per-owner; fee path + recipient validation; SOL + SPL/NFT deposit; cross-owner deposit blocked; share sum != 10000; beneficiary and NFT assignment caps; commitment mismatch; post-seal edit rejection; deposit-after-fire; settled-account closure to the configured fee recipient; fresh creation at the same PDAs |
 | firing        | `execute_intent`, `update_activity`       | fires before/after inactivity; double-fire; permissionless crank; owner vs heartbeat authority; post-fire activity rejected |
 | distribution  | `distribute_assets`, `distribute_nft`     | active/fired gating; immediate SOL + SPL split by share_bps; explicit NFT recipient; NFT vault ATA closure; proportional bypass protection; invalid NFT fallback; idempotent re-run; no-beneficiaries |
 | escape hatch  | `recover_vault`                           | SOL + SPL; pre-fire only; non-owner rejected |

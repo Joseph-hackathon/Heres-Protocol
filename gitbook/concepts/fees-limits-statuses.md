@@ -13,7 +13,7 @@ The creation fee is controlled by the on-chain fee configuration. Production dep
 
 ## Modification Limit
 
-The web app tracks a default maximum of 3 capsule modifications per wallet in local state. Production deployments should clarify whether modification limits are enforced only by the client or also by protocol logic.
+The web app retains a local modification counter for legacy flows. For new capsules, the stronger on-chain boundary is the inheritance seal: beneficiary shares and NFT assignments can be written while the capsule is a draft, but the program rejects every edit after sealing.
 
 ## Inactivity Period
 
@@ -30,10 +30,12 @@ Devnet builds may expose minute-based testing to make demos easier.
 
 | Status | Meaning |
 | --- | --- |
+| Draft | Capsule accounts exist, but commitment-bound arming did not complete. The capsule cannot execute. |
 | Active | Capsule can still be refreshed by the owner. |
 | Expired | Inactivity deadline has passed. |
 | Executed | Execution timestamp is set. |
-| Inactive | Capsule is not active. |
+
+A finalized capsule has no live status account because finalization closes the Switch, BeneficiarySet, and Vault. The wallet can then create a fresh lifecycle.
 
 ## Delivery Statuses
 

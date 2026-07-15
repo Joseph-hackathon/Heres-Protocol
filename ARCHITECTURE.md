@@ -75,6 +75,8 @@ When beneficiaries include EVM addresses, the `distribute_assets` instruction ro
 
 ## Capsule Lifecycle Flow
 
+The diagram below is a high-level product view. The current v2 program adds a draft and sealing boundary before monitoring, plus explicit account finalization after distribution and any enabled CRE delivery.
+
 ```
  ┌─────────┐    ┌──────────┐    ┌───────────────┐    ┌─────────────┐    ┌──────────────┐
  │  CREATE  │───▶│ DELEGATE │───▶│    MONITOR     │───▶│   EXECUTE   │───▶│  DISTRIBUTE  │
@@ -249,10 +251,30 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | `owner` | `PublicKey` | Capsule creator |
 | `inactivity_period` | `i64` | Seconds before execution is allowed |
 | `last_activity` | `i64` | Unix timestamp of last heartbeat |
-| `intent_data` | `Vec<u8>` | JSON-encoded beneficiaries, amounts, CRE config |
-| `is_active` | `bool` | Execution eligibility flag |
+| `is_active` | `bool` | False for drafts and fired capsules; true only after commitment-bound arming |
 | `executed_at` | `Option<i64>` | Unix timestamp when executed (None until execution) |
-| `mint` | `PublicKey` | Token mint (SystemProgram = SOL, else SPL) |
+| `bump` | `u8` | Switch PDA bump |
+| `vault_bump` | `u8` | Paired vault PDA bump |
+| `beneficiaries_bump` | `u8` | Paired private beneficiary-set PDA bump |
+| `heartbeat_authority` | `PublicKey` | Relayer allowed to refresh activity |
+| `version` | `u8` | Account layout version |
+| `target_date` | `Option<i64>` | Optional absolute fire time |
+| `reserved[0..32]` | `[u8; 32]` | Sealed inheritance configuration commitment in v2+ |
+
+**BeneficiarySet**
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | `PublicKey` | Capsule creator |
+| `bump` | `u8` | Beneficiary-set PDA bump |
+| `version` | `u8` | Account layout version |
+| `beneficiaries` | `Vec<Beneficiary>` | Up to eight fungible recipients and basis-point shares |
+| `nft_assignments` | `Vec<NftAssignment>` | Up to eight NFT mint-to-recipient assignments |
+| `reserved` | `[u8; 64]` | Seal flag and private commitment salt in v3+ |
+
+**CapsuleVault**
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | `u8` | Compact manifest for native SOL and registered token-account legs |
 
 **FeeConfig**
 | Field | Type | Description |
@@ -265,7 +287,8 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | PDA | Seeds | Purpose |
 |-----|-------|---------|
 | `IntentCapsule` | `["intent_capsule", owner]` | Capsule state |
-| `Vault` | `["capsule_vault", owner]` | Locked SOL/SPL |
+| `BeneficiarySet` | `["beneficiary_set", owner]` | Private beneficiary shares and NFT assignments |
+| `Vault` | `["capsule_vault", owner]` | Locked SOL plus classic SPL and Token-2022 token accounts |
 | `FeeConfig` | `["fee_config"]` | Platform fee settings |
 | `Permission` | `["permission", capsule]` | PER (TEE) access control |
 | `Buffer` | `["buffer", capsule]` | MagicBlock state buffer |
@@ -276,15 +299,25 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 
 | Instruction | Description | Permission |
 |-------------|-------------|------------|
-| `create_capsule` | Create capsule, lock SOL in vault, pay creation fee | Owner (signs TX) |
-| `update_intent` | Modify intent data (beneficiaries, amounts) | Owner only |
+| `init_fee_config` | Initialize the singleton fee configuration | Program upgrade authority |
+| `update_fee_config` | Change the configured creation fee | Fee-config authority |
+| `create_capsule` | Create an inactive Switch draft, BeneficiarySet, and Vault; pay creation fee | Owner |
+| `update_intent` | Set private fungible beneficiaries before sealing | Owner, routed through TEE after delegation |
+| `update_nft_assignments` | Set private NFT recipients before sealing | Owner, routed through TEE after delegation |
+| `seal_inheritance` | Seal beneficiary and NFT rules with a private salt and verified commitment | Owner, TEE |
+| `arm_capsule` | Activate a draft Switch with the sealed configuration commitment | Owner, regular ER |
+| `deposit` | Add SOL, classic SPL, or supported Token-2022 assets to the vault | Owner |
 | `update_activity` | Refresh last_activity timestamp (heartbeat) | Owner or heartbeat authority |
 | `execute_intent` | Trigger execution when inactivity period elapsed | **Permissionless** |
-| `distribute_assets` | Transfer the full available SOL/SPL balance to beneficiaries | **Permissionless** |
-| `delegate_capsule` | Delegate capsule to MagicBlock ER/PER | Owner |
+| `distribute_assets` | Transfer one fungible vault asset using the committed beneficiary shares | **Permissionless** |
+| `distribute_nft` | Transfer one standard SPL NFT to its committed recipient | **Permissionless** |
+| `delegate_capsule` | Delegate the liveness Switch to a regular MagicBlock ER | Owner |
+| `delegate_beneficiaries` | Delegate the private beneficiary set to the permissioned TEE | Owner |
 | `crank_undelegate` | Commit ER state + undelegate (separate from execute) | **Permissionless** |
+| `crank_undelegate_beneficiaries` | Reveal committed private settlement data after the Switch fires | Owner before fire; permissionless after committed fire |
 | `schedule_execute_intent` | Schedule MagicBlock crank for auto-execution | After delegation |
-| `deactivate_capsule` | Deactivate capsule | Owner only |
+| `recover_vault` | Recover one vault asset before execution | Owner |
+| `cancel_capsule` | Recover tracked assets and close an undelegated active or draft lifecycle | Owner |
 | `finalize_capsule` | Close a fully settled capsule to the configured protocol fee recipient | Owner or heartbeat authority |
 
 ### Fee Structure
@@ -362,7 +395,10 @@ Chainlink CRE (Confidential Runtime Environment) enables **encrypted intent stat
 | File | Purpose |
 |------|---------|
 | `heres_program/programs/heres_program/src/lib.rs` | On-chain program source (Anchor/Rust) |
-| `idl/HeresProgram.json` | Program IDL (ABI) |
+| `idl/heres_program.json` | Program IDL (ABI) |
+| `lib/inheritance-commitment.ts` | Client-side salt and settlement commitment generation |
+| `lib/capsule-funding.ts` | Wallet-held fungible asset discovery for repeat deposits |
+| `lib/wallet-transfer.ts` | Reviewed SOL, classic SPL, and Token-2022 wallet transfers |
 | `lib/solana.ts` | Frontend Solana interactions (create, execute, delegate) |
 | `lib/crank.ts` | Crank logic (scan, execute, distribute) |
 | `lib/program.ts` | PDA derivation utilities |

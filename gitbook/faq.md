@@ -8,7 +8,7 @@ By monitoring a user’s 'Autonomous Presence Signals' on-chain, the protocol so
 
 ### Is Heres Protocol a wallet?&#xD;
 
-No. Heres connects to existing Web3 wallets. You always keep full control of your wallet keys.
+Heres can connect to an existing Solana wallet or use a Privy embedded wallet. You keep control of the signing wallet. The wallet menu can send funds and lets a Privy embedded-wallet user open Privy's isolated key export flow.
 
 ### Does Heres custody my private keys?&#xD;
 
@@ -30,8 +30,9 @@ No. Beneficiaries have absolutely no control over the capsule and cannot modify 
 
 *  You can only create 1 capsule per wallet.
 * The Create page redirects you to My Capsule while lifecycle accounts from an existing capsule still remain.
-* While a capsule is active, the owner can refresh activity, add or withdraw funds, edit beneficiaries within the modification limit, undelegate, or cancel it.
+* While a capsule is active, the owner can refresh activity, add or withdraw funds, undelegate, or cancel it. New capsules do not allow beneficiary or NFT-assignment edits after the inheritance configuration is sealed during setup.
 * Distribution and cancellation require the capsule switch and beneficiary data to be settled back on Solana first.
+* After execution, distribute every asset and complete any enabled Intent Statement delivery before finalizing the capsule accounts. Finalization allows the wallet to create a fresh capsule.
 
 ### &#xD;What is the Intent Statement?
 

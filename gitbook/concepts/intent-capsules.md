@@ -11,7 +11,12 @@ The on-chain capsule stores:
 - Last activity timestamp.
 - Active flag.
 - Execution timestamp.
-- Vault bump.
+- Vault and beneficiary-set bumps.
+- Heartbeat authority.
+- Optional fixed target date.
+- Sealed inheritance configuration commitment.
+
+The private `BeneficiarySet` is a separate account. It stores fungible beneficiary shares and NFT assignments inside the TEE while the capsule is live, then returns to Solana for settlement only after the Switch fires.
 
 ## Vault
 
@@ -43,13 +48,19 @@ Shares total 100 percent and apply to every fungible asset in the vault. NFT ass
 
 | Phase | Description |
 | --- | --- |
-| Create | Owner locks one or more assets and writes capsule state. |
+| Draft | Owner creates the inactive Switch, private BeneficiarySet, and Vault, then deposits one or more assets. |
+| Seal | The TEE stores the beneficiary and NFT rules, adds a private salt, and verifies their commitment. |
+| Arm | The regular ER activates the Switch with the same commitment and schedules execution. |
 | Monitor | Capsule remains active while the owner is within the inactivity window. |
 | Refresh | Owner updates activity to restart the timer. |
 | Execute | Capsule becomes inactive and records execution time. |
-| Distribute | Vault assets are transferred to beneficiaries. |
+| Reveal | The fired Switch and private BeneficiarySet settle back to Solana. |
+| Distribute | Every vault asset is transferred according to the committed rules. |
 | Deliver | CRE sends encrypted off-chain intent statement. |
+| Finalize | After all settlement work completes, the three core capsule accounts close and their rent goes to the configured protocol fee recipient. |
 
 ## Why Execution and Distribution Are Separate
 
 Execution is a state transition. Distribution is the asset movement step. Keeping them separate makes the system easier to automate across Solana base layer, MagicBlock ER/PER, and external delivery workflows.
+
+Finalization is separate for the same reason. It cannot close a current tracked vault until every registered asset leg is empty, and enabled Intent Statement delivery must complete before the application or crank finalizes the lifecycle.

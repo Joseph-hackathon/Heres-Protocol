@@ -6,6 +6,8 @@ description: List of Supported Networks and Digital Assets
 
 Heres Protocol continuously expands its supported asset classes to support the diversification of your portfolio. Below are the currently supported networks and digital tokens, along with upcoming real-world assets (RWAs) and NFTs.
 
+On the current devnet build, a fungible capsule can hold SOL plus wallet-held classic SPL and compatible Token-2022 mints. The create flow accepts up to eight assets, and **My Capsule** can add another fungible mint later. Token-2022 extensions that alter transfer authorization, fees, balances, or required CPI accounts are rejected. Standard Solana NFTs use explicit per-mint recipient assignments instead of percentage shares.
+
 ### **Supported Networks**&#x20;
 
 | Network                  | Environment      | Status        | Description                                                                                 |
@@ -16,7 +18,9 @@ Heres Protocol continuously expands its supported asset classes to support the d
 | **Stellar Lumens (XLM)** | Testnet          | `Coming Soon` | Integration of Stellar's fast, low-cost cross-border transfer infrastructure.               |
 | **ARC Network**          | Testnet          | `Coming Soon` | Cross-chain asset integration and inheritance infrastructure support for the ARC ecosystem. |
 
-### **Supported Digital Tokens**
+### **Digital Token Examples**
+
+The symbols below are examples of asset categories, not an allowlist or a promise that a particular mint is configured on every network. The app discovers the connected wallet's live token accounts and validates the mint before deposit.
 
 | Asset       | Category            | Description                                                                                         |
 | ----------- | ------------------- | --------------------------------------------------------------------------------------------------- |

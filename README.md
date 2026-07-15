@@ -41,8 +41,8 @@ To ensure maximum flexibility for users, Heres Protocol is designed to support a
 
 | Phase | Asset Category | Examples | Status |
 |-------|----------------|----------|--------|
-| **Phase 1** | Native & Core Assets | SOL, BTC, ETH, solAUDD  | Live |
-| **Phase 2** | Major Stablecoins & Liquid Staking | USDC, USDT, wBTC, JitoSOL, mSOL | Upcoming |
+| **Phase 1** | Solana Assets | SOL, wallet-held classic SPL, Token-2022, standard Solana NFTs | Live on devnet |
+| **Phase 2** | Curated Mainnet Assets | USDC, USDT, wBTC, JitoSOL, mSOL | Upcoming |
 | **Phase 3** | Yield-Bearing & DeFi Assets | LP Tokens, Vault Shares | Roadmap |
 | **Phase 4** | Real World Assets (RWA) | Tokenized Treasuries, Real Estate | Roadmap |
 
@@ -81,8 +81,9 @@ Heres is an autonomous orchestration framework combining:
 - **Zero Trust Executor (Code is Law):** No human intervention, lawyers, or third parties hold your keys. The smart contract acts as an uncompromising, immortal executor.
 - **Enclave-level Privacy:** Beneficiary addresses, trigger conditions, and asset distributions stay completely hidden inside the TEE while you are alive. Your financial privacy is never compromised.
 - **Off-chain Confidential Bridge:** Unique integration with Chainlink's isolated CRE allows us to securely decrypt and push Web2 secrets (emails, final letters) off-chain, bridging the gap between blockchain assets and real-world heirs.
-- **Absolute Owner Sovereignty (Heartbeat Override):** The creator can update their "Heartbeat", modify beneficiaries, or completely revoke the capsule and withdraw funds at any time as long as they are active.
-- **Multi-Asset Protection:** Agnostic asset support allowing users to mix highly volatile assets (SOL, wBTC) with stable assets (USDC, USDT) to balance the portfolio left for their beneficiaries.
+- **Absolute Owner Sovereignty (Heartbeat Override):** The creator can update their heartbeat, add or withdraw vault assets, and cancel an undelegated capsule before it fires. Beneficiary and NFT settlement rules become immutable when a new capsule is sealed.
+- **Multi-Asset Protection:** A fungible vault can hold SOL plus wallet-held classic SPL and compatible Token-2022 mints under one beneficiary split. Standard Solana NFTs use explicit per-mint recipients.
+- **Sealed Settlement Rules:** New capsules seal beneficiary shares and NFT assignments inside the TEE, then arm the liveness switch with a matching commitment so the payout configuration cannot change after activation.
 - **Self-Sustaining Protocol:** Designed with a hyper-sustainable subscription model that heavily funds a Protocol Insurance Fund (PIF) to protect users from unforeseen smart-contract vulnerabilities.
 
 ---
@@ -91,10 +92,10 @@ Heres is an autonomous orchestration framework combining:
 
 Heres Protocol operates on a highly sustainable and predictable revenue model designed to scale TVP (Total Value Protected):
 
-- **Capsule Limitation:** Users can create a maximum of **3 capsules per wallet**, ensuring premium service quality and mitigating spam.
-- **Creation Fee:** A flat **$2 setup fee** per capsule.
-- **Subscription Fee:** A **$2 monthly subscription fee** (payable natively in major stablecoins or SOL) to maintain the active heartbeat monitor.
-- **50% SAFU Allocation:** Half of all generated revenue is strictly locked into the **Protocol Insurance Fund (PIF)** to build a massive trust moat and financially protect users.
+- **Capsule Limitation:** Each wallet manages **one current capsule**. After execution, distribution, intent delivery, and finalization close that lifecycle, the wallet can create a fresh capsule at the same addresses.
+- **Creation Fee:** The current repository default is **0.05 SOL** per capsule and remains configurable through the on-chain fee account.
+- **Planned Subscription Fee:** The product model targets a **$2 monthly subscription fee** to maintain the active heartbeat monitor; this branch does not add on-chain subscription enforcement.
+- **Planned 50% SAFU Allocation:** The product model directs half of protocol revenue to the **Protocol Insurance Fund (PIF)**.
 
 ---
 
@@ -145,6 +146,8 @@ sequenceDiagram
         end
     end
 ```
+
+The diagram is a product-level overview. The current devnet lifecycle creates an inactive draft, seals the private inheritance configuration in the TEE, arms the switch with its commitment, and finalizes the three core accounts only after every asset and enabled Intent Statement has settled.
 
 ---
 
@@ -206,3 +209,16 @@ Program ID (devnet): `sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz`
 
 - Devnet rejects SBPFv0/v1/v2 deploys (`Detected sbpf_version ... not enabled`); v3 is required. Programs already deployed as v0 still execute, but cannot be redeployed as v0.
 - If a deploy fails, close the orphan buffer before retrying so its rent is reclaimed: `solana program close <BUFFER_ADDRESS> --authority <AUTH> --recipient <AUTH>`.
+
+---
+
+## Documentation
+
+- [Architecture and smart contract reference](ARCHITECTURE.md)
+- [GitBook documentation](gitbook/SUMMARY.md)
+- [Chainlink CRE integration notes](CRE_README.md)
+- [Program test strategy](heres_program/tests/README.md)
+- [MagicBlock live-devnet verification](scripts/magicblock/README.md)
+- [Android MVP setup](mobile-android/README.md)
+- [Project-local Solana security review registration](.agents/skills/solana-security-review/SKILL.md)
+- [Vendored Chainlink CCIP Solana SDK reference](vendor/ccip-svm/README.md)

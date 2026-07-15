@@ -77,5 +77,15 @@ Review:
 * Network
 
 Then confirm the transaction in your wallet. After confirmation, Heres shows a transaction signature and capsule detail link.
+
+The setup workflow performs several ordered actions:
+
+* Creates an inactive Switch draft, private BeneficiarySet, and base-layer Vault.
+* Deposits the selected assets into the Vault.
+* Delegates the Switch to a regular ER and the BeneficiarySet to the permissioned TEE.
+* Writes and seals the beneficiary and NFT configuration in the TEE.
+* Arms the Switch with the matching commitment and schedules automatic execution.
+
+Review carefully before signing. Once the private configuration is sealed, the program rejects beneficiary and NFT-assignment edits. If setup stops before arming, **My Capsule** shows a draft that can be undelegated and cancelled before trying again.
 {% endstep %}
 {% endstepper %}

@@ -8,11 +8,13 @@ The information you input during Capsule creation is the most critical data that
 
 
 
-* **Beneficiaries:** The final destination addresses that will receive the assets. You can designate one or multiple beneficiaries. This information undergoes strong encryption before being stored on-chain. No third party (not even the development team) can view who the beneficiaries are until the Capsule is actually triggered.
+* **Beneficiaries:** The final destination addresses that will receive the assets. You can designate one or multiple beneficiaries. New capsules write this list to a permissioned MagicBlock TEE, seal it with a private salt, and arm the public liveness Switch with only a matching commitment. The list is revealed to Solana only after the capsule fires so settlement can be verified.
 
 
 
 * **Distribution Weight:** If you designate multiple beneficiaries, you set how the total deposited assets will be divided out of 100% (e.g., Spouse 70%, Child 30%). The protocol will split and transfer the transactions with pinpoint accuracy according to these ratios, down to the decimal.
+
+  Confirm every address and weight before activation. The on-chain program rejects changes to beneficiary shares and NFT assignments after the inheritance configuration is sealed.
 
 
 
