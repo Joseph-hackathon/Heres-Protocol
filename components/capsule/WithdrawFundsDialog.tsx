@@ -8,6 +8,7 @@ import { normalizeTxError } from '@/lib/errors'
 import { maskAddress } from '@/lib/format'
 import type { VaultAssets } from '@/hooks/queries/useCapsuleDetail'
 import { Modal, Button, useToast } from '@/components/ui'
+import { formatBaseUnits } from '@/lib/fungible-assets'
 
 export interface WithdrawFundsDialogProps {
   open: boolean
@@ -26,12 +27,6 @@ const LAMPORTS_PER_SOL = 1_000_000_000
 
 function formatSol(lamports: number): string {
   return (lamports / LAMPORTS_PER_SOL).toLocaleString(undefined, { maximumFractionDigits: 9 })
-}
-
-function formatTokenAmount(amount: bigint, decimals: number): string {
-  if (decimals === 0) return amount.toString()
-  const value = Number(amount) / 10 ** decimals
-  return value.toLocaleString(undefined, { maximumFractionDigits: Math.min(decimals, 9) })
 }
 
 /**
@@ -66,7 +61,7 @@ export function WithdrawFundsDialog({
     try {
       const tx = await recoverVault(wallet, owner, mint)
       toast({ message: `Withdrawn to your wallet. TX: ${maskAddress(tx)}`, variant: 'success' })
-      await onWithdrawn()
+      await Promise.allSettled([onWithdrawn()])
       return true
     } catch (err: unknown) {
       const msg = normalizeTxError(err)
@@ -91,7 +86,7 @@ export function WithdrawFundsDialog({
         const tx = await recoverVault(wallet, owner, undefined)
         toast({ message: `Withdrew SOL. TX: ${maskAddress(tx)}`, variant: 'success' })
       }
-      await onWithdrawn()
+      await Promise.allSettled([onWithdrawn()])
     } catch (err: unknown) {
       const msg = normalizeTxError(err)
       setError(msg)
@@ -144,7 +139,7 @@ export function WithdrawFundsDialog({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-vellum">{labelForMint(t.mint)}</p>
                   <p className="font-mono text-xs text-ash tabular-nums">
-                    {formatTokenAmount(t.amount, t.decimals)}
+                    {formatBaseUnits(t.amount, t.decimals)}
                   </p>
                 </div>
                 <Button

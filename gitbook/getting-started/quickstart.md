@@ -22,13 +22,13 @@ Click the 'Create Capsule' button on the dashboard to initialize a new inheritan
 {% step %}
 ### **Deposit Assets**
 
-Select the type and amount of digital assets from your wallet to deposit into the Vault. Assets deposited can be instantly withdrawn exclusively by you, the owner.
+For a fungible capsule, select up to eight wallet-held assets across SOL, classic SPL, and Token-2022, then enter an exact amount for each asset. You can add another supported mint later from **My Capsule**. Assets can be withdrawn by you, the owner, while the capsule is active.
 {% endstep %}
 
 {% step %}
 ### **Configure Heirs & Rules**
 
-Enter the wallet addresses of the beneficiaries and their respective distribution weights. Carefully decide the 'Silence Limit' (how many months of wallet inactivity will trigger the Capsule).
+Enter the Solana wallet addresses of the beneficiaries and their percentage weights. The weights total 100 percent and apply to every selected fungible asset. Carefully decide the 'Silence Limit' (how long wallet inactivity will trigger the Capsule).
 {% endstep %}
 
 {% step %}

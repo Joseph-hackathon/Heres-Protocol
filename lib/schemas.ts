@@ -11,6 +11,7 @@
 import { z } from 'zod'
 import { isValidSolanaAddress } from '@/config/solana'
 import { isValidAmountString } from '@/lib/assets'
+import { MAX_FUNGIBLE_ASSETS, parseDecimalToBaseUnits } from '@/lib/fungible-assets'
 
 // ---- shared bounds ----
 export const MAX_BENEFICIARIES = 8
@@ -211,6 +212,79 @@ export function createCapsuleInputSchema(opts: {
       beneficiaries: beneficiariesSchema({ ownerAddress: opts.ownerAddress }),
     })
     .superRefine((val, ctx) => {
+      const days = val.inactivityValue * INACTIVITY_DAYS_PER_UNIT[val.inactivityUnit]
+      if (days > MAX_INACTIVITY_DAYS) {
+        ctx.addIssue({ code: 'custom', path: ['inactivityValue'], message: 'Inactivity period is too long (max 100 years).' })
+      }
+      if (val.inactivityUnit === 'minutes' && !opts.allowMinutes) {
+        ctx.addIssue({ code: 'custom', path: ['inactivityUnit'], message: 'Minute mode is not available on this network.' })
+      }
+      if (val.targetDate) {
+        const ts = Math.floor(new Date(val.targetDate + 'T00:00:00').getTime() / 1000)
+        if (!Number.isFinite(ts)) {
+          ctx.addIssue({ code: 'custom', path: ['targetDate'], message: 'Enter a valid date, or leave it blank.' })
+        } else if (ts <= Math.floor(Date.now() / 1000)) {
+          ctx.addIssue({ code: 'custom', path: ['targetDate'], message: 'The fixed fire date must be in the future.' })
+        }
+      }
+    })
+}
+
+/** Multi-mint create flow. The beneficiary split applies identically to every selected asset. */
+export function createMultiAssetCapsuleInputSchema(opts: {
+  ownerAddress?: string
+  assets: Record<string, { decimals: number; maxBalance?: number | null; maxBaseUnits?: bigint | null }>
+  allowMinutes?: boolean
+}) {
+  return z
+    .object({
+      assets: z
+        .array(z.object({
+          assetKey: z.string().trim().min(1, { message: 'Choose an asset.' }).max(64),
+          amount: decimalAmountString,
+        }))
+        .min(1, { message: 'Select at least one asset.' })
+        .max(MAX_FUNGIBLE_ASSETS, {
+          message: `No more than ${MAX_FUNGIBLE_ASSETS} fungible assets per capsule.`,
+        }),
+      inactivityValue: positiveInt,
+      inactivityUnit: z.enum(['minutes', 'days', 'months', 'years']),
+      targetDate: z.string().trim().optional().default(''),
+      intent: intentMessage,
+      intentEmail: emailString,
+      beneficiaries: beneficiariesSchema({ ownerAddress: opts.ownerAddress }),
+    })
+    .superRefine((val, ctx) => {
+      const seen = new Set<string>()
+      val.assets.forEach((asset, index) => {
+        if (seen.has(asset.assetKey)) {
+          ctx.addIssue({ code: 'custom', path: ['assets', index, 'assetKey'], message: 'Asset selected more than once.' })
+        }
+        seen.add(asset.assetKey)
+
+        const config = opts.assets[asset.assetKey]
+        if (!config) {
+          ctx.addIssue({ code: 'custom', path: ['assets', index, 'assetKey'], message: 'This asset is no longer available.' })
+          return
+        }
+        const units = parseDecimalToBaseUnits(asset.amount, config.decimals)
+        if (units == null) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['assets', index, 'amount'],
+            message: `Use no more than ${config.decimals} decimal places.`,
+          })
+        } else if (config.maxBaseUnits != null && units > config.maxBaseUnits) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['assets', index, 'amount'],
+            message: config.maxBalance == null
+              ? 'Amount exceeds your wallet balance.'
+              : `Amount exceeds your wallet balance of ${config.maxBalance}.`,
+          })
+        }
+      })
+
       const days = val.inactivityValue * INACTIVITY_DAYS_PER_UNIT[val.inactivityUnit]
       if (days > MAX_INACTIVITY_DAYS) {
         ctx.addIssue({ code: 'custom', path: ['inactivityValue'], message: 'Inactivity period is too long (max 100 years).' })

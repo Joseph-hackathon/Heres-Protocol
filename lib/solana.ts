@@ -49,6 +49,11 @@ import {
   createInheritanceCommitment,
   createInheritanceSalt,
 } from '@/lib/inheritance-commitment'
+import { MAX_FUNGIBLE_ASSETS } from '@/lib/fungible-assets'
+import {
+  classifyCapsuleAccountOwner,
+  type CapsuleAccountLocations,
+} from '@/lib/capsule-lifecycle'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -64,6 +69,48 @@ export const CRANK_DEFAULT_ITERATIONS = 100_000
 
 // Re-export connection function
 export { getSolanaConnection as getConnection }
+
+/**
+ * Read where both lifecycle accounts currently live. Base-layer actions such as distribution,
+ * cancellation, and recreation are safe only when both accounts are owned by the Heres program.
+ */
+export async function getCapsuleAccountLocations(
+  owner: PublicKey
+): Promise<CapsuleAccountLocations> {
+  const [switchPDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
+  const programId = getProgramId().toBase58()
+  const delegationProgramId = DELEGATION_PROGRAM_ID.toBase58()
+
+  const read = async (connection: Connection) =>
+    connection.getMultipleAccountsInfo([switchPDA, beneficiarySetPDA], 'confirmed')
+
+  let infos
+  try {
+    infos = await read(getSolanaConnection())
+  } catch (primaryError) {
+    try {
+      infos = await read(getSolanaFallbackConnection())
+    } catch {
+      throw primaryError
+    }
+  }
+
+  return {
+    switch: classifyCapsuleAccountOwner(
+      infos[0]?.owner.toBase58() ?? null,
+      programId,
+      delegationProgramId
+    ),
+    beneficiarySet: classifyCapsuleAccountOwner(
+      infos[1]?.owner.toBase58() ?? null,
+      programId,
+      delegationProgramId
+    ),
+    switchAddress: switchPDA.toBase58(),
+    beneficiarySetAddress: beneficiarySetPDA.toBase58(),
+  }
+}
 
 /**
  * Get Anchor provider (base-layer connection).
@@ -649,6 +696,11 @@ export type CreateDelegatedCapsuleParams = {
   depositBaseUnits?: number | BN
   /** SPL mint, or null/undefined for native SOL. */
   mint?: PublicKey | null
+  /** Multiple fungible deposits. Each mint (including native SOL as null) may appear only once. */
+  fungibleDeposits?: Array<{
+    amountBaseUnits: number | BN
+    mint?: PublicKey | null
+  }>
   /** Standard SPL NFTs to lock, each with one explicit recipient. Mutually exclusive with mint/SOL. */
   nftAssignments?: OnChainNftAssignment[]
   /** Liveness heartbeat authority; defaults to the protocol relayer (off-chain liveness service). */
@@ -692,10 +744,23 @@ export async function createDelegatedCapsule(
   const hb = params.heartbeatAuthority ?? getRelayerPubkey()
   const erValidator = new PublicKey(MAGICBLOCK_ER.ACTIVE_VALIDATOR) // regular ER for the Switch
   const teeValidator = params.validator ?? new PublicKey(MAGICBLOCK_ER.VALIDATOR_TEE) // TEE for the set
-  const mint = params.mint ?? null
   const nftAssignments = params.nftAssignments ?? []
-  if (nftAssignments.length > 0 && (mint || params.depositBaseUnits != null)) {
+  const legacyFungibleDeposit = params.depositBaseUnits == null
+    ? []
+    : [{ amountBaseUnits: params.depositBaseUnits, mint: params.mint ?? null }]
+  const fungibleDeposits = params.fungibleDeposits ?? legacyFungibleDeposit
+  if (nftAssignments.length > 0 && fungibleDeposits.length > 0) {
     throw new Error('NFT funding cannot be combined with a fungible deposit during capsule creation')
+  }
+  if (params.fungibleDeposits && params.depositBaseUnits != null) {
+    throw new Error('Use fungibleDeposits or the legacy deposit fields, not both')
+  }
+  if (fungibleDeposits.length > MAX_FUNGIBLE_ASSETS) {
+    throw new Error(`No more than ${MAX_FUNGIBLE_ASSETS} fungible assets can be funded at creation`)
+  }
+  const fungibleKeys = fungibleDeposits.map((deposit) => deposit.mint?.toBase58() ?? 'sol')
+  if (new Set(fungibleKeys).size !== fungibleKeys.length) {
+    throw new Error('Each fungible asset can be deposited only once during capsule creation')
   }
 
   const platformFeeRecipient = SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT
@@ -741,35 +806,39 @@ export async function createDelegatedCapsule(
       )
     }
   } else {
-    if (params.depositBaseUnits == null) throw new Error('A deposit amount is required')
-    const amt = params.depositBaseUnits instanceof BN
-      ? params.depositBaseUnits
-      : new BN(params.depositBaseUnits)
-    const depositTokenProgram = mint ? await resolveTokenProgram(baseConnection, mint) : null
-    const depositAccounts: any = mint
-      ? {
-          capsule: capsulePDA,
-          vault: vaultPDA,
-          owner,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: depositTokenProgram,
-          associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
-          mint,
-          sourceTokenAccount: ataFor(mint, owner, depositTokenProgram!),
-          vaultTokenAccount: ataFor(mint, vaultPDA, depositTokenProgram!),
-        }
-      : {
-          capsule: capsulePDA,
-          vault: vaultPDA,
-          owner,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: null,
-          associatedTokenProgram: null,
-          mint: null,
-          sourceTokenAccount: null,
-          vaultTokenAccount: null,
-        }
-    depositIxs.push(await program.methods.deposit(amt).accountsPartial(depositAccounts).instruction())
+    if (fungibleDeposits.length === 0) throw new Error('At least one deposit amount is required')
+    for (const deposit of fungibleDeposits) {
+      const mint = deposit.mint ?? null
+      const amt = deposit.amountBaseUnits instanceof BN
+        ? deposit.amountBaseUnits
+        : new BN(deposit.amountBaseUnits)
+      if (amt.lte(new BN(0))) throw new Error('Deposit amounts must be greater than zero')
+      const depositTokenProgram = mint ? await resolveTokenProgram(baseConnection, mint) : null
+      const depositAccounts: any = mint
+        ? {
+            capsule: capsulePDA,
+            vault: vaultPDA,
+            owner,
+            systemProgram: SystemProgram.programId,
+            tokenProgram: depositTokenProgram,
+            associatedTokenProgram: SPL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID,
+            mint,
+            sourceTokenAccount: ataFor(mint, owner, depositTokenProgram!),
+            vaultTokenAccount: ataFor(mint, vaultPDA, depositTokenProgram!),
+          }
+        : {
+            capsule: capsulePDA,
+            vault: vaultPDA,
+            owner,
+            systemProgram: SystemProgram.programId,
+            tokenProgram: null,
+            associatedTokenProgram: null,
+            mint: null,
+            sourceTokenAccount: null,
+            vaultTokenAccount: null,
+          }
+      depositIxs.push(await program.methods.deposit(amt).accountsPartial(depositAccounts).instruction())
+    }
   }
 
   // ---- base ix 3: delegate the Switch to the regular ER (no permission, 11 accounts) ----
@@ -824,7 +893,11 @@ export async function createDelegatedCapsule(
 
   // One wallet approval for the whole base setup. Each delegate carries a CU bump: the create +
   // permission/delegation CPIs exceed the 200k default.
-  params.onStep?.('Creating, funding & delegating capsule...')
+  params.onStep?.(
+    depositIxs.length > 1
+      ? `Creating capsule and funding ${depositIxs.length} assets...`
+      : 'Creating, funding & delegating capsule...'
+  )
   const baseConn = getSolanaConnection()
   const baseSigs = await sendBaseBatch(baseConn, wallet, [
     [createIx],
@@ -923,7 +996,8 @@ export async function distributeAssets(
   wallet: HeresWallet,
   ownerPublicKey: PublicKey,
   beneficiaries: OnChainBeneficiary[],
-  nftAssignments: OnChainNftAssignment[] = []
+  nftAssignments: OnChainNftAssignment[] = [],
+  onLegConfirmed?: (progress: { completed: number; signature: string; asset: string }) => void
 ): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
@@ -945,6 +1019,7 @@ export async function distributeAssets(
   }
 
   let lastSig = ''
+  let completedLegs = 0
 
   // 1. SPL legs first - scan BOTH token programs (classic SPL + Token-2022).
   const vaultTokens = await getVaultTokenAccounts(connection, vaultPDA)
@@ -978,6 +1053,8 @@ export async function distributeAssets(
         })
         .instruction()
       lastSig = await sendBase(connection, wallet, [...preIxs, ix])
+      completedLegs += 1
+      onLegConfirmed?.({ completed: completedLegs, signature: lastSig, asset: mint.toBase58() })
       continue
     }
 
@@ -1004,6 +1081,8 @@ export async function distributeAssets(
       .remainingAccounts(remaining)
       .instruction()
     lastSig = await sendBase(connection, wallet, [...preIxs, ix])
+    completedLegs += 1
+    onLegConfirmed?.({ completed: completedLegs, signature: lastSig, asset: mint.toBase58() })
   }
 
   // 2. SOL leg last (sweeps lamports incl. reclaimed ATA rent).
@@ -1028,6 +1107,8 @@ export async function distributeAssets(
         .remainingAccounts(remaining)
         .instruction()
       lastSig = await sendBase(connection, wallet, [ix])
+      completedLegs += 1
+      onLegConfirmed?.({ completed: completedLegs, signature: lastSig, asset: 'SOL' })
     }
   }
 
@@ -1320,8 +1401,9 @@ export async function getCapsuleByAddress(
     capsule.inheritanceSealed = inheritance.isSealed
     capsule.inheritanceDelegated = inheritance.isDelegated
     return { ...capsule, capsuleAddress: capsulePda.toBase58() }
-  } catch {
-    return null
+  } catch (error) {
+    console.error('Error fetching capsule by address:', error, 'capsule:', capsulePda.toBase58())
+    throw error
   }
 }
 
@@ -1451,7 +1533,12 @@ export async function recoverVault(
   const [capsulePDA] = getCapsulePDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
 
-  const tokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
+  const connection = getSolanaConnection()
+  const tokenProgram = mint ? await resolveTokenProgram(connection, mint) : null
+  const ownerTokenAccount = mint ? ataFor(mint, owner, tokenProgram!) : null
+  const preInstructions = mint && ownerTokenAccount && !(await connection.getAccountInfo(ownerTokenAccount))
+    ? [buildCreateAtaIx(wallet.publicKey, ownerTokenAccount, owner, mint, tokenProgram!)]
+    : []
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
@@ -1461,7 +1548,7 @@ export async function recoverVault(
         tokenProgram,
         mint,
         vaultTokenAccount: ataFor(mint, vaultPDA, tokenProgram!),
-        ownerTokenAccount: ataFor(mint, owner, tokenProgram!),
+        ownerTokenAccount,
       }
     : {
         capsule: capsulePDA,
@@ -1474,7 +1561,7 @@ export async function recoverVault(
         ownerTokenAccount: null,
       }
 
-  return program.methods.recoverVault().accountsPartial(accounts).rpc()
+  return program.methods.recoverVault().accountsPartial(accounts).preInstructions(preInstructions).rpc()
 }
 
 /**
@@ -1491,7 +1578,12 @@ export async function cancelCapsule(wallet: HeresWallet, mint?: PublicKey): Prom
   const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
   const [vaultPDA] = getCapsuleVaultPDA(owner)
 
-  const tokenProgram = mint ? await resolveTokenProgram(getSolanaConnection(), mint) : null
+  const connection = getSolanaConnection()
+  const tokenProgram = mint ? await resolveTokenProgram(connection, mint) : null
+  const ownerTokenAccount = mint ? ataFor(mint, owner, tokenProgram!) : null
+  const preInstructions = mint && ownerTokenAccount && !(await connection.getAccountInfo(ownerTokenAccount))
+    ? [buildCreateAtaIx(wallet.publicKey, ownerTokenAccount, owner, mint, tokenProgram!)]
+    : []
   const accounts: any = mint
     ? {
         capsule: capsulePDA,
@@ -1502,7 +1594,7 @@ export async function cancelCapsule(wallet: HeresWallet, mint?: PublicKey): Prom
         tokenProgram,
         mint,
         vaultTokenAccount: ataFor(mint, vaultPDA, tokenProgram!),
-        ownerTokenAccount: ataFor(mint, owner, tokenProgram!),
+        ownerTokenAccount,
       }
     : {
         capsule: capsulePDA,
@@ -1516,7 +1608,7 @@ export async function cancelCapsule(wallet: HeresWallet, mint?: PublicKey): Prom
         ownerTokenAccount: null,
       }
 
-  return program.methods.cancelCapsule().accountsPartial(accounts).rpc()
+  return program.methods.cancelCapsule().accountsPartial(accounts).preInstructions(preInstructions).rpc()
 }
 
 // Re-export types

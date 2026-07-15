@@ -11,6 +11,7 @@ import { maskAddress } from '@/lib/format'
 import { getSolanaConnection } from '@/config/solana'
 import { getCapsuleFundingAssets, type CapsuleFundingAsset } from '@/lib/capsule-funding'
 import { formatTransferAmount, parseTransferAmount } from '@/lib/transfer-amount'
+import { TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
 import { queryKeys } from '@/lib/query/keys'
 import { Modal, Button, Field, Input, Select, useToast } from '@/components/ui'
 
@@ -19,19 +20,13 @@ export interface AddFundsDialogProps {
   onClose: () => void
   owner: PublicKey
   wallet: HeresWallet
-  /** Preferred asset when the dialog opens. The owner can select any other fungible wallet asset. */
-  assetKind: 'sol' | 'spl'
-  /** Preferred mint for an SPL capsule. */
-  mint?: PublicKey
-  /** Display symbol for the preferred asset. Other mints use their shortened address. */
-  symbol: string
   onDeposited: () => Promise<void>
 }
 
-function assetLabel(asset: CapsuleFundingAsset, preferredMint?: PublicKey, preferredSymbol?: string): string {
+function assetLabel(asset: CapsuleFundingAsset): string {
   if (asset.kind === 'sol') return 'SOL'
-  if (preferredMint?.equals(asset.mint) && preferredSymbol) return preferredSymbol
-  return `Token ${maskAddress(asset.mint.toBase58())}`
+  const tokenProgram = asset.tokenProgram.equals(TOKEN_2022_PROGRAM_ID) ? ' (Token-2022)' : ''
+  return `Token ${maskAddress(asset.mint.toBase58())}${tokenProgram}`
 }
 
 function compactBalance(asset: CapsuleFundingAsset): string {
@@ -41,27 +36,17 @@ function compactBalance(asset: CapsuleFundingAsset): string {
   return `${whole}.${fraction.slice(0, 6)}...`
 }
 
-/**
- * Re-fund a capsule. The on-chain deposit instruction is repeatable, so an owner can top up an
- * active capsule any time. The vault holds native SOL plus one ATA per mint, and all fungible mints
- * use the capsule's existing beneficiary percentages at settlement.
- */
+/** Add SOL or any fungible mint held in the owner's canonical token account. */
 export function AddFundsDialog({
   open,
   onClose,
   owner,
   wallet,
-  assetKind,
-  mint,
-  symbol,
   onDeposited,
 }: AddFundsDialogProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  // The page remounts this dialog on open (via a key), so initial state is always fresh - no
-  // reset-on-open effect needed.
-  const preferredAssetId = assetKind === 'spl' && mint ? mint.toBase58() : 'sol'
-  const [assetId, setAssetId] = useState(preferredAssetId)
+  const [assetId, setAssetId] = useState('sol')
   const [amount, setAmount] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -70,6 +55,7 @@ export function AddFundsDialog({
     queryKey: [...queryKeys.wallet.all, 'capsule-funding-assets', owner.toBase58()],
     enabled: open && wallet.publicKey?.equals(owner) === true,
     staleTime: 10_000,
+    retry: 1,
     queryFn: () => getCapsuleFundingAssets(getSolanaConnection(), owner),
   })
   const assets = useMemo(() => assetsQuery.data ?? [], [assetsQuery.data])
@@ -77,7 +63,7 @@ export function AddFundsDialog({
     () => assets.find((asset) => asset.id === assetId) ?? assets.find((asset) => asset.id === 'sol') ?? null,
     [assetId, assets]
   )
-  const selectedLabel = selectedAsset ? assetLabel(selectedAsset, mint, symbol) : 'asset'
+  const selectedLabel = selectedAsset ? assetLabel(selectedAsset) : 'asset'
 
   const handleMax = () => {
     if (!selectedAsset || selectedAsset.kind === 'sol') return
@@ -95,6 +81,7 @@ export function AddFundsDialog({
       setError('Wallet balances are still loading. Try again in a moment.')
       return
     }
+
     const units = parseTransferAmount(amount, selectedAsset.decimals)
     if (units == null) {
       setError(`Enter a positive amount with no more than ${selectedAsset.decimals} decimal places.`)
@@ -108,18 +95,24 @@ export function AddFundsDialog({
       setError('Leave some SOL in your wallet for network fees.')
       return
     }
+
     setSubmitting(true)
     try {
-      const depositMint = selectedAsset.kind === 'spl' ? selectedAsset.mint : undefined
-      const tx = await deposit(wallet, new BN(units.toString()), depositMint)
+      const mint = selectedAsset.kind === 'spl' ? selectedAsset.mint : undefined
+      const tx = await deposit(wallet, new BN(units.toString()), mint)
       toast({ message: `Added ${selectedLabel} to your capsule. TX: ${maskAddress(tx)}`, variant: 'success' })
-      await onDeposited()
-      await queryClient.invalidateQueries({ queryKey: queryKeys.wallet.all })
+      // Confirmation has already succeeded. A follow-up RPC refresh must not turn the deposit into
+      // a false transaction failure; stale queries can recover on the next poll.
+      await Promise.allSettled([
+        onDeposited(),
+        assetsQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: queryKeys.wallet.all }),
+      ])
       onClose()
     } catch (err: unknown) {
-      const msg = normalizeTxError(err)
-      setError(msg)
-      toast({ message: msg, variant: 'error' })
+      const message = normalizeTxError(err)
+      setError(message)
+      toast({ message, variant: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -134,19 +127,26 @@ export function AddFundsDialog({
 
       <div className="mt-4 rounded-xl border border-brand/20 bg-brand/[0.06] px-4 py-3">
         <p className="text-xs leading-relaxed text-ash">
-          NFTs are not listed here because each NFT needs a recipient assignment sealed during
-          capsule creation.
+          NFTs are not listed because each NFT needs a recipient assignment sealed during capsule
+          creation.
         </p>
       </div>
 
       <div className="mt-5 space-y-4">
         <Field
           label="Asset"
-          hint={selectedAsset ? `Available: ${compactBalance(selectedAsset)} ${selectedLabel}` : undefined}
+          hint={
+            assetsQuery.isFetching
+              ? 'Scanning SOL and both Solana token programs...'
+              : selectedAsset
+                ? `Available: ${compactBalance(selectedAsset)} ${selectedLabel}`
+                : undefined
+          }
+          error={assetsQuery.isError ? 'Could not load wallet assets. Retry the scan.' : undefined}
         >
           <Select
             value={selectedAsset?.id ?? assetId}
-            disabled={assetsQuery.isLoading || assets.length === 0}
+            disabled={submitting || assetsQuery.isLoading || assets.length === 0}
             onChange={(event) => {
               setAssetId(event.target.value)
               setAmount('')
@@ -155,16 +155,21 @@ export function AddFundsDialog({
           >
             {assets.length === 0 ? (
               <option value="sol">Reading wallet assets...</option>
-            ) : assets.map((asset) => {
-              const label = assetLabel(asset, mint, symbol)
-              return (
+            ) : (
+              assets.map((asset) => (
                 <option key={asset.id} value={asset.id}>
-                  {label} - {compactBalance(asset)}
+                  {assetLabel(asset)} - {compactBalance(asset)} available
                 </option>
-              )
-            })}
+              ))
+            )}
           </Select>
         </Field>
+
+        {assetsQuery.isError && (
+          <Button variant="secondary" size="sm" onClick={() => assetsQuery.refetch()} disabled={submitting}>
+            Retry asset scan
+          </Button>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-3">
@@ -183,15 +188,17 @@ export function AddFundsDialog({
           </div>
           <Input
             id="capsule-funding-amount"
+            type="text"
             value={amount}
             onChange={(event) => {
               setAmount(event.target.value)
               if (error) setError(null)
             }}
             inputMode="decimal"
-            placeholder="0.0"
             autoComplete="off"
+            placeholder="0.0"
             autoFocus
+            className="font-mono tabular-nums"
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? 'capsule-funding-error' : undefined}
           />
@@ -203,15 +210,9 @@ export function AddFundsDialog({
         </div>
       </div>
 
-      {assetsQuery.isError && (
-        <p role="alert" className="mt-4 text-sm text-danger">
-          Could not read this wallet&apos;s assets. Close the dialog and try again.
-        </p>
-      )}
-
       <p className="mt-4 text-xs leading-relaxed text-ash">
-        Assets remain withdrawable until the capsule fires. Adding a new token mint may also require
-        a small amount of SOL to create its vault token account.
+        Assets remain withdrawable until the capsule fires. Adding a new token mint may require a
+        small amount of SOL to create its vault token account.
       </p>
 
       <div className="mt-6 flex justify-end gap-3">

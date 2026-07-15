@@ -8,7 +8,7 @@
         "start": "next start",
         "lint": "eslint .",
         "test:intent": "node --test --experimental-strip-types tests/intent-auth.test.mts tests/intent-delivery.test.mts",
-        "test:solana": "node --test --experimental-strip-types tests/transaction-confirmation.test.mts tests/spl.test.mts tests/capsule-funding.test.mts tests/inheritance-commitment.test.mts tests/transfer-amount.test.mts tests/delegation-idl.test.mts",
+        "test:solana": "node --test --experimental-strip-types tests/transaction-confirmation.test.mts tests/spl.test.mts tests/capsule-lifecycle.test.mts tests/fungible-assets.test.mts tests/capsule-funding.test.mts tests/inheritance-commitment.test.mts tests/transfer-amount.test.mts tests/delegation-idl.test.mts",
         "test": "npm run lint && npx tsc --noEmit && npm run test:intent && npm run test:solana"
     },
     "dependencies": {

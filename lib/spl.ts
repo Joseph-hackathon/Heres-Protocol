@@ -95,9 +95,14 @@ export async function getVaultTokenAccounts(
     for (const { pubkey, account } of res.value) {
       const info = (account.data as any).parsed?.info
       if (!info) continue
+      const mint = new PublicKey(info.mint)
+      // Program instructions intentionally accept only the vault's canonical ATA. A third party can
+      // create another token account with the public vault PDA as authority; ignore it so it cannot
+      // derail distribution, withdrawal, or cancellation.
+      if (!pubkey.equals(ataFor(mint, owner, tokenProgram))) continue
       out.push({
         ata: pubkey,
-        mint: new PublicKey(info.mint),
+        mint,
         amount: BigInt(info.tokenAmount.amount),
         decimals: Number(info.tokenAmount.decimals),
         tokenProgram,

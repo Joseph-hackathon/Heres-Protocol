@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { PublicKey } from '@solana/web3.js'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { Check, Eye, RefreshCw, HeartPulse, Plus, Pencil } from 'lucide-react'
 import {
@@ -12,11 +11,13 @@ import {
   finalizeCapsule,
   undelegateCapsule,
   cancelCapsule,
+  recoverVault,
   updateActivity,
   registerCapsuleOwnerForAutomation,
+  getCapsuleAccountLocations,
 } from '@/lib/solana'
 import { getOrMintTeeToken } from '@/lib/tee'
-import { getProgramId } from '@/config/solana'
+import { getProgramId, getSolanaConnection } from '@/config/solana'
 import { MAGICBLOCK_ER, PER_TEE, getNetworkDisplayLabel } from '@/constants'
 import { formatDuration } from '@/utils/intent'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
@@ -51,6 +52,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query/keys'
 import { isAdminWallet } from '@/lib/admin'
 import { PrivyLoginButton } from '@/components/PrivyLoginButton'
+import { getCapsuleVaultPDA } from '@/lib/program'
+import { getVaultTokenAccounts, TOKEN_2022_PROGRAM_ID } from '@/lib/spl'
+import { formatBaseUnits, planMultiMintCancellation } from '@/lib/fungible-assets'
+import {
+  areCapsuleAccountsOnBase,
+  capsuleSettlementGuidance,
+  hasDelegatedCapsuleAccounts,
+} from '@/lib/capsule-lifecycle'
 
 const CHART_RANGES = [
   { key: '6h', label: '6h', days: 1, hoursFilter: 6 },
@@ -133,7 +142,7 @@ export default function CapsuleDetailPage() {
   const [displayedSolPrice, setDisplayedSolPrice] = useState<number>(0)
   const displayedPriceRef = useRef(0)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [actionResult, setActionResult] = useState<{ type: 'success' | 'error' | 'progress'; message: string } | null>(null)
   const [intentDispatchLoading, setIntentDispatchLoading] = useState(false)
   const [intentDispatchResult, setIntentDispatchResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [revealing, setRevealing] = useState(false)
@@ -155,10 +164,15 @@ export default function CapsuleDetailPage() {
     meta,
     isOwner,
     isIntentEnabled,
-    vaultSplMint,
+    accountLocations,
+    accountLocationsLoading,
+    accountLocationsError,
     vaultAssets,
+    vaultAssetsLoading,
+    vaultAssetsError,
     distributionComplete,
     distributionLoading,
+    distributionError,
     intentDeliveryStatus,
     intentDeliveryLoading,
     intentDeliveryError,
@@ -172,19 +186,6 @@ export default function CapsuleDetailPage() {
   const isToken = !isNft
   const assetConfig = inferAssetConfig(meta ?? undefined)
   const intentConfig = intentParsed?.cre ?? intentParsed?.premium
-
-  // Asset descriptor for the Add Funds (deposit) flow. A null assetMint means a native-SOL capsule;
-  // otherwise it is an SPL token capsule keyed by that mint. Guard the PublicKey parse so a malformed
-  // metadata value can never crash the page render.
-  const addFundsAsset = useMemo(() => {
-    const mintStr = intentParsed?.assetMint ?? null
-    if (!mintStr) return { kind: 'sol' as const, mint: undefined, symbol: assetConfig.symbol || 'SOL' }
-    try {
-      return { kind: 'spl' as const, mint: new PublicKey(mintStr), symbol: assetConfig.symbol || 'tokens' }
-    } catch {
-      return { kind: 'sol' as const, mint: undefined, symbol: assetConfig.symbol || 'SOL' }
-    }
-  }, [intentParsed?.assetMint, assetConfig.symbol])
 
   const rangeConfig = useMemo(() => CHART_RANGES.find((r) => r.key === chartRange) ?? CHART_RANGES[2], [chartRange])
 
@@ -243,7 +244,7 @@ export default function CapsuleDetailPage() {
     } catch (err: any) {
       console.error('[Execute Intent] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Execute failed' })
+      setActionResult({ type: 'error', message: msg })
       toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
@@ -254,7 +255,12 @@ export default function CapsuleDetailPage() {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
     setActionLoading('distribute')
     setActionResult(null)
+    let completedLegs = 0
     try {
+      const liveLocations = await getCapsuleAccountLocations(capsule.owner)
+      if (!areCapsuleAccountsOnBase(liveLocations)) {
+        throw new Error(capsuleSettlementGuidance(liveLocations))
+      }
       if (!capsule.beneficiaries.length) throw new Error('Capsule has no beneficiaries set')
       // Beneficiaries + shares are read from the on-chain capsule; distribute splits every vault asset
       // by share_bps (SPL legs first, then the SOL leg).
@@ -262,17 +268,31 @@ export default function CapsuleDetailPage() {
         wallet as any,
         capsule.owner,
         capsule.beneficiaries,
-        capsule.nftAssignments ?? []
+        capsule.nftAssignments ?? [],
+        (progress) => {
+          completedLegs = progress.completed
+          setActionResult({
+            type: 'progress',
+            message: `Distributed ${progress.completed} asset leg${progress.completed === 1 ? '' : 's'}...`,
+          })
+        }
       )
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
       toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
-      await Promise.all([invalidateDistribution(), invalidateVaultAssets(), invalidateCapsule()])
     } catch (err: any) {
       console.error('[Distribute Assets] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Distribution failed' })
-      toast({ message: msg, variant: 'error' })
+      const partialNote = completedLegs > 0
+        ? ` ${completedLegs} asset leg${completedLegs === 1 ? ' was' : 's were'} already distributed. Refresh and retry to process only the remaining vault assets.`
+        : ''
+      setActionResult({ type: 'error', message: `${msg}${partialNote}` })
+      toast({ message: `${msg}${partialNote}`, variant: 'error' })
     } finally {
+      await Promise.allSettled([
+        invalidateDistribution(),
+        invalidateVaultAssets(),
+        invalidateCapsule(),
+      ])
       setActionLoading(null)
     }
   }
@@ -302,9 +322,15 @@ export default function CapsuleDetailPage() {
     setActionLoading('undelegate')
     setActionResult(null)
     try {
+      const liveLocations = await getCapsuleAccountLocations(capsule.owner)
+      if (!hasDelegatedCapsuleAccounts(liveLocations)) {
+        throw new Error('The capsule and beneficiary data are already settled on Solana. Refresh My Capsule to continue.')
+      }
       // The two-step undelegate reveals the private BeneficiarySet from the TEE, which needs the
       // owner's auth token; reuse the session token (minted once) so there's no extra signMessage.
-      const token = await getOrMintTeeToken(wallet as any)
+      const token = liveLocations.beneficiarySet === 'delegated'
+        ? await getOrMintTeeToken(wallet as any)
+        : undefined
       const tx = await undelegateCapsule(wallet as any, capsule.owner, token)
       // Token is now cached; invalidating the capsule query re-reads with the cached token.
       await invalidateCapsule()
@@ -313,7 +339,7 @@ export default function CapsuleDetailPage() {
     } catch (err: any) {
       console.error('[Undelegate] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Undelegation failed' })
+      setActionResult({ type: 'error', message: msg })
       toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
@@ -342,7 +368,7 @@ export default function CapsuleDetailPage() {
     } catch (err: any) {
       console.error('[Update Activity] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Update failed' })
+      setActionResult({ type: 'error', message: msg })
       toast({ message: msg, variant: 'error' })
     } finally {
       setActionLoading(null)
@@ -356,9 +382,29 @@ export default function CapsuleDetailPage() {
     if (!wallet.connected || !wallet.publicKey || !capsule) return
     setActionLoading('cancel')
     setActionResult(null)
+    let recoveredMintCount = 0
     try {
-      const mint = vaultSplMint ?? undefined
-      const tx = await cancelCapsule(wallet as any, mint)
+      const liveLocations = await getCapsuleAccountLocations(capsule.owner)
+      if (!areCapsuleAccountsOnBase(liveLocations)) {
+        throw new Error(capsuleSettlementGuidance(liveLocations))
+      }
+      // Read every vault ATA at action time, including zero-balance accounts. recover_vault closes
+      // each ATA and refunds its rent; cancel_capsule closes the final ATA plus the capsule PDAs.
+      const [vaultPDA] = getCapsuleVaultPDA(capsule.owner)
+      const tokenAccounts = await getVaultTokenAccounts(getSolanaConnection(), vaultPDA)
+      const { recoverFirst, cancelWith } = planMultiMintCancellation(
+        tokenAccounts.map((account) => account.mint)
+      )
+      for (const [index, mint] of recoverFirst.entries()) {
+        setActionResult({
+          type: 'progress',
+          message: `Recovering vault token ${index + 1} of ${recoverFirst.length} before cancellation...`,
+        })
+        await recoverVault(wallet as any, capsule.owner, mint)
+        recoveredMintCount += 1
+      }
+      setActionResult({ type: 'progress', message: 'Closing the capsule and reclaiming remaining assets...' })
+      const tx = await cancelCapsule(wallet as any, cancelWith ?? undefined)
       setActionResult({ type: 'success', message: `Capsule cancelled and assets reclaimed. TX: ${tx}` })
       toast({ message: 'Capsule cancelled and assets reclaimed.', variant: 'success' })
       // The accounts are now closed; send the owner back to the list.
@@ -366,9 +412,13 @@ export default function CapsuleDetailPage() {
     } catch (err: any) {
       console.error('[Cancel Capsule] Error:', err)
       const msg = normalizeTxError(err)
-      setActionResult({ type: 'error', message: err.message || 'Cancel failed' })
+      const recoveryNote = recoveredMintCount > 0
+        ? ` ${recoveredMintCount} token account${recoveredMintCount === 1 ? ' was' : 's were'} already recovered. Refresh the vault and retry cancellation.`
+        : ''
+      setActionResult({ type: 'error', message: `${msg}${recoveryNote}` })
       toast({ message: msg, variant: 'error' })
     } finally {
+      await Promise.allSettled([invalidateVaultAssets(), invalidateCapsule()])
       setActionLoading(null)
     }
   }
@@ -389,7 +439,7 @@ export default function CapsuleDetailPage() {
       const msg = normalizeTxError(err)
       setActionResult({
         type: 'error',
-        message: err.message || 'Failed to refresh automation registry',
+        message: msg,
       })
       toast({ message: msg, variant: 'error' })
     } finally {
@@ -425,7 +475,7 @@ export default function CapsuleDetailPage() {
       }
     } catch (err: any) {
       const msg = normalizeTxError(err)
-      setIntentDispatchResult({ type: 'error', message: err.message || 'CRE dispatch failed' })
+      setIntentDispatchResult({ type: 'error', message: msg })
       toast({ message: msg, variant: 'error' })
     } finally {
       setIntentDispatchLoading(false)
@@ -445,7 +495,7 @@ export default function CapsuleDetailPage() {
         await queryClient.invalidateQueries({ queryKey: queryKeys.capsule.byAddress(address) })
       }
     } catch (e: any) {
-      setRevealError(e?.message || 'Failed to authorize the TEE read.')
+      setRevealError(normalizeTxError(e))
     } finally {
       setRevealing(false)
     }
@@ -527,12 +577,20 @@ export default function CapsuleDetailPage() {
       : effectiveDueTs < nowSec
         ? 'Expired'
         : 'Active'
-  const switchDelegated = capsule.accountOwner?.equals?.(new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)) ?? false
-  const isDelegated = switchDelegated || Boolean(capsule.inheritanceDelegated)
+  const isDelegated = hasDelegatedCapsuleAccounts(accountLocations)
+  const accountsOnBase = areCapsuleAccountsOnBase(accountLocations)
+  const beneficiarySetDelegated = accountLocations?.beneficiarySet === 'delegated'
+  const partiallyUndelegated = Boolean(
+    accountLocations &&
+      isDelegated &&
+      (accountLocations.switch === 'base' || accountLocations.beneficiarySet === 'base')
+  )
   const lastUpdatedMs = capsule.lastActivity ? capsule.lastActivity * 1000 : null
   const targetDateMs = capsule.targetDate != null ? capsule.targetDate * 1000 : null
   // While delegated, the private beneficiary list is readable only by the owner via a TEE auth token.
-  const privateStateHidden = Boolean(capsule.inheritanceDelegated && isOwner && capsule.beneficiaries.length === 0)
+  const privateStateHidden = beneficiarySetDelegated && isOwner && capsule.beneficiaries.length === 0
+  const vaultAssetCount = vaultAssets.tokens.length + (vaultAssets.withdrawableSol > 0 ? 1 : 0)
+  const isMultiAssetVault = isToken && vaultAssetCount > 1
 
   // Proof-of-life is available only before the capsule fires.
   const canCheckIn = Boolean(isOwner && capsule.isActive)
@@ -565,9 +623,6 @@ export default function CapsuleDetailPage() {
         onClose={() => setShowAddFunds(false)}
         owner={capsule.owner}
         wallet={wallet}
-        assetKind={addFundsAsset.kind}
-        mint={addFundsAsset.mint}
-        symbol={addFundsAsset.symbol}
         onDeposited={refreshVault}
       />
       <EditBeneficiariesDialog
@@ -584,7 +639,11 @@ export default function CapsuleDetailPage() {
         onClose={() => setConfirmCancel(false)}
         onConfirm={() => { setConfirmCancel(false); handleCancelCapsule() }}
         title="Cancel Capsule"
-        description="Cancel this capsule? This refunds all funds and account rent to your wallet and PERMANENTLY closes the capsule. This cannot be undone."
+        description={
+          vaultAssets.tokens.length > 1
+            ? `This refunds all funds and account rent, then permanently closes the capsule. Your wallet will request ${vaultAssets.tokens.length} approvals so each token account can be recovered safely. This cannot be undone.`
+            : 'This refunds all funds and account rent to your wallet and permanently closes the capsule. This cannot be undone.'
+        }
         confirmLabel="Cancel Capsule"
         variant="danger"
         typedConfirm="cancel"
@@ -623,7 +682,7 @@ export default function CapsuleDetailPage() {
             className="mb-6"
             eyebrow={<SectionEyebrow>Capsule Detail</SectionEyebrow>}
             title="Capsule"
-            description={`${isNft ? 'NFT capsule' : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}${targetDateMs != null ? ` · Fires by ${new Date(targetDateMs).toLocaleDateString()}` : ''}`}
+            description={`${isNft ? 'NFT capsule' : isMultiAssetVault ? `${vaultAssetCount}-asset token capsule` : `Token (${assetConfig.symbol}) capsule`} · Inactivity period: ${formatDuration(capsule.inactivityPeriod)}${targetDateMs != null ? ` · Fires by ${new Date(targetDateMs).toLocaleDateString()}` : ''}`}
             statusLine={`Updated ${timeAgo(lastUpdatedMs)}`}
             badges={
               <>
@@ -687,6 +746,67 @@ export default function CapsuleDetailPage() {
               )}
             </ServiceMetaCard>
           </ServiceMetaGrid>
+
+          <ServiceSection
+            title="Vault Assets"
+            description="Live base-layer balances held by this capsule. Every asset follows the same beneficiary percentage split."
+            className="mb-6"
+          >
+            {vaultAssetsLoading ? (
+              <div className="grid gap-3 sm:grid-cols-2" aria-label="Loading vault assets">
+                <div className="h-20 animate-pulse rounded-xl border border-Heres-border bg-Heres-surface/40" />
+                <div className="h-20 animate-pulse rounded-xl border border-Heres-border bg-Heres-surface/40" />
+              </div>
+            ) : vaultAssetsError ? (
+              <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
+                <p className="text-sm text-amber-200">{vaultAssetsError}</p>
+                <Button variant="secondary" size="sm" className="mt-3" onClick={refreshVault}>
+                  Retry vault check
+                </Button>
+              </div>
+            ) : vaultAssetCount === 0 ? (
+              <div className="rounded-xl border border-dashed border-Heres-border bg-Heres-surface/20 p-5 text-sm text-Heres-muted">
+                This vault has no funded assets. Use Add Funds below to deposit SOL or a fungible token.
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {vaultAssets.withdrawableSol > 0 && (
+                  <div className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-Heres-white">SOL</p>
+                      <span className="rounded-md border border-Heres-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-Heres-muted">
+                        Native
+                      </span>
+                    </div>
+                    <p className="mt-2 font-mono text-lg font-semibold tabular-nums text-Heres-accent">
+                      {formatBaseUnits(BigInt(vaultAssets.withdrawableSol), 9)} SOL
+                    </p>
+                  </div>
+                )}
+                {vaultAssets.tokens.map((token) => {
+                  const mint = token.mint.toBase58()
+                  return (
+                    <div key={mint} className="rounded-xl border border-Heres-border bg-Heres-card/80 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-mono text-sm font-medium text-Heres-white" title={mint}>
+                          {maskAddress(mint)}
+                        </p>
+                        <span className="rounded-md border border-Heres-border px-2 py-0.5 text-[10px] uppercase tracking-wider text-Heres-muted">
+                          {token.tokenProgram.equals(TOKEN_2022_PROGRAM_ID) ? 'Token-2022' : 'SPL'}
+                        </span>
+                      </div>
+                      <p className="mt-2 font-mono text-lg font-semibold tabular-nums text-Heres-accent">
+                        {formatBaseUnits(token.amount, token.decimals)}
+                      </p>
+                      <div className="mt-2">
+                        <AddressPill address={mint} explorer="address" />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </ServiceSection>
 
           {/* Privacy & Delegation (PER / TEE) */}
           <ServiceSection
@@ -863,7 +983,7 @@ export default function CapsuleDetailPage() {
                 </div>
               </div>
               {intentDeliveryStatus?.lastError && (
-                <p className="text-xs text-amber-400 mt-3">{intentDeliveryStatus.lastError}</p>
+                <p className="text-xs text-amber-400 mt-3">{normalizeTxError(intentDeliveryStatus.lastError)}</p>
               )}
               {intentDeliveryError && (
                 <p className="text-xs text-red-400 mt-3">{intentDeliveryError}</p>
@@ -880,8 +1000,18 @@ export default function CapsuleDetailPage() {
               intentDeliveryStatus?.status === 'delivered' || intentDeliveryStatus?.status === 'dispatched'
             const isDistributed = Boolean(isExecuted && distributionComplete)
             const canExecute = isExpired && !isExecuted
-            const canUndelegate = Boolean(isDelegated)
-            const canDistribute = Boolean(isExecuted && !isDelegated && !isDistributed)
+            const canUndelegate = Boolean(
+              isDelegated && !accountLocationsLoading && !accountLocationsError
+            )
+            const canDistribute = Boolean(
+              isExecuted &&
+              accountsOnBase &&
+              !isDistributed &&
+              !accountLocationsLoading &&
+              !accountLocationsError &&
+              !distributionLoading &&
+              !distributionError
+            )
             const canDispatchCre = Boolean(isExecuted && isDistributed && isIntentEnabled && !isIntentDelivered)
             const settlementReady = Boolean(isExecuted && isDistributed && (!isIntentEnabled || isIntentDelivered))
             const canFinalize = Boolean(settlementReady && !isDelegated)
@@ -890,9 +1020,21 @@ export default function CapsuleDetailPage() {
             // the accounts undelegated to base first, so it is gated on !isDelegated. Withdraw also
             // requires the vault to actually hold something - the button no longer lingers on an
             // emptied vault.
-            const preFire = !capsule.executedAt
-            const canRecover = preFire && vaultAssets.hasWithdrawable
-            const canCancel = preFire && !isDelegated
+            const preFire = Boolean(capsule.isActive)
+            const canRecover = Boolean(
+              preFire &&
+              vaultAssets.hasWithdrawable &&
+              !vaultAssetsLoading &&
+              !vaultAssetsError
+            )
+            const canCancel = Boolean(
+              preFire &&
+              accountsOnBase &&
+              !accountLocationsLoading &&
+              !accountLocationsError &&
+              !vaultAssetsLoading &&
+              !vaultAssetsError
+            )
             // Deposit works regardless of delegation state: the program reads the capsule as a raw
             // AccountInfo (like recover_vault), so it no longer reverts 3007 while the Switch is
             // delegated to the ER. Both deposit and withdraw work while delegated.
@@ -941,7 +1083,32 @@ export default function CapsuleDetailPage() {
                   )}
                   {isExecuted && isDelegated && (
                     <p className="text-sm text-blue-400">
-                      Capsule executed on ER. <strong>Undelegate from ER</strong> first, then distribute assets on the base layer.
+                      {capsuleSettlementGuidance(accountLocations)}
+                    </p>
+                  )}
+                  {!isExecuted && isDelegated && partiallyUndelegated && (
+                    <p className="mt-2 text-sm text-blue-400">
+                      {capsuleSettlementGuidance(accountLocations)}
+                    </p>
+                  )}
+                  {accountLocationsError && (
+                    <p className="text-sm text-amber-300">
+                      {accountLocationsError} Base-layer actions remain locked until this check succeeds.
+                    </p>
+                  )}
+                  {accountLocationsLoading && (
+                    <p className="text-sm text-Heres-muted">
+                      Checking the capsule switch and private beneficiary state before enabling actions...
+                    </p>
+                  )}
+                  {distributionError && (
+                    <p className="text-sm text-amber-300">
+                      {distributionError}
+                    </p>
+                  )}
+                  {vaultAssetsError && (
+                    <p className="text-sm text-amber-300">
+                      {vaultAssetsError}
                     </p>
                   )}
                   {isDistributed && isIntentEnabled && !isIntentDelivered && (
@@ -949,7 +1116,7 @@ export default function CapsuleDetailPage() {
                       Assets already reached the beneficiary. Proceed to <strong>Deliver Intent Statement</strong> via CRE.
                     </p>
                   )}
-                  {isExecuted && !isDistributed && !isDelegated && (
+                  {isExecuted && !isDistributed && accountsOnBase && !accountLocationsError && (
                     <p className="text-sm text-Heres-accent">
                       Capsule executed. Proceed to <strong>Distribute Assets</strong>{isIntentEnabled ? ' and then dispatch Intent Statement delivery via CRE.' : '.'}
                     </p>
@@ -1010,14 +1177,20 @@ export default function CapsuleDetailPage() {
                     disabled={!canDistribute || !!actionLoading}
                     loading={actionLoading === 'distribute'}
                     title={
-                      !canDistribute
-                        ? isDelegated
-                          ? 'Undelegate from ER first'
-                          : 'Execute intent first'
-                        : `Distribute ${assetConfig.symbol}/tokens to beneficiaries`
+                      isDistributed
+                        ? 'The capsule vault is already distributed'
+                        : !isExecuted
+                          ? 'Execute intent first'
+                          : isDelegated
+                            ? partiallyUndelegated
+                              ? 'Finish undelegation first'
+                              : 'Undelegate from ER first'
+                            : accountLocationsLoading || accountLocationsError || distributionLoading || distributionError
+                              ? 'Waiting for the capsule state check'
+                              : `Distribute ${assetConfig.symbol}/tokens to beneficiaries`
                     }
                   >
-                    Distribute Assets
+                    {isDistributed ? 'Assets Distributed' : 'Distribute Assets'}
                   </Button>
                   <Button
                     variant="secondary"
@@ -1035,9 +1208,15 @@ export default function CapsuleDetailPage() {
                     onClick={() => setConfirmUndelegate(true)}
                     disabled={!canUndelegate || !!actionLoading}
                     loading={actionLoading === 'undelegate'}
-                    title={!canUndelegate ? 'Capsule is already on base layer' : 'Commit ER state and undelegate back to Solana base layer'}
+                    title={
+                      accountLocationsLoading || accountLocationsError
+                        ? 'Waiting for the capsule account check'
+                        : !canUndelegate
+                          ? 'No delegated capsule state was found'
+                          : capsuleSettlementGuidance(accountLocations)
+                    }
                   >
-                    Undelegate from ER
+                    {partiallyUndelegated ? 'Finish Undelegation' : 'Undelegate from ER'}
                   </Button>
                   {isIntentEnabled && (
                     <Button
@@ -1095,7 +1274,13 @@ export default function CapsuleDetailPage() {
                         size="sm"
                         onClick={() => setShowWithdraw(true)}
                         disabled={!canRecover || !!actionLoading}
-                        title={canRecover ? 'Withdraw funds from the capsule back to your wallet. The capsule stays active and armed.' : 'No funds to withdraw'}
+                        title={
+                          canRecover
+                            ? 'Withdraw funds from the capsule back to your wallet. The capsule stays active and armed.'
+                            : vaultAssetsLoading || vaultAssetsError
+                              ? 'Waiting for the vault balance check'
+                              : 'No funds to withdraw'
+                        }
                       >
                         Withdraw Funds
                       </Button>
@@ -1105,7 +1290,15 @@ export default function CapsuleDetailPage() {
                         onClick={() => setConfirmCancel(true)}
                         disabled={!canCancel || !!actionLoading}
                         loading={actionLoading === 'cancel'}
-                        title={!canCancel ? 'Undelegate from ER first (this settles the capsule to base), then cancel' : 'Refund all funds + account rent and permanently close the capsule'}
+                        title={
+                          accountLocationsLoading || accountLocationsError
+                            ? 'Waiting for the capsule account check'
+                            : vaultAssetsLoading || vaultAssetsError
+                              ? 'Waiting for the vault balance check'
+                              : !canCancel
+                                ? 'Settle both capsule accounts on Solana before cancelling'
+                                : 'Refund all funds + account rent and permanently close the capsule'
+                        }
                       >
                         Cancel Capsule
                       </Button>
@@ -1118,7 +1311,9 @@ export default function CapsuleDetailPage() {
                   <div className={`mt-4 rounded-lg border p-3 text-sm break-all ${
                     actionResult.type === 'success'
                       ? 'border-green-500/30 bg-green-500/10 text-green-400'
-                      : 'border-red-500/30 bg-red-500/10 text-red-400'
+                      : actionResult.type === 'progress'
+                        ? 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+                        : 'border-red-500/30 bg-red-500/10 text-red-400'
                   }`}>
                     {actionResult.message}
                   </div>
@@ -1136,10 +1331,11 @@ export default function CapsuleDetailPage() {
             )
           })()}
 
-          <ServiceSection
-            title={isToken ? `${assetConfig.symbol} Price (USD)` : `NFT Value (${assetConfig.symbol} / USD proxy)`}
-            className="mb-6"
-          >
+          {!isMultiAssetVault && (
+            <ServiceSection
+              title={isToken ? `${assetConfig.symbol} Price (USD)` : `NFT Value (${assetConfig.symbol} / USD proxy)`}
+              className="mb-6"
+            >
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <div>
                 <p className="text-sm text-Heres-muted mt-1">
@@ -1210,7 +1406,8 @@ export default function CapsuleDetailPage() {
                 Chart data unavailable
               </div>
             )}
-          </ServiceSection>
+            </ServiceSection>
+          )}
 
         </div>
       </main>
