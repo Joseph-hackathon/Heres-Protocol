@@ -18,6 +18,7 @@ import { decodeBeneficiarySet } from './lean-capsule'
 import { getDueOwners, getRegisteredOwners, setCapsuleDue, unregisterCapsuleOwner } from './capsule-registry'
 import { MAGICBLOCK_ER, PER_TEE } from '@/constants'
 import { ataFor, buildCreateAtaIx, getVaultTokenAccounts } from '@/lib/spl'
+import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
 
 const DELEGATION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.DELEGATION_PROGRAM_ID)
 const PERMISSION_PROGRAM_ID = new PublicKey(MAGICBLOCK_ER.PERMISSION_PROGRAM_ID)
@@ -90,7 +91,7 @@ async function sendRaw(
   instructions.forEach((ix) => tx.add(ix))
   tx.sign(keypair)
   const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true })
-  await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+  await confirmTransactionOrThrow(connection, { signature: sig, blockhash, lastValidBlockHeight })
   return sig
 }
 

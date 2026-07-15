@@ -55,3 +55,58 @@ test('failed confirmation falls back to the structured Solana error when logs ar
     /InstructionError.*InvalidAccountData/
   )
 })
+
+test('failed confirmation surfaces a generic program failure log', async () => {
+  const connection = {
+    confirmTransaction: async () => ({
+      context: { slot: 1 },
+      value: { err: { InstructionError: [0, 'InvalidAccountData'] } },
+    }),
+    getTransaction: async () => ({
+      meta: {
+        logMessages: ['Program Example111111111111111111111111111111111 failed: invalid account data'],
+      },
+    }),
+  }
+
+  await assert.rejects(
+    confirmTransactionOrThrow(connection as any, strategy),
+    /failed: Program Example.*failed: invalid account data/
+  )
+})
+
+test('failed confirmation preserves the structured error when transaction logs cannot be fetched', async () => {
+  const connection = {
+    confirmTransaction: async () => ({
+      context: { slot: 1 },
+      value: { err: { InstructionError: [3, { Custom: 6013 }] } },
+    }),
+    getTransaction: async () => {
+      throw new Error('RPC unavailable')
+    },
+  }
+
+  await assert.rejects(confirmTransactionOrThrow(connection as any, strategy), /Custom.*6013/)
+})
+
+test('finalized confirmation uses finalized transaction logs', async () => {
+  let confirmationCommitment = ''
+  let transactionCommitment = ''
+  const connection = {
+    confirmTransaction: async (_strategy: unknown, commitment: string) => {
+      confirmationCommitment = commitment
+      return {
+        context: { slot: 1 },
+        value: { err: { InstructionError: [0, 'InvalidAccountData'] } },
+      }
+    },
+    getTransaction: async (_signature: string, config: { commitment: string }) => {
+      transactionCommitment = config.commitment
+      return null
+    },
+  }
+
+  await assert.rejects(confirmTransactionOrThrow(connection as any, strategy, 'finalized'))
+  assert.equal(confirmationCommitment, 'finalized')
+  assert.equal(transactionCommitment, 'finalized')
+})
