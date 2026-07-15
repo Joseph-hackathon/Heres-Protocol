@@ -49,7 +49,10 @@ pub fn handler(ctx: Context<UpdateActivity>) -> Result<()> {
         capsule.is_active = true;
         capsule.executed_at = None;
         capsule.last_activity = now;
-        msg!("Capsule revived during grace window (owner): {:?}", capsule.key());
+        msg!(
+            "Capsule revived during grace window (owner): {:?}",
+            capsule.key()
+        );
     } else {
         return err!(ErrorCode::CapsuleInactive);
     }

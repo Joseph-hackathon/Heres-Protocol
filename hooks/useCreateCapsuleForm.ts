@@ -8,7 +8,7 @@ import { maskAddress } from '@/lib/format'
 import { normalizeTxError } from '@/lib/errors'
 import { createDelegatedCapsule, getCapsule, registerCapsuleOwnerForAutomation } from '@/lib/solana'
 import { getCapsulePDA } from '@/lib/program'
-import { Beneficiary } from '@/types'
+import { Beneficiary, OnChainNftAssignment } from '@/types'
 import {
   DEFAULT_VALUES,
   STORAGE_KEYS,
@@ -20,8 +20,14 @@ import { getVaultTokenAccounts } from '@/lib/spl'
 import { buildIntentSignedMessage } from '@/utils/intentAuth'
 import { bytesToBase64, sha256Hex } from '@/utils/intentClient'
 import { isValidEmail } from '@/utils/validation'
-import { createCapsuleInputSchema, collectFieldErrors, firstError } from '@/lib/schemas'
-import { getSolanaConnection } from '@/config/solana'
+import {
+  createCapsuleInputSchema,
+  createNftCapsuleInputSchema,
+  collectFieldErrors,
+  firstError,
+  MAX_NFT_ASSIGNMENTS,
+} from '@/lib/schemas'
+import { getSolanaConnection, isValidSolanaAddress } from '@/config/solana'
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { queryKeys } from '@/lib/query/keys'
 
@@ -342,9 +348,22 @@ export function useCreateCapsuleForm() {
   }
 
   const toggleNftSelection = (mint: string) => {
-    setSelectedNftMints((prev) =>
-      prev.includes(mint) ? prev.filter((m) => m !== mint) : [...prev, mint]
-    )
+    clearFieldErrors()
+    setSelectedNftMints((prev) => {
+      if (prev.includes(mint)) {
+        setNftAssignments((assignments) => {
+          const next = { ...assignments }
+          delete next[mint]
+          return next
+        })
+        return prev.filter((m) => m !== mint)
+      }
+      if (prev.length >= MAX_NFT_ASSIGNMENTS) {
+        setError(`You can lock up to ${MAX_NFT_ASSIGNMENTS} NFTs in one capsule.`)
+        return prev
+      }
+      return [...prev, mint]
+    })
   }
 
   const addNftRecipient = () => {
@@ -354,6 +373,14 @@ export function useCreateCapsuleForm() {
   const removeNftRecipient = (index: number) => {
     if (nftRecipients.length > 1) {
       setNftRecipients((prev) => prev.filter((_, i) => i !== index))
+      setNftAssignments((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).map(([mint, assignedIndex]) => [
+            mint,
+            assignedIndex === index ? 0 : assignedIndex > index ? assignedIndex - 1 : assignedIndex,
+          ])
+        )
+      )
     }
   }
 
@@ -392,10 +419,8 @@ export function useCreateCapsuleForm() {
       return
     }
 
-    // Lean program: only token (SOL / SPL) capsules with proportional Solana beneficiaries are
-    // supported. NFT (per-recipient) capsules return in a later release.
-    if (capsuleType !== 'token') {
-      setError('Please select the Token asset type. NFT capsules are temporarily unavailable.')
+    if (!capsuleType) {
+      setError('Select an asset type before creating the capsule.')
       return
     }
 
@@ -411,19 +436,35 @@ export function useCreateCapsuleForm() {
     // beneficiary addresses + shares (sum to 100, no duplicates, no self), inactivity (whole number,
     // <= 100y), optional future target date, intent length, and email. Bad input never reaches a
     // wallet signature or the chain.
-    const validation = createCapsuleInputSchema({
-      ownerAddress: publicKey.toBase58(),
-      maxBalance: selectedToken ? selectedToken.balanceUi : null,
-      allowMinutes: supportsMinuteMode,
-    }).safeParse({
-      totalAmount,
-      inactivityValue: inactivityDays,
-      inactivityUnit,
-      targetDate,
-      intent,
-      intentEmail,
-      beneficiaries: beneficiaries.map((b) => ({ address: b.address, share: b.amount })),
-    })
+    const rawNftAssignments = selectedNftMints.map((mint) => ({
+      mint,
+      recipient: nftRecipients[nftAssignments[mint] ?? 0]?.address ?? '',
+    }))
+    const validation = capsuleType === 'token'
+      ? createCapsuleInputSchema({
+          ownerAddress: publicKey.toBase58(),
+          maxBalance: selectedToken ? selectedToken.balanceUi : null,
+          allowMinutes: supportsMinuteMode,
+        }).safeParse({
+          totalAmount,
+          inactivityValue: inactivityDays,
+          inactivityUnit,
+          targetDate,
+          intent,
+          intentEmail,
+          beneficiaries: beneficiaries.map((b) => ({ address: b.address, share: b.amount })),
+        })
+      : createNftCapsuleInputSchema({
+          ownerAddress: publicKey.toBase58(),
+          allowMinutes: supportsMinuteMode,
+        }).safeParse({
+          inactivityValue: inactivityDays,
+          inactivityUnit,
+          targetDate,
+          intent,
+          intentEmail,
+          assignments: rawNftAssignments,
+        })
     if (!validation.success) {
       setFieldErrors(collectFieldErrors(validation.error))
       setError(firstError(validation.error))
@@ -482,13 +523,25 @@ export function useCreateCapsuleForm() {
         throw new Error(secretJson?.error || 'Failed to register CRE secret')
       }
 
-      // ---- Lean beneficiaries: Solana pubkeys + proportional share_bps (must sum to 10000 = 100%) ----
-      const leanBeneficiaries = beneficiaries
-        .filter((b) => b.address.trim() && (b.chain ?? 'solana') !== 'evm')
-        .map((b) => ({
-          pubkey: new PublicKey(b.address.trim()),
-          shareBps: Math.round(parseFloat(b.amount || '0') * 100),
-        }))
+      // Fungible assets use proportional shares. NFT capsules still store their unique recipients as
+      // beneficiaries (even shares) so any SOL rent swept at settlement has a deterministic route.
+      const nftRecipientAddresses = [...new Set(rawNftAssignments.map((a) => a.recipient.trim()))]
+      const leanBeneficiaries = capsuleType === 'token'
+        ? beneficiaries
+            .filter((b) => b.address.trim() && (b.chain ?? 'solana') !== 'evm')
+            .map((b) => ({
+              pubkey: new PublicKey(b.address.trim()),
+              shareBps: Math.round(parseFloat(b.amount || '0') * 100),
+            }))
+        : nftRecipientAddresses.map((address, index) => {
+            const base = Math.floor(10000 / nftRecipientAddresses.length)
+            return {
+              pubkey: new PublicKey(address),
+              shareBps: index === nftRecipientAddresses.length - 1
+                ? 10000 - base * (nftRecipientAddresses.length - 1)
+                : base,
+            }
+          })
       if (leanBeneficiaries.length === 0) {
         throw new Error('Add at least one Solana beneficiary.')
       }
@@ -497,14 +550,22 @@ export function useCreateCapsuleForm() {
         throw new Error(`Beneficiary shares must total 100% (currently ${(totalBps / 100).toFixed(2)}%).`)
       }
 
-      // ---- Deposit amount: SOL lamports, or SPL base units ----
-      const totalAmountNum = parseFloat(totalAmount)
-      if (!Number.isFinite(totalAmountNum) || totalAmountNum <= 0) {
-        throw new Error('Enter a valid total amount to fund the capsule.')
+      const onChainNftAssignments: OnChainNftAssignment[] = rawNftAssignments.map((assignment) => ({
+        mint: new PublicKey(assignment.mint),
+        recipient: new PublicKey(assignment.recipient.trim()),
+      }))
+
+      // ---- Deposit amount: SOL lamports, SPL base units, or one unit per NFT ----
+      let depositBaseUnits: number | undefined
+      if (capsuleType === 'token') {
+        const totalAmountNum = parseFloat(totalAmount)
+        if (!Number.isFinite(totalAmountNum) || totalAmountNum <= 0) {
+          throw new Error('Enter a valid total amount to fund the capsule.')
+        }
+        depositBaseUnits = selectedMint
+          ? Math.round(totalAmountNum * Math.pow(10, assetDecimals))
+          : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
       }
-      const depositBaseUnits = selectedMint
-        ? Math.round(totalAmountNum * Math.pow(10, assetDecimals))
-        : Math.round(totalAmountNum * LAMPORTS_PER_SOL)
 
       const inactivityPeriodSeconds = inactivityUnitToSeconds(inactivityValueNum, inactivityUnit)
 
@@ -536,7 +597,8 @@ export function useCreateCapsuleForm() {
         targetDateSeconds,
         beneficiaries: leanBeneficiaries,
         depositBaseUnits,
-        mint: selectedMint ?? null,
+        mint: capsuleType === 'token' ? selectedMint ?? null : null,
+        nftAssignments: capsuleType === 'nft' ? onChainNftAssignments : undefined,
         // heartbeat_authority defaults to the protocol relayer so the off-chain liveness service can
         // bump last_activity from detected wallet activity. Owner can still bump (on-chain is_owner
         // branch). Unset -> relayer default in createDelegatedCapsule.
@@ -593,9 +655,17 @@ export function useCreateCapsuleForm() {
                 capsuleAddress: capsulePDA.toBase58(),
                 owner: publicKey.toBase58(),
                 recipientEmail: normalizedEmail,
-                assetSymbol: assetUnit,
-                assetLabel: selectedToken ? `${selectedToken.symbol} (${selectedToken.mint})` : 'Solana',
-                assetMint: selectedToken?.mint ?? null,
+                assetSymbol: capsuleType === 'nft' ? 'NFT' : assetUnit,
+                assetLabel:
+                  capsuleType === 'nft'
+                    ? `${selectedNftMints.length} standard Solana NFT${selectedNftMints.length === 1 ? '' : 's'}`
+                    : selectedToken
+                      ? `${selectedToken.symbol} (${selectedToken.mint})`
+                      : 'Solana',
+                assetMint:
+                  capsuleType === 'nft' && selectedNftMints.length === 1
+                    ? selectedNftMints[0]
+                    : selectedToken?.mint ?? null,
                 assetDecimals,
                 totalAmount: capsuleType === 'token' ? totalAmount : undefined,
                 beneficiaryCount:
@@ -707,10 +777,16 @@ export function useCreateCapsuleForm() {
       ? Boolean(totalAmount.trim())
       : selectedNftMints.length > 0
   )
+  const nftAssignmentsComplete = capsuleType === 'nft' && selectedNftMints.length > 0 &&
+    selectedNftMints.every((mint) => {
+      const recipientIndex = nftAssignments[mint] ?? 0
+      const recipient = nftRecipients[recipientIndex]?.address.trim() ?? ''
+      return isValidSolanaAddress(recipient)
+    })
   const hasBeneficiaryDetails = capsuleType === 'token'
     ? beneficiaries.some((b) => b.address.trim() && b.amount.trim()) && Boolean(inactivityDays)
     : capsuleType === 'nft'
-      ? selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()) && Boolean(inactivityDays)
+      ? nftAssignmentsComplete && Boolean(inactivityDays)
       : false
   const hasIntentDetails = Boolean(intent.trim() && isValidEmail(intentEmail))
   const canCompleteAsset = hasAssetSelection
@@ -730,7 +806,7 @@ export function useCreateCapsuleForm() {
     parseInt(inactivityDays) > 0 &&
     (
       (capsuleType === 'token' && beneficiaries.length > 0 && beneficiaries.every((b) => !b.address || !b.amount ? false : true)) ||
-      (capsuleType === 'nft' && selectedNftMints.length > 0 && nftRecipients.some((r) => r.address.trim()))
+      (capsuleType === 'nft' && nftAssignmentsComplete)
     )
   )
   // Step completion derives live from validity - no separate "I confirm this step" state.

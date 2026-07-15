@@ -11,7 +11,9 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
-use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token_interface::{
+    self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::error::ErrorCode;
 use crate::state::{BeneficiarySet, CapsuleVault, IntentCapsule};
@@ -65,16 +67,38 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
     require!(ctx.accounts.capsule.is_active, ErrorCode::CapsuleInactive);
 
     if let Some(mint) = &ctx.accounts.mint {
-        let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let owner_ata = ctx.accounts.owner_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        let vault_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let owner_ata = ctx
+            .accounts
+            .owner_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
         let token_program_id = token_program.key();
         require!(
-            vault_ata.key() == get_associated_token_address_with_program_id(&ctx.accounts.vault.key(), &mint.key(), &token_program_id),
+            vault_ata.key()
+                == get_associated_token_address_with_program_id(
+                    &ctx.accounts.vault.key(),
+                    &mint.key(),
+                    &token_program_id
+                ),
             ErrorCode::InvalidTokenAccount
         );
         require!(
-            owner_ata.key() == get_associated_token_address_with_program_id(&ctx.accounts.owner.key(), &mint.key(), &token_program_id),
+            owner_ata.key()
+                == get_associated_token_address_with_program_id(
+                    &ctx.accounts.owner.key(),
+                    &mint.key(),
+                    &token_program_id
+                ),
             ErrorCode::InvalidTokenAccount
         );
 
@@ -92,7 +116,11 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
                 authority: ctx.accounts.vault.to_account_info(),
             };
             token_interface::transfer_checked(
-                CpiContext::new_with_signer(token_program.to_account_info(), cpi_accounts, signer_seeds),
+                CpiContext::new_with_signer(
+                    token_program.to_account_info(),
+                    cpi_accounts,
+                    signer_seeds,
+                ),
                 amount,
                 mint.decimals,
             )?;
@@ -111,6 +139,9 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
     }
 
     // `close = owner` on capsule + vault refunds their rent and, for SOL, the locked lamports.
-    msg!("Capsule cancelled and assets reclaimed for owner: {:?}", ctx.accounts.owner.key());
+    msg!(
+        "Capsule cancelled and assets reclaimed for owner: {:?}",
+        ctx.accounts.owner.key()
+    );
     Ok(())
 }

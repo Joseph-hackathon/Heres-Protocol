@@ -14,6 +14,7 @@ import { isValidAmountString } from '@/lib/assets'
 
 // ---- shared bounds ----
 export const MAX_BENEFICIARIES = 8
+export const MAX_NFT_ASSIGNMENTS = 8
 export const MAX_INTENT_LENGTH = 20_000
 // Cap free-form strings that get stored / rendered into emails so a single request cannot bloat the
 // store or smuggle a huge payload into a template.
@@ -145,6 +146,40 @@ export function beneficiariesSchema(opts?: { ownerAddress?: string }) {
     })
 }
 
+export interface NftAssignmentInput {
+  mint: string
+  recipient: string
+}
+
+/** Validate one explicit recipient per NFT mint. A recipient may inherit multiple NFTs. */
+export function nftAssignmentsSchema(opts?: { ownerAddress?: string }) {
+  return z
+    .array(z.object({ mint: solanaAddress, recipient: solanaAddress }))
+    .min(1, { message: 'Select at least one NFT.' })
+    .max(MAX_NFT_ASSIGNMENTS, { message: `No more than ${MAX_NFT_ASSIGNMENTS} NFTs per capsule.` })
+    .superRefine((rows, ctx) => {
+      const seenMints = new Set<string>()
+      const owner = opts?.ownerAddress?.trim()
+      rows.forEach((row, index) => {
+        const mint = row.mint.trim()
+        const recipient = row.recipient.trim()
+        if (isValidSolanaAddress(mint)) {
+          if (seenMints.has(mint)) {
+            ctx.addIssue({ code: 'custom', path: [index, 'mint'], message: 'Duplicate NFT mint.' })
+          }
+          seenMints.add(mint)
+        }
+        if (owner && recipient === owner) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [index, 'recipient'],
+            message: 'You cannot assign an NFT back to your own wallet.',
+          })
+        }
+      })
+    })
+}
+
 // ---- create-capsule wizard (client) ----
 
 /**
@@ -174,6 +209,39 @@ export function createCapsuleInputSchema(opts: {
       intent: intentMessage,
       intentEmail: emailString,
       beneficiaries: beneficiariesSchema({ ownerAddress: opts.ownerAddress }),
+    })
+    .superRefine((val, ctx) => {
+      const days = val.inactivityValue * INACTIVITY_DAYS_PER_UNIT[val.inactivityUnit]
+      if (days > MAX_INACTIVITY_DAYS) {
+        ctx.addIssue({ code: 'custom', path: ['inactivityValue'], message: 'Inactivity period is too long (max 100 years).' })
+      }
+      if (val.inactivityUnit === 'minutes' && !opts.allowMinutes) {
+        ctx.addIssue({ code: 'custom', path: ['inactivityUnit'], message: 'Minute mode is not available on this network.' })
+      }
+      if (val.targetDate) {
+        const ts = Math.floor(new Date(val.targetDate + 'T00:00:00').getTime() / 1000)
+        if (!Number.isFinite(ts)) {
+          ctx.addIssue({ code: 'custom', path: ['targetDate'], message: 'Enter a valid date, or leave it blank.' })
+        } else if (ts <= Math.floor(Date.now() / 1000)) {
+          ctx.addIssue({ code: 'custom', path: ['targetDate'], message: 'The fixed fire date must be in the future.' })
+        }
+      }
+    })
+}
+
+/** NFT create flow: explicit mint-to-recipient routes replace fungible amount/share inputs. */
+export function createNftCapsuleInputSchema(opts: {
+  ownerAddress?: string
+  allowMinutes?: boolean
+}) {
+  return z
+    .object({
+      inactivityValue: positiveInt,
+      inactivityUnit: z.enum(['minutes', 'days', 'months', 'years']),
+      targetDate: z.string().trim().optional().default(''),
+      intent: intentMessage,
+      intentEmail: emailString,
+      assignments: nftAssignmentsSchema({ ownerAddress: opts.ownerAddress }),
     })
     .superRefine((val, ctx) => {
       const days = val.inactivityValue * INACTIVITY_DAYS_PER_UNIT[val.inactivityUnit]

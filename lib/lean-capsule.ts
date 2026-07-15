@@ -6,8 +6,8 @@
  *   - IntentCapsule (the "Switch"): owner, inactivity_period, last_activity, is_active, executed_at,
  *     bump, vault_bump, beneficiaries_bump, heartbeat_authority, version, reserved. It NO LONGER
  *     carries beneficiaries - liveness only. It lives on a regular ER when delegated.
- *   - BeneficiarySet: owner, bump, version, beneficiaries(Vec<{pubkey, share_bps, reserved}>),
- *     reserved. The single enclave-resident account (TEE), revealed to base before distribution.
+ *   - BeneficiarySet: owner, bump, version, proportional beneficiaries, explicit NFT assignments,
+ *     and reserved bytes. The single enclave-resident account (TEE), revealed before distribution.
  *
  * We decode with the Anchor BorshAccountsCoder (isomorphic - browser + server) against the same
  * fresh-build IDL the program was deployed from, so the layout can never silently drift from a manual
@@ -16,7 +16,7 @@
  */
 import { BorshAccountsCoder } from '@coral-xyz/anchor'
 import idl from '../idl/heres_program.json'
-import type { IntentCapsule, OnChainBeneficiary } from '@/types'
+import type { IntentCapsule, OnChainBeneficiary, OnChainNftAssignment } from '@/types'
 
 const accountsCoder = new BorshAccountsCoder(idl as any)
 
@@ -40,6 +40,7 @@ export function decodeIntentCapsule(data: Buffer | Uint8Array): IntentCapsule {
     heartbeatAuthority: c.heartbeat_authority,
     targetDate: c.target_date == null ? null : c.target_date.toNumber(),
     beneficiaries: [],
+    nftAssignments: [],
   }
 }
 
@@ -60,19 +61,35 @@ export function tryDecodeIntentCapsule(data: Buffer | Uint8Array): IntentCapsule
 export function decodeBeneficiarySet(data: Buffer | Uint8Array): {
   owner: OnChainBeneficiary['pubkey']
   beneficiaries: OnChainBeneficiary[]
+  nftAssignments: OnChainNftAssignment[]
 } {
   const s = accountsCoder.decode('BeneficiarySet', Buffer.from(data)) as any
   const beneficiaries: OnChainBeneficiary[] = (s.beneficiaries ?? []).map((b: any) => ({
     pubkey: b.pubkey,
     shareBps: typeof b.share_bps === 'number' ? b.share_bps : Number(b.share_bps),
   }))
-  return { owner: s.owner, beneficiaries }
+  const nftAssignments: OnChainNftAssignment[] = (s.nft_assignments ?? []).map((assignment: any) => ({
+    mint: assignment.mint,
+    recipient: assignment.recipient,
+  }))
+  return { owner: s.owner, beneficiaries, nftAssignments }
 }
 
 /** Best-effort BeneficiarySet decode: returns null instead of throwing (delegated/filtered reads). */
 export function tryDecodeBeneficiarySet(data: Buffer | Uint8Array): OnChainBeneficiary[] | null {
   try {
     return decodeBeneficiarySet(data).beneficiaries
+  } catch {
+    return null
+  }
+}
+
+/** Best-effort full private inheritance decode, including per-NFT recipients. */
+export function tryDecodeBeneficiarySetData(
+  data: Buffer | Uint8Array
+): ReturnType<typeof decodeBeneficiarySet> | null {
+  try {
+    return decodeBeneficiarySet(data)
   } catch {
     return null
   }

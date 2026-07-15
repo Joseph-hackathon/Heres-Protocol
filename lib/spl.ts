@@ -27,6 +27,30 @@ export async function resolveTokenProgram(connection: Connection, mint: PublicKe
   throw new Error(`Mint ${mint.toBase58()} is not owned by a supported token program`)
 }
 
+/**
+ * Validate the custody shape supported by the Heres NFT path: a classic/Token-2022 mint with supply
+ * exactly 1, decimals 0, and one token in the owner's canonical ATA. Compressed, Core, and other
+ * non-token-account asset standards fail this check because they do not expose this mint/ATA shape.
+ */
+export async function validateStandardNft(
+  connection: Connection,
+  owner: PublicKey,
+  mint: PublicKey
+): Promise<PublicKey> {
+  const tokenProgram = await resolveTokenProgram(connection, mint)
+  const supply = await connection.getTokenSupply(mint, 'confirmed')
+  if (supply.value.decimals !== 0 || supply.value.amount !== '1') {
+    throw new Error(`Mint ${mint.toBase58()} is not a standard NFT (expected supply 1 and decimals 0)`)
+  }
+
+  const ownerAta = ataFor(mint, owner, tokenProgram)
+  const balance = await connection.getTokenAccountBalance(ownerAta, 'confirmed').catch(() => null)
+  if (!balance || balance.value.amount !== '1' || balance.value.decimals !== 0) {
+    throw new Error(`Wallet does not hold NFT ${mint.toBase58()} in its canonical token account`)
+  }
+  return tokenProgram
+}
+
 /** Build the create-ATA instruction for the given token program (idempotent create handled by caller). */
 export function buildCreateAtaIx(
   payer: PublicKey,

@@ -38,4 +38,16 @@ pub enum ErrorCode {
     NothingToDistribute,
     #[msg("Amount must be greater than zero")]
     InvalidAmount,
+    #[msg("Too many NFT assignments (max 8)")]
+    TooManyNftAssignments,
+    #[msg("NFT assignment mint or recipient is invalid")]
+    InvalidNftAssignment,
+    #[msg("Duplicate NFT mint assignment")]
+    DuplicateNftAssignment,
+    #[msg("NFT assignment was not found for this mint and recipient")]
+    NftAssignmentNotFound,
+    #[msg("Mint is not a supported standard NFT (expected supply 1 and decimals 0)")]
+    InvalidNftMint,
+    #[msg("NFT has an explicit recipient and must use the NFT distribution instruction")]
+    NftRequiresAssignedDistribution,
 }

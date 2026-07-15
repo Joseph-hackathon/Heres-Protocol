@@ -946,6 +946,13 @@
       "accounts": [
         {
           "name": "capsule",
+          "docs": [
+            "Account<IntentCapsule>) on purpose: while the Switch is delegated its owner is the delegation",
+            "program, so an Account<IntentCapsule> would fail Anchor's owner check (error 3007) - yet the",
+            "Vault is always on the base layer, so deposits must keep working in that state (same pattern as",
+            "recover_vault). Authorization is the owner signer + the owner-seeded capsule/vault PDAs;",
+            "is_active is enforced in the handler only when the Switch is base-resident (program-owned)."
+          ],
           "pda": {
             "seeds": [
               {
@@ -1231,6 +1238,138 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "distribute_nft",
+      "docs": [
+        "Transfer one standard SPL NFT to its explicitly assigned recipient after the grace period."
+      ],
+      "discriminator": [
+        162,
+        49,
+        33,
+        194,
+        14,
+        197,
+        63,
+        156
+      ],
+      "accounts": [
+        {
+          "name": "capsule",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  116,
+                  101,
+                  110,
+                  116,
+                  95,
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary_set",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  97,
+                  112,
+                  115,
+                  117,
+                  108,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "capsule.owner",
+                "account": "IntentCapsule"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "recipient",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "execute_intent",
@@ -1825,6 +1964,72 @@
           }
         }
       ]
+    },
+    {
+      "name": "update_nft_assignments",
+      "docs": [
+        "Set or replace private per-NFT recipients (owner only; route via the PER once delegated)."
+      ],
+      "discriminator": [
+        76,
+        9,
+        42,
+        211,
+        149,
+        105,
+        85,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "beneficiary_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  110,
+                  101,
+                  102,
+                  105,
+                  99,
+                  105,
+                  97,
+                  114,
+                  121,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "assignments",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "NftAssignment"
+              }
+            }
+          }
+        }
+      ]
     }
   ],
   "accounts": [
@@ -1905,6 +2110,19 @@
         52,
         83,
         188,
+        227
+      ]
+    },
+    {
+      "name": "NftDistributed",
+      "discriminator": [
+        187,
+        49,
+        146,
+        149,
+        63,
+        108,
+        210,
         227
       ]
     }
@@ -1994,6 +2212,36 @@
       "code": 6016,
       "name": "InvalidAmount",
       "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6017,
+      "name": "TooManyNftAssignments",
+      "msg": "Too many NFT assignments (max 8)"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidNftAssignment",
+      "msg": "NFT assignment mint or recipient is invalid"
+    },
+    {
+      "code": 6019,
+      "name": "DuplicateNftAssignment",
+      "msg": "Duplicate NFT mint assignment"
+    },
+    {
+      "code": 6020,
+      "name": "NftAssignmentNotFound",
+      "msg": "NFT assignment was not found for this mint and recipient"
+    },
+    {
+      "code": 6021,
+      "name": "InvalidNftMint",
+      "msg": "Mint is not a supported standard NFT (expected supply 1 and decimals 0)"
+    },
+    {
+      "code": 6022,
+      "name": "NftRequiresAssignedDistribution",
+      "msg": "NFT has an explicit recipient and must use the NFT distribution instruction"
     }
   ],
   "types": [
@@ -2085,6 +2333,16 @@
               "vec": {
                 "defined": {
                   "name": "Beneficiary"
+                }
+              }
+            }
+          },
+          {
+            "name": "nft_assignments",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "NftAssignment"
                 }
               }
             }
@@ -2217,6 +2475,51 @@
           {
             "name": "executed_at",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NftAssignment",
+      "docs": [
+        "One standard SPL NFT and the wallet that receives it after the grace period. The mint must have",
+        "supply 1 and decimals 0 when `distribute_nft` executes. Assignments live inside the same TEE-",
+        "resident account as proportional beneficiaries, so the intended heir stays private while alive."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NftDistributed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "capsule",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
           }
         ]
       }

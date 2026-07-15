@@ -334,7 +334,9 @@ export async function getAssetsByOwner(ownerAddress: string): Promise<HeliusNftI
     if (!result || !Array.isArray(result.items)) return []
 
     const items: HeliusNftItem[] = result.items
-      .filter((item: any) => item?.interface === 'V1_NFT' || item?.id)
+      // Heres currently custodies mint/ATA-backed NFTs through SPL TransferChecked. Exclude cNFTs,
+      // programmable NFTs, and Core assets because each requires its own program-specific transfer.
+      .filter((item: any) => item?.interface === 'V1_NFT' && item?.compression?.compressed !== true)
       .map((item: any) => {
         const content = item?.content || {}
         const files = content?.files || []

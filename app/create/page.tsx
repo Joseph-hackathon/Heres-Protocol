@@ -197,13 +197,13 @@ export default function CreatePage() {
                   </button>
                   <button
                     type="button"
-                    disabled
-                    title="NFT capsules return in a later release (the lean program distributes fungible assets by proportional share)."
-                    className="inline-flex cursor-not-allowed items-center gap-3 rounded-xl border border-Heres-border bg-Heres-card/40 px-5 py-3 text-sm font-medium text-Heres-muted opacity-50"
+                    onClick={() => setCapsuleType('nft')}
+                    className={`inline-flex items-center gap-3 rounded-xl border px-5 py-3 text-sm font-medium transition-colors ${capsuleType === 'nft'
+                      ? 'border-Heres-accent bg-Heres-accent/10 text-Heres-accent'
+                      : 'border-Heres-border bg-Heres-card/80 text-Heres-white hover:border-Heres-accent/40 hover:bg-Heres-surface/80'}`}
                   >
                     <ImageIcon className="h-5 w-5 shrink-0" />
                     NFT
-                    <span className="rounded bg-Heres-surface/80 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
                   </button>
                 </div>
 
@@ -275,7 +275,7 @@ export default function CreatePage() {
                 {capsuleType === 'nft' && (
                   <div className="mt-5 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <p className="mb-4 text-sm text-Heres-muted">
-                      Choose which NFTs from your wallet to include in this capsule. When conditions are met, they will be transferred to the recipients you set below.
+                      Choose up to 8 standard Solana NFTs. Compressed, programmable, and Metaplex Core assets are not supported in this custody path.
                     </p>
                     {nftListLoading ? (
                       <p className="py-6 text-sm text-Heres-muted">Loading your NFTs...</p>
@@ -438,9 +438,21 @@ export default function CreatePage() {
                 {capsuleType === 'nft' && (
                   <div className="space-y-4 rounded-2xl border border-Heres-border bg-Heres-surface/25 p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-Heres-accent">NFT Recipients</p>
-                    {nftRecipients.map((r, i) => (
+                    {nftRecipients.map((r, i) => {
+                      const assignmentError = selectedNftMints
+                        .map((mint, assignmentIndex) =>
+                          (nftAssignments[mint] ?? 0) === i
+                            ? fieldErrors[`assignments.${assignmentIndex}.recipient`]
+                            : undefined
+                        )
+                        .find(Boolean)
+                      return (
                       <div key={i} className="mb-2 flex items-center gap-2">
-                        <Field label={`Recipient ${i + 1} address`} className="min-w-0 flex-1">
+                        <Field
+                          label={`Recipient ${i + 1} address`}
+                          error={assignmentError}
+                          className="min-w-0 flex-1"
+                        >
                           <Input
                             type="text"
                             value={r.address}
@@ -455,7 +467,8 @@ export default function CreatePage() {
                           </button>
                         )}
                       </div>
-                    ))}
+                      )
+                    })}
                     <button type="button" onClick={addNftRecipient} className="mt-2 flex items-center gap-1 text-sm text-Heres-accent hover:underline">
                       <Plus className="h-4 w-4" /> Add recipient
                     </button>

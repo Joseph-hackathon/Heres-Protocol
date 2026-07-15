@@ -17,7 +17,7 @@ pub struct IntentCapsule {
     pub executed_at: Option<i64>, // set when the switch fires; doubles as the grace-window anchor
     pub bump: u8,
     pub vault_bump: u8,
-    pub beneficiaries_bump: u8,      // bump of the paired BeneficiarySet PDA (TEE), to derive/sign for it
+    pub beneficiaries_bump: u8, // bump of the paired BeneficiarySet PDA (TEE), to derive/sign for it
     pub heartbeat_authority: Pubkey, // off-chain relayer allowed to bump last_activity (regular ER)
     pub version: u8,
     pub target_date: Option<i64>, // absolute unix ts; fires regardless of activity once reached (None = inactivity-only)

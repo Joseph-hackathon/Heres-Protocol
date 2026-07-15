@@ -23,6 +23,12 @@ export interface OnChainBeneficiary {
   reserved?: number[]
 }
 
+/** Private per-NFT inheritance route stored in the TEE-resident BeneficiarySet. */
+export interface OnChainNftAssignment {
+  mint: PublicKey
+  recipient: PublicKey
+}
+
 /**
  * The private beneficiary list (Workstream A: split out of the Switch into its own TEE-resident
  * account). Set/edited via update_intent routed to the TEE; revealed to base before distribution.
@@ -30,6 +36,7 @@ export interface OnChainBeneficiary {
 export interface BeneficiarySet {
   owner: PublicKey
   beneficiaries: OnChainBeneficiary[]
+  nftAssignments: OnChainNftAssignment[]
 }
 
 // Intent Capsule (lean program layout). The "Switch" carries dead-man's-switch LIVENESS only; the
@@ -51,6 +58,8 @@ export interface IntentCapsule {
   targetDate?: number | null
   /** Populated from a BeneficiarySet read (TEE w/ token, or base post-reveal); [] otherwise. */
   beneficiaries: OnChainBeneficiary[]
+  /** Populated from the same private BeneficiarySet read as `beneficiaries`. */
+  nftAssignments?: OnChainNftAssignment[]
   /** Runtime owner of the account (program vs delegation program) - tells delegated vs settled-on-base. */
   accountOwner?: PublicKey
 }

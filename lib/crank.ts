@@ -123,6 +123,7 @@ async function sendEr(
 }
 
 type LeanBeneficiary = { pubkey: PublicKey; shareBps: number }
+type LeanNftAssignment = { mint: PublicKey; recipient: PublicKey }
 type LeanCapsule = {
   owner: PublicKey
   inactivityPeriod: number
@@ -262,7 +263,8 @@ async function distributeAll(
   program: Program,
   keypair: Keypair,
   owner: PublicKey,
-  beneficiaries: LeanBeneficiary[]
+  beneficiaries: LeanBeneficiary[],
+  nftAssignments: LeanNftAssignment[]
 ): Promise<boolean> {
   if (beneficiaries.length === 0) throw new Error('capsule has no beneficiaries')
   const [capsulePDA] = getCapsulePDA(owner)
@@ -272,8 +274,41 @@ async function distributeAll(
 
   // 1. SPL legs first - scan BOTH token programs (classic SPL + Token-2022).
   const vaultTokens = await getVaultTokenAccounts(connection, vaultPDA)
-  for (const { ata: vaultAta, mint, amount, tokenProgram } of vaultTokens) {
+  for (const { ata: vaultAta, mint, amount, decimals, tokenProgram } of vaultTokens) {
     if (amount === 0n) continue
+
+    // The private assignment is the authoritative NFT classifier. Never route an assigned mint
+    // through proportional division, where rounding could send the indivisible unit to another heir.
+    const assignment = nftAssignments.find((item) => item.mint.equals(mint))
+    if (assignment) {
+      const supply = await connection.getTokenSupply(mint, 'confirmed')
+      if (decimals !== 0 || supply.value.amount !== '1' || supply.value.decimals !== 0) {
+        throw new Error(`Assigned NFT ${mint.toBase58()} is not a supply-1, decimals-0 mint`)
+      }
+      if (amount !== 1n) throw new Error(`NFT ${mint.toBase58()} vault balance is not exactly one`)
+
+      const recipientAta = ataFor(mint, assignment.recipient, tokenProgram)
+      const preIxs: TransactionInstruction[] = []
+      if (!(await connection.getAccountInfo(recipientAta))) {
+        preIxs.push(
+          buildCreateAtaIx(keypair.publicKey, recipientAta, assignment.recipient, mint, tokenProgram)
+        )
+      }
+      const ix = await program.methods
+        .distributeNft(assignment.recipient)
+        .accountsPartial({
+          capsule: capsulePDA,
+          beneficiarySet: benSetPDA,
+          vault: vaultPDA,
+          tokenProgram,
+          mint,
+          vaultTokenAccount: vaultAta,
+          recipientTokenAccount: recipientAta,
+        })
+        .instruction()
+      await sendRaw(connection, keypair, [...preIxs, ix])
+      continue
+    }
 
     const preIxs: TransactionInstruction[] = []
     const remaining = [] as { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[]
@@ -513,8 +548,15 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
         result.errors.push(`${ownerStr}: fired + grace elapsed but BeneficiarySet account missing`)
         continue
       }
-      const beneficiaries = decodeBeneficiarySet(info.benSet.data).beneficiaries
-      const drained = await distributeAll(connection, baseProgram, crankKeypair, owner, beneficiaries)
+      const inheritance = decodeBeneficiarySet(info.benSet.data)
+      const drained = await distributeAll(
+        connection,
+        baseProgram,
+        crankKeypair,
+        owner,
+        inheritance.beneficiaries,
+        inheritance.nftAssignments
+      )
       result.distributed += 1
       if (drained) await unregisterCapsuleOwner(ownerStr)
     } catch (e) {

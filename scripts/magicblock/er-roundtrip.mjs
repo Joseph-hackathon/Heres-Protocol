@@ -202,6 +202,7 @@ const relayerKp = loadKp(sk(process.env.RELAYER_KEY ?? 'heres-relayer.json'));
 const ownerKp = Keypair.generate();
 const ben1 = Keypair.generate();
 const ben2 = Keypair.generate();
+const nftMint = Keypair.generate().publicKey;
 
 const provider = new AnchorProvider(baseConn, new Wallet(ownerKp), { commitment: 'confirmed' });
 const program = new Program(idl, provider);
@@ -377,8 +378,13 @@ try {
     .updateIntent(beneficiaries)
     .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
     .instruction();
-  await sendER([setIx], [ownerKp], ownerKp, ownerTee);
+  const setNftIx = await program.methods
+    .updateNftAssignments([{ mint: nftMint, recipient: ben1.publicKey }])
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  await sendER([setIx, setNftIx], [ownerKp], ownerKp, ownerTee);
   console.log('6. set beneficiaries on TEE:', ben1.publicKey.toBase58().slice(0, 8), '60% /', ben2.publicKey.toBase58().slice(0, 8), '40%');
+  console.log('   set NFT assignment on TEE:', nftMint.toBase58().slice(0, 8), '->', ben1.publicKey.toBase58().slice(0, 8));
 
   // not visible on the base BeneficiarySet (delegated/empty there)
   const baseBen = await getAcct(baseConn, benSet);
@@ -389,6 +395,8 @@ try {
   const ownerRaw = await getAcct(ownerTee, benSet);
   const ownerSees = !!(ownerRaw && ownerRaw.data.includes(ben1.publicKey.toBuffer()));
   check('TEE: owner (AUTHORITY + read flags) CAN read beneficiaries', ownerSees);
+  const ownerSeesNft = !!(ownerRaw && ownerRaw.data.includes(nftMint.toBuffer()));
+  check('TEE: owner CAN read private NFT assignment', ownerSeesNft);
   const obsKp = Keypair.generate();
   const obsConn = await teeConnFor(obsKp);
   const obsRaw = await obsConn.getAccountInfo(benSet).catch(() => null);
@@ -533,6 +541,12 @@ try {
       && b[0].pubkey.equals(ben1.publicKey) && b[0].share_bps === 6000
       && b[1].pubkey.equals(ben2.publicKey) && b[1].share_bps === 4000;
     check('base: private beneficiaries round-tripped intact (now public)', benRoundTrip, `count=${b.length}`);
+    const nftAssignments = bs.nft_assignments;
+    const nftRoundTrip = nftAssignments.length === 1
+      && nftAssignments[0].mint.equals(nftMint)
+      && nftAssignments[0].recipient.equals(ben1.publicKey);
+    check('base: private NFT assignment round-tripped intact (now public)', nftRoundTrip,
+      `count=${nftAssignments.length}`);
     console.log('   distribute_assets is grace-gated (48h) -> covered by bankrun, not run here.');
   }
 } catch (e) {

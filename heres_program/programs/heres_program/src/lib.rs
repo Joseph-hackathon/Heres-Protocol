@@ -17,6 +17,7 @@ use instructions::delegate_beneficiaries::*;
 use instructions::delegate_capsule::*;
 use instructions::deposit::*;
 use instructions::distribute_assets::*;
+use instructions::distribute_nft::*;
 use instructions::execute_intent::*;
 use instructions::init_fee_config::*;
 use instructions::recover_vault::*;
@@ -25,8 +26,9 @@ use instructions::schedule_execute_intent::*;
 use instructions::update_activity::*;
 use instructions::update_fee_config::*;
 use instructions::update_intent::*;
+use instructions::update_nft_assignments::*;
 
-use state::Beneficiary;
+use state::{Beneficiary, NftAssignment};
 
 declare_id!("sDRdG2qt6MKDB5Byfx7oqQLnZTDa32k1qM3hDSBmQUz");
 
@@ -45,7 +47,10 @@ pub mod heres_program {
     }
 
     /// Update the platform creation fee (authority only).
-    pub fn update_fee_config(ctx: Context<UpdateFeeConfig>, creation_fee_lamports: u64) -> Result<()> {
+    pub fn update_fee_config(
+        ctx: Context<UpdateFeeConfig>,
+        creation_fee_lamports: u64,
+    ) -> Result<()> {
         instructions::update_fee_config::handler(ctx, creation_fee_lamports)
     }
 
@@ -56,12 +61,28 @@ pub mod heres_program {
         heartbeat_authority: Pubkey,
         target_date: Option<i64>,
     ) -> Result<()> {
-        instructions::create_capsule::handler(ctx, inactivity_period, heartbeat_authority, target_date)
+        instructions::create_capsule::handler(
+            ctx,
+            inactivity_period,
+            heartbeat_authority,
+            target_date,
+        )
     }
 
     /// Set or replace the private beneficiary list (owner only; route via the PER once delegated).
-    pub fn update_intent(ctx: Context<UpdateIntent>, beneficiaries: Vec<Beneficiary>) -> Result<()> {
+    pub fn update_intent(
+        ctx: Context<UpdateIntent>,
+        beneficiaries: Vec<Beneficiary>,
+    ) -> Result<()> {
         instructions::update_intent::handler(ctx, beneficiaries)
+    }
+
+    /// Set or replace private per-NFT recipients (owner only; route via the PER once delegated).
+    pub fn update_nft_assignments(
+        ctx: Context<UpdateNftAssignments>,
+        assignments: Vec<NftAssignment>,
+    ) -> Result<()> {
+        instructions::update_nft_assignments::handler(ctx, assignments)
     }
 
     /// Lock SOL or SPL into the Vault (repeatable; owner only).
@@ -98,6 +119,11 @@ pub mod heres_program {
         ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>,
     ) -> Result<()> {
         instructions::distribute_assets::handler(ctx)
+    }
+
+    /// Transfer one standard SPL NFT to its explicitly assigned recipient after the grace period.
+    pub fn distribute_nft(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
+        instructions::distribute_nft::handler(ctx, recipient)
     }
 
     /// Owner escape hatch: recover one Vault asset while active, without touching the Switch.

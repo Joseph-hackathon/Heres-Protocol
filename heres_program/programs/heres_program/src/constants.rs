@@ -28,6 +28,10 @@ pub const MAX_CREATION_FEE_LAMPORTS: u64 = 1_000_000_000;
 /// loop (8 fit comfortably in one distribute tx, even with init-if-needed beneficiary ATAs).
 pub const MAX_BENEFICIARIES: usize = 8;
 
+/// Maximum standard SPL NFTs assigned in one capsule. Each assignment adds one mint-to-recipient
+/// transfer to the settlement workload, so keep this bounded to a single-digit batch.
+pub const MAX_NFT_ASSIGNMENTS: usize = 8;
+
 /// Basis-points denominator. Beneficiary shares must sum to exactly this value (= 100%).
 pub const BPS_DENOMINATOR: u16 = 10_000;
 

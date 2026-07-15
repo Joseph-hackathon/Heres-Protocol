@@ -73,7 +73,10 @@ pub fn handler(
             .platform_fee_recipient
             .as_ref()
             .ok_or(ErrorCode::InvalidFeeConfig)?;
-        require!(platform_recipient.key() == fee_config.fee_recipient, ErrorCode::InvalidFeeConfig);
+        require!(
+            platform_recipient.key() == fee_config.fee_recipient,
+            ErrorCode::InvalidFeeConfig
+        );
 
         let cpi_accounts = system_program::Transfer {
             from: ctx.accounts.owner.to_account_info(),
@@ -115,10 +118,14 @@ pub fn handler(
     beneficiary_set.bump = ctx.bumps.beneficiary_set;
     beneficiary_set.version = BeneficiarySet::CURRENT_VERSION;
     beneficiary_set.beneficiaries = Vec::new();
+    beneficiary_set.nft_assignments = Vec::new();
     beneficiary_set.reserved = [0u8; 64];
 
     ctx.accounts.vault.version = CapsuleVault::CURRENT_VERSION;
 
-    msg!("Switch + BeneficiarySet + Vault created for owner: {:?}", capsule.owner);
+    msg!(
+        "Switch + BeneficiarySet + Vault created for owner: {:?}",
+        capsule.owner
+    );
     Ok(())
 }

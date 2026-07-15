@@ -48,7 +48,10 @@ pub fn handler(ctx: Context<DelegateCapsuleInput>) -> Result<()> {
         .unwrap_or(DEFAULT_ER_VALIDATOR);
     let owner_key = ctx.accounts.owner.key();
 
-    msg!("Delegating Switch to regular ER (validator {:?})", validator_key);
+    msg!(
+        "Delegating Switch to regular ER (validator {:?})",
+        validator_key
+    );
     ctx.accounts.delegate_pda(
         &ctx.accounts.payer,
         &[b"intent_capsule", owner_key.as_ref()],

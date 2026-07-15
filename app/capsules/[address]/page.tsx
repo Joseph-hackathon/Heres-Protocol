@@ -166,7 +166,7 @@ export default function CapsuleDetailPage() {
   } = useCapsuleDetail({ address })
 
   const intentParsed = meta as IntentParsed | null
-  const isNft = meta?.type === 'nft'
+  const isNft = meta?.type === 'nft' || (capsule?.nftAssignments?.length ?? 0) > 0
   const isToken = !isNft
   const assetConfig = inferAssetConfig(meta ?? undefined)
   const intentConfig = intentParsed?.cre ?? intentParsed?.premium
@@ -256,7 +256,12 @@ export default function CapsuleDetailPage() {
       if (!capsule.beneficiaries.length) throw new Error('Capsule has no beneficiaries set')
       // Beneficiaries + shares are read from the on-chain capsule; distribute splits every vault asset
       // by share_bps (SPL legs first, then the SOL leg).
-      const tx = await distributeAssets(wallet as any, capsule.owner, capsule.beneficiaries)
+      const tx = await distributeAssets(
+        wallet as any,
+        capsule.owner,
+        capsule.beneficiaries,
+        capsule.nftAssignments ?? []
+      )
       setActionResult({ type: 'success', message: `Distribute Assets TX: ${tx}` })
       toast({ message: 'Assets distributed to beneficiaries.', variant: 'success' })
       await invalidateDistribution()
@@ -518,7 +523,9 @@ export default function CapsuleDetailPage() {
   )
   // Owner may edit the private beneficiary list pre-fire, but only once it is visible (revealed or on
   // base). When still hidden behind the TEE, the Reveal action must run first.
-  const canEditBeneficiaries = Boolean(isOwner && capsule.isActive && capsule.beneficiaries.length > 0)
+  const canEditBeneficiaries = Boolean(
+    isToken && isOwner && capsule.isActive && capsule.beneficiaries.length > 0
+  )
 
   return (
     <div className="min-h-screen bg-hero text-Heres-white">
@@ -718,11 +725,13 @@ export default function CapsuleDetailPage() {
             </div>
           </ServiceSection>
 
-          <ServiceSection title="Beneficiaries & Intent" className="mb-6">
+          <ServiceSection title={isNft ? 'NFT Recipients & Intent' : 'Beneficiaries & Intent'} className="mb-6">
             <div className="mb-4 flex items-start justify-between gap-3">
               <p className="text-sm text-Heres-muted">
                 {intentParsed?.intent
-                  || 'The human intent statement is encrypted off-chain and delivered to the beneficiary via CRE. Only the on-chain beneficiary split is shown here.'}
+                  || (isNft
+                    ? 'The human intent statement is encrypted off-chain. Each revealed on-chain NFT assignment is shown below.'
+                    : 'The human intent statement is encrypted off-chain and delivered to the beneficiary via CRE. Only the on-chain beneficiary split is shown here.')}
               </p>
               {canEditBeneficiaries && (
                 <Button
@@ -737,7 +746,27 @@ export default function CapsuleDetailPage() {
                 </Button>
               )}
             </div>
-            {capsule.beneficiaries.length > 0 ? (
+            {isNft && (capsule.nftAssignments?.length ?? 0) > 0 ? (
+              <div className="space-y-2">
+                {capsule.nftAssignments?.map((assignment, i) => (
+                  <div
+                    key={`${assignment.mint.toBase58()}-${i}`}
+                    className="rounded-lg border border-Heres-border bg-Heres-card/80 px-3 py-3"
+                  >
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-Heres-muted">NFT mint</p>
+                        <AddressPill address={assignment.mint.toBase58()} explorer="address" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-Heres-muted">Recipient</p>
+                        <AddressPill address={assignment.recipient.toBase58()} explorer="address" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : !isNft && capsule.beneficiaries.length > 0 ? (
               <div className="space-y-2">
                 {capsule.beneficiaries.map((b, i) => (
                   <div
@@ -752,7 +781,13 @@ export default function CapsuleDetailPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-Heres-muted">No beneficiaries set on-chain yet.</p>
+              <p className="text-sm text-Heres-muted">
+                {privateStateHidden
+                  ? 'Private inheritance details remain hidden in the TEE.'
+                  : isNft
+                    ? 'No NFT assignments set on-chain yet.'
+                    : 'No beneficiaries set on-chain yet.'}
+              </p>
             )}
           </ServiceSection>
 

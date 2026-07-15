@@ -8,7 +8,9 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
-use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token_interface::{
+    self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::constants::{BPS_DENOMINATOR, GRACE_PERIOD};
 use crate::error::ErrorCode;
@@ -59,8 +61,14 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
     let executed_at = capsule.executed_at.ok_or(ErrorCode::CapsuleNotExecuted)?;
     let now = Clock::get()?.unix_timestamp;
     // Honor the post-fire grace window: the owner may still revive during it (update_activity).
-    require!(now >= executed_at + GRACE_PERIOD, ErrorCode::GracePeriodNotElapsed);
-    require!(!ctx.accounts.beneficiary_set.beneficiaries.is_empty(), ErrorCode::NoBeneficiaries);
+    require!(
+        now >= executed_at + GRACE_PERIOD,
+        ErrorCode::GracePeriodNotElapsed
+    );
+    require!(
+        !ctx.accounts.beneficiary_set.beneficiaries.is_empty(),
+        ErrorCode::NoBeneficiaries
+    );
 
     let owner_key = capsule.owner;
     let vault_bump = capsule.vault_bump;
@@ -71,11 +79,40 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
 
     if let Some(mint) = &ctx.accounts.mint {
         // ---- SPL asset ----
-        let token_program = ctx.accounts.token_program.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
-        let token_program_id = token_program.key();
-        let vault_ata = ctx.accounts.vault_token_account.as_ref().ok_or(ErrorCode::InvalidTokenAccount)?;
+        // An explicitly assigned mint that still has the NFT custody shape must never pass through
+        // proportional distribution. Without this guard, a permissionless caller could bypass its
+        // mint-to-recipient route and send the indivisible token to the last proportional
+        // beneficiary through rounding. If the mint no longer qualifies as an NFT, fall back to
+        // proportional settlement so malformed or mutated assignments cannot strand vault funds.
         require!(
-            vault_ata.key() == get_associated_token_address_with_program_id(&ctx.accounts.vault.key(), &mint.key(), &token_program_id),
+            !(mint.decimals == 0
+                && mint.supply == 1
+                && ctx
+                    .accounts
+                    .beneficiary_set
+                    .nft_assignments
+                    .iter()
+                    .any(|assignment| assignment.mint == mint.key())),
+            ErrorCode::NftRequiresAssignedDistribution
+        );
+        let token_program = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program_id = token_program.key();
+        let vault_ata = ctx
+            .accounts
+            .vault_token_account
+            .as_ref()
+            .ok_or(ErrorCode::InvalidTokenAccount)?;
+        require!(
+            vault_ata.key()
+                == get_associated_token_address_with_program_id(
+                    &ctx.accounts.vault.key(),
+                    &mint.key(),
+                    &token_program_id
+                ),
             ErrorCode::InvalidTokenAccount
         );
         let pool = vault_ata.amount;
@@ -91,7 +128,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             if to_send == 0 {
                 continue;
             }
-            let expected_ata = get_associated_token_address_with_program_id(&b.pubkey, &mint.key(), &token_program_id);
+            let expected_ata = get_associated_token_address_with_program_id(
+                &b.pubkey,
+                &mint.key(),
+                &token_program_id,
+            );
             let recipient_ata = ctx
                 .remaining_accounts
                 .iter()
@@ -105,7 +146,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
                 authority: ctx.accounts.vault.to_account_info(),
             };
             token_interface::transfer_checked(
-                CpiContext::new_with_signer(token_program.to_account_info(), cpi_accounts, signer_seeds),
+                CpiContext::new_with_signer(
+                    token_program.to_account_info(),
+                    cpi_accounts,
+                    signer_seeds,
+                ),
                 to_send,
                 mint.decimals,
             )?;
@@ -130,7 +175,12 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             mint: mint.key(),
             total: pool,
         });
-        msg!("Distributed {} of mint {:?} across {} beneficiaries", pool, mint.key(), beneficiaries.len());
+        msg!(
+            "Distributed {} of mint {:?} across {} beneficiaries",
+            pool,
+            mint.key(),
+            beneficiaries.len()
+        );
     } else {
         // ---- native SOL ----
         let vault_ai = ctx.accounts.vault.to_account_info();
@@ -165,7 +215,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             mint: Pubkey::default(),
             total: available,
         });
-        msg!("Distributed {} lamports across {} beneficiaries", available, beneficiaries.len());
+        msg!(
+            "Distributed {} lamports across {} beneficiaries",
+            available,
+            beneficiaries.len()
+        );
     }
 
     Ok(())
