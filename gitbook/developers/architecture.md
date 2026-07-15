@@ -41,12 +41,14 @@ The web app provides:
 The Anchor program manages:
 
 * Fee configuration.
-* Capsule creation.
-* Intent updates.
+* Inactive draft creation and repeatable vault deposits.
+* Private beneficiary and NFT updates before sealing.
+* TEE sealing and commitment-bound Switch arming.
 * Activity refresh.
 * Execution.
-* Distribution.
-* MagicBlock delegation helpers.
+* Multi-asset and NFT distribution.
+* Vault recovery, cancellation, and settled-account finalization.
+* Separate Switch and BeneficiarySet delegation helpers.
 
 Program ID in the checked-in Rust source:
 
@@ -80,6 +82,8 @@ CRE integration supports:
 The dashboard can use live RPC reads, Helius APIs, and optional prewarm or index jobs.
 
 ## High-Level Flow
+
+The current lifecycle creates a draft on Solana, delegates the Switch to a regular ER and the BeneficiarySet to the authenticated TEE, seals the private configuration, and arms the Switch with its commitment. After firing, both accounts settle to Solana, every asset distributes, enabled CRE delivery completes, and finalization closes the three core accounts. The older simplified flow below omits the seal, cross-ER reveal, and finalization boundaries.
 
 ```
 User Wallet

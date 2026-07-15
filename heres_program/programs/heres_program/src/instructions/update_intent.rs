@@ -11,6 +11,7 @@
 //! be revealed for distribution anyway, and only the owner can ever reach this.
 
 use anchor_lang::prelude::*;
+use std::collections::BTreeSet;
 
 use crate::constants::{BPS_DENOMINATOR, MAX_BENEFICIARIES};
 use crate::error::ErrorCode;
@@ -31,16 +32,33 @@ pub struct UpdateIntent<'info> {
 
 /// Replace the beneficiary list. Shares must sum to exactly 10000 bps (100%) and fit the cap.
 pub fn handler(ctx: Context<UpdateIntent>, beneficiaries: Vec<Beneficiary>) -> Result<()> {
+    require!(
+        !ctx.accounts.beneficiary_set.is_sealed(),
+        ErrorCode::InheritanceAlreadySealed
+    );
     require!(!beneficiaries.is_empty(), ErrorCode::NoBeneficiaries);
     require!(
         beneficiaries.len() <= MAX_BENEFICIARIES,
         ErrorCode::TooManyBeneficiaries
     );
 
+    let owner = ctx.accounts.owner.key();
+    let beneficiary_set_key = ctx.accounts.beneficiary_set.key();
+    let (capsule, _) =
+        Pubkey::find_program_address(&[b"intent_capsule", owner.as_ref()], &crate::ID);
+    let (vault, _) = Pubkey::find_program_address(&[b"capsule_vault", owner.as_ref()], &crate::ID);
+    let (fee_config, _) = Pubkey::find_program_address(&[b"fee_config"], &crate::ID);
+    let mut seen = BTreeSet::new();
     let mut sum: u32 = 0;
     for b in &beneficiaries {
         require!(
-            b.pubkey != Pubkey::default(),
+            b.pubkey != Pubkey::default()
+                && b.pubkey != capsule
+                && b.pubkey != vault
+                && b.pubkey != beneficiary_set_key
+                && b.pubkey != fee_config
+                && b.share_bps > 0
+                && seen.insert(b.pubkey),
             ErrorCode::InvalidBeneficiaryAddress
         );
         sum = sum

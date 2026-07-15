@@ -1,12 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Copy, LogOut } from 'lucide-react'
-import { usePrivy } from '@privy-io/react-auth'
+import { Check, ChevronDown, Copy, KeyRound, Loader2, LogOut, Send } from 'lucide-react'
+import { usePrivy, type WalletWithMetadata } from '@privy-io/react-auth'
+import { useExportWallet } from '@privy-io/react-auth/solana'
 import { useHeresWallet } from '@/hooks/useHeresWallet'
 import { useSolBalance } from '@/hooks/queries/useSolBalance'
 import { formatSol } from '@/lib/format'
-import { cn } from '@/components/ui'
+import { cn, useToast } from '@/components/ui'
+import { SendFundsDialog } from '@/components/SendFundsDialog'
 
 function truncate(address: string): string {
   return `${address.slice(0, 4)}...${address.slice(-4)}`
@@ -17,21 +19,34 @@ function truncate(address: string): string {
  *
  * Not authenticated -> opens Privy's email login modal.
  * Authenticated     -> shows the embedded wallet address; click opens a menu to
- *                      copy the full address or log out.
+ *                      copy the full address, send funds, securely export the
+ *                      embedded wallet private key through Privy, or log out.
  *
  * Accepts `className` so call sites can keep their existing layout overrides; it
  * is applied to the trigger button. `w-full` in the className makes the trigger
  * (and its wrapper) stretch so the mobile drawer button still fills its row.
  */
 export function PrivyLoginButton({ className = '' }: { className?: string }) {
-  const { ready, authenticated, login, logout } = usePrivy()
-  const { publicKey } = useHeresWallet()
+  const { ready, authenticated, user, login, logout } = usePrivy()
+  const { exportWallet } = useExportWallet()
+  const { toast } = useToast()
+  const wallet = useHeresWallet()
+  const { publicKey } = wallet
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [sendOpen, setSendOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const address = publicKey?.toBase58() ?? ''
+  const embeddedWallet = user?.linkedAccounts.find(
+    (account): account is WalletWithMetadata =>
+      account.type === 'wallet' &&
+      account.walletClientType === 'privy' &&
+      account.chainType === 'solana' &&
+      account.address === address
+  )
   const fullWidth = /\bw-full\b/.test(className)
   const { lamports, isLoading: balanceLoading, refetch: refetchBalance } = useSolBalance(publicKey)
 
@@ -72,6 +87,24 @@ export function PrivyLoginButton({ className = '' }: { className?: string }) {
       copyTimer.current = setTimeout(() => setCopied(false), 1400)
     })
   }, [address])
+
+  const handleExportWallet = useCallback(async () => {
+    if (!embeddedWallet) {
+      toast({ message: 'Only your Privy embedded wallet can be exported.', variant: 'error' })
+      return
+    }
+
+    setOpen(false)
+    setExporting(true)
+    try {
+      // Privy reveals the key in its isolated export modal. Heres never receives it.
+      await exportWallet({ address: embeddedWallet.address })
+    } catch {
+      toast({ message: 'Wallet export could not be opened. Please try again.', variant: 'error' })
+    } finally {
+      setExporting(false)
+    }
+  }, [embeddedWallet, exportWallet, toast])
 
   const base =
     'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
@@ -156,6 +189,48 @@ export function PrivyLoginButton({ className = '' }: { className?: string }) {
               </span>
             </button>
 
+            {publicKey && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false)
+                  setSendOpen(true)
+                }}
+                className="group flex w-full items-center gap-2.5 border-t border-Heres-border px-4 py-3 text-left text-sm font-medium text-Heres-white transition-colors hover:bg-Heres-accent/10 hover:text-Heres-accent"
+              >
+                <Send className="h-4 w-4 text-Heres-muted transition-colors group-hover:text-Heres-accent" aria-hidden />
+                <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  <span>Send funds</span>
+                  <span className="text-[10px] font-normal uppercase tracking-wider text-Heres-muted">
+                    SOL + tokens
+                  </span>
+                </span>
+              </button>
+            )}
+
+            {embeddedWallet && (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={exporting}
+                onClick={handleExportWallet}
+                className="group flex w-full items-center gap-2.5 border-t border-Heres-border px-4 py-3 text-left text-sm font-medium text-Heres-white transition-colors hover:bg-Heres-accent/10 hover:text-Heres-accent disabled:cursor-wait disabled:opacity-60"
+              >
+                {exporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-Heres-accent" aria-hidden />
+                ) : (
+                  <KeyRound className="h-4 w-4 text-Heres-muted transition-colors group-hover:text-Heres-accent" aria-hidden />
+                )}
+                <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  <span>{exporting ? 'Opening export...' : 'Export wallet'}</span>
+                  <span className="text-[10px] font-normal uppercase tracking-wider text-Heres-muted">
+                    Private key
+                  </span>
+                </span>
+              </button>
+            )}
+
             <button
               type="button"
               role="menuitem"
@@ -170,6 +245,10 @@ export function PrivyLoginButton({ className = '' }: { className?: string }) {
             </button>
           </div>
         </div>
+      )}
+
+      {sendOpen && (
+        <SendFundsDialog open wallet={wallet} onClose={() => setSendOpen(false)} />
       )}
     </div>
   )

@@ -7,18 +7,20 @@ so delegation, the autonomous ScheduleTask crank, and undelegation are devnet-on
 
 ## er-roundtrip.mjs (current, canonical)
 
-Full Model-A Switch+Vault round-trip on a live ER:
+Full two-ER lifecycle across Solana devnet, a regular ER, and the authenticated TEE:
 
 ```
-create_capsule (base)        Switch + Vault, NO beneficiaries on base (privacy D8)
-deposit SOL    (base)        fund the Vault (the Vault is NEVER delegated)
-delegate_capsule (base)      delegate ONLY the Switch to the validator/ER
-update_activity  (ER)        relayer heartbeat bumps last_activity on the ER copy
-update_intent    (ER)        set the PRIVATE beneficiary list on the ER copy
-schedule_execute_intent (ER) register the autonomous ScheduleTask crank
-<wait>                       MagicBlock runs execute_intent itself (no off-chain crank)
-crank_undelegate (ER)        commit + undelegate the Switch back to base
-verify (base)                is_active=false, executed_at set, beneficiaries survived intact
+create_capsule (base)                  Switch + BeneficiarySet + Vault
+deposit SOL (base)                     fund the Vault, which is never delegated
+delegate_capsule (base)                delegate the Switch to a regular ER
+delegate_beneficiaries (base)          delegate the private set to the TEE
+update_intent + seal (TEE)             write and seal private settlement state
+update_activity + schedule (regular ER) prove token-free heartbeat and autonomous fire
+crank_undelegate (regular ER)          commit the fired Switch back to base
+crank_undelegate_beneficiaries (TEE)   reveal only after the TEE reads the fired base Switch
+distribute_assets (base)               pay the live SOL leg at the committed 60/40 split
+finalize_capsule (base)                close all three core PDAs to the fee recipient
+verify                                  prove privacy, payout, rent recovery, and account deletion
 ```
 
 Run:
@@ -27,23 +29,20 @@ Run:
 node scripts/magicblock/er-roundtrip.mjs
 ```
 
-Env knobs (all optional): `ER_RPC` (default `devnet-as.magicblock.app`), `VALIDATOR`
-(default Asia `MAS1Dt9...`), `BASE_RPC` (defaults to the keyed Helius URL in the solana CLI
-config, falling back to public devnet), `INACTIVITY`, `SCHEDULE_INTERVAL_MS`, `SCHEDULE_ITERS`,
-`FUND_SOL`, `DEPOSIT_SOL`, `FIRE_WATCH_S`.
+Env knobs (all optional): `SWITCH_ER_RPC` (default `devnet-as.magicblock.app`), `TEE_RPC`
+(default `devnet-tee.magicblock.app`), `SWITCH_VALIDATOR`, `TEE_VALIDATOR`, `BASE_RPC`
+(defaults to the keyed devnet URL in the Solana CLI config), `INACTIVITY`,
+`SCHEDULE_INTERVAL_MS`, `SCHEDULE_ITERS`, `FUND_SOL`, `DEPOSIT_SOL`, and `FIRE_WATCH_S`.
 
 Notes:
 
-- Uses a throwaway generated owner funded from `~/.config/solana/id.json`. The roundtrip does not
-  settle its deposited SOL, so each run leaves ~`FUND_SOL` devnet SOL in that owner/vault.
+- Uses a throwaway generated owner funded from `~/.config/solana/id.json`. The live SOL deposit is
+  paid to generated beneficiaries and the capsule accounts are finalized before the run exits.
 - `heartbeat_authority` = `heres-relayer`; `crank_undelegate` payer = `heres-crank`.
-- `distribute_assets` is not run here. The bankrun suite covers immediate settlement, while
-  `nft-inheritance-check.mjs` covers the same path on devnet. This script validates the ER mechanics
-  + the Tier-1 privacy property (beneficiaries set on
-  the ER are invisible on base while delegated, then revealed on undelegate).
-- Last green run: 10/10 checks, autonomous fire ~3s after scheduling. The Asia ER is a regular
-  (non-TEE) ER; a PER/TEE pass (which would also test the permission-ACL read/write model,
-  redesign Open Q7) is a separate follow-on.
+- The generated NFT assignment proves private TEE storage and round-trip integrity; live NFT token
+  transfer remains covered by `nft-inheritance-check.mjs`.
+- Last green run: 25/25 checks on 2026-07-15, including TDX attestation, TEE ACL filtering,
+  autonomous fire, cross-ER reveal, exact SOL payout, finalization, and account deletion.
 
 ## measure-scheduletask-cost.mjs (historical)
 

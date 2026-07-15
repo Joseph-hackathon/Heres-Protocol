@@ -7,6 +7,7 @@
 //! SPL distribution finds the vault ATA already closed (fails -> natural no-op).
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -59,6 +60,17 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    if capsule.requires_config_commitment() {
+        require!(
+            ctx.accounts.beneficiary_set.requires_seal()
+                && ctx.accounts.beneficiary_set.is_sealed(),
+            ErrorCode::InheritanceNotSealed
+        );
+        require!(
+            capsule.config_commitment() == ctx.accounts.beneficiary_set.config_commitment(),
+            ErrorCode::InvalidConfigurationCommitment
+        );
+    }
     require!(
         !ctx.accounts.beneficiary_set.beneficiaries.is_empty(),
         ErrorCode::NoBeneficiaries
@@ -73,20 +85,16 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
 
     if let Some(mint) = &ctx.accounts.mint {
         // ---- SPL asset ----
-        // An explicitly assigned mint that still has the NFT custody shape must never pass through
-        // proportional distribution. Without this guard, a permissionless caller could bypass its
-        // mint-to-recipient route and send the indivisible token to the last proportional
-        // beneficiary through rounding. If the mint no longer qualifies as an NFT, fall back to
-        // proportional settlement so malformed or mutated assignments cannot strand vault funds.
+        // An explicitly assigned mint must never pass through proportional distribution. This is
+        // based on the immutable inheritance route, not mutable mint supply: otherwise a mint
+        // authority could increase an assigned NFT's supply after setup and redirect the vault's
+        // token to the last proportional beneficiary through rounding.
         require!(
-            !(mint.decimals == 0
-                && mint.supply == 1
-                && ctx
-                    .accounts
-                    .beneficiary_set
-                    .nft_assignments
-                    .iter()
-                    .any(|assignment| assignment.mint == mint.key())),
+            !ctx.accounts
+                .beneficiary_set
+                .nft_assignments
+                .iter()
+                .any(|assignment| assignment.mint == mint.key()),
             ErrorCode::NftRequiresAssignedDistribution
         );
         let token_program = ctx
@@ -111,6 +119,11 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
         );
         let pool = vault_ata.amount;
         require!(pool > 0, ErrorCode::NothingToDistribute);
+        let registered = vault_ata.close_authority == COption::Some(ctx.accounts.vault.key());
+        require!(
+            registered || vault_ata.close_authority == COption::None,
+            ErrorCode::InvalidAssetManifest
+        );
 
         let mut distributed: u64 = 0;
         for (idx, b) in beneficiaries.iter().enumerate() {
@@ -162,6 +175,12 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             close_accounts,
             signer_seeds,
         ))?;
+        // Only program-deposited ATAs carry the vault close-authority marker and consume a manifest
+        // leg. A directly transferred spam mint is still distributed and closed, but cannot reduce
+        // the count belonging to a different registered mint.
+        if registered {
+            ctx.accounts.vault.unregister_token_asset();
+        }
 
         emit!(AssetsDistributed {
             capsule: capsule.key(),
@@ -202,6 +221,7 @@ pub fn handler<'info>(ctx: Context<'_, '_, '_, 'info, DistributeAssets<'info>>) 
             **recipient.to_account_info().try_borrow_mut_lamports()? += to_send;
             distributed = distributed.saturating_add(to_send);
         }
+        ctx.accounts.vault.unregister_native_asset();
 
         emit!(AssetsDistributed {
             capsule: capsule.key(),

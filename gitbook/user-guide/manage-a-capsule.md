@@ -9,7 +9,7 @@ The capsule detail page is the control center for a created capsule.
 | Active | The capsule is live and has not reached execution state. |
 | Expired | The inactivity deadline has passed and the capsule is eligible for execution. |
 | Executed | The execution instruction has marked the capsule as executed. |
-| Inactive | The capsule is no longer active but may not have completed the full distribution lifecycle. |
+| Draft | Setup created the capsule accounts but did not complete commitment-bound arming. |
 
 ## View Capsule Details
 
@@ -31,6 +31,10 @@ The detail page may show:
 Refreshing activity restarts the inactivity countdown. This is the main way for an owner to show that the capsule should remain active.
 
 Only refresh activity when you want to delay execution.
+
+## Sealed Settlement Rules
+
+New capsules seal beneficiary shares and NFT assignments in the TEE before activation. The detail page marks these capsules as **Settlement sealed**. The on-chain program rejects later edits, so verify every recipient and share during creation.
 
 ## Add or Withdraw Funds
 
@@ -55,6 +59,12 @@ Multi-asset distribution runs as one confirmed transaction per asset, with SPL a
 
 In the current protocol design, execution and distribution are separate operations. This lets private execution and base-layer settlement coordinate safely.
 
+## Finalize a Settled Capsule
+
+After every vault asset is distributed and any enabled Intent Statement is delivered, select **Finalize Capsule**. Finalization permanently closes the Switch, BeneficiarySet, and Vault accounts. Their reclaimed rent is sent only to the protocol recipient pinned in the on-chain fee configuration.
+
+Finalization is available to the owner or configured heartbeat authority, but only for an executed capsule with an empty tracked vault. After the accounts close, the same wallet can create a fresh capsule at the same program-derived addresses.
+
 ## Undelegate Capsule
 
 If a capsule was delegated to MagicBlock ER/PER, undelegation commits state back to the base layer. Some flows require undelegation after execution before distribution.
@@ -63,7 +73,7 @@ Base-layer actions stay disabled until both the capsule switch and private benef
 
 ## Cancel a Capsule
 
-An owner can cancel an active capsule after both lifecycle accounts are undelegated. Cancellation recovers every canonical vault token account, returns SOL and account rent to the owner, and then closes the capsule accounts. If an earlier recovery confirms and a later transaction fails, refresh and retry cancellation to process the remaining accounts.
+An owner can cancel an active capsule or incomplete draft after both lifecycle accounts are undelegated. Cancellation recovers every registered canonical vault token account, returns SOL and account rent to the owner, and then closes the capsule accounts. If an earlier recovery confirms and a later transaction fails, refresh and retry cancellation to process the remaining accounts.
 
 ## CRE Delivery Status
 

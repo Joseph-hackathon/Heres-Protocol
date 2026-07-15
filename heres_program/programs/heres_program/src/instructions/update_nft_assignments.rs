@@ -25,16 +25,31 @@ pub struct UpdateNftAssignments<'info> {
 }
 
 pub fn handler(ctx: Context<UpdateNftAssignments>, assignments: Vec<NftAssignment>) -> Result<()> {
+    require!(
+        !ctx.accounts.beneficiary_set.is_sealed(),
+        ErrorCode::InheritanceAlreadySealed
+    );
     require!(!assignments.is_empty(), ErrorCode::InvalidNftAssignment);
     require!(
         assignments.len() <= MAX_NFT_ASSIGNMENTS,
         ErrorCode::TooManyNftAssignments
     );
 
+    let owner = ctx.accounts.owner.key();
+    let beneficiary_set_key = ctx.accounts.beneficiary_set.key();
+    let (capsule, _) =
+        Pubkey::find_program_address(&[b"intent_capsule", owner.as_ref()], &crate::ID);
+    let (vault, _) = Pubkey::find_program_address(&[b"capsule_vault", owner.as_ref()], &crate::ID);
+    let (fee_config, _) = Pubkey::find_program_address(&[b"fee_config"], &crate::ID);
     let mut seen = BTreeSet::new();
     for assignment in &assignments {
         require!(
-            assignment.mint != Pubkey::default() && assignment.recipient != Pubkey::default(),
+            assignment.mint != Pubkey::default()
+                && assignment.recipient != Pubkey::default()
+                && assignment.recipient != capsule
+                && assignment.recipient != vault
+                && assignment.recipient != beneficiary_set_key
+                && assignment.recipient != fee_config,
             ErrorCode::InvalidNftAssignment
         );
         require!(

@@ -50,4 +50,18 @@ pub enum ErrorCode {
     InvalidNftMint,
     #[msg("NFT has an explicit recipient and must use the NFT distribution instruction")]
     NftRequiresAssignedDistribution,
+    #[msg("Token-2022 mint uses an extension that Heres cannot settle safely")]
+    UnsupportedTokenExtension,
+    #[msg("Inheritance configuration is already sealed")]
+    InheritanceAlreadySealed,
+    #[msg("Inheritance configuration must be sealed before activation")]
+    InheritanceNotSealed,
+    #[msg("Inheritance configuration does not match the sealed commitment")]
+    InvalidConfigurationCommitment,
+    #[msg("Capsule is not an unarmed draft")]
+    CapsuleNotDraft,
+    #[msg("Vault still contains funded assets")]
+    VaultNotEmpty,
+    #[msg("Vault asset manifest is full or inconsistent")]
+    InvalidAssetManifest,
 }

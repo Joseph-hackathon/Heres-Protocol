@@ -34,6 +34,6 @@ Enter the Solana wallet addresses of the beneficiaries and their percentage weig
 {% step %}
 ### **Sign & Activate**
 
-Review all your configurations, sign the transaction to finalize it on the blockchain, and activate the Capsule. The monitoring engine will launch immediately upon activation.
+Review every asset, beneficiary, NFT assignment, and distribution weight before signing. Creation first builds an inactive draft, then writes and seals the private settlement configuration in the TEE. The final activation step arms the liveness Switch with the matching commitment and schedules monitoring. Settlement rules cannot be edited after sealing.
 {% endstep %}
 {% endstepper %}

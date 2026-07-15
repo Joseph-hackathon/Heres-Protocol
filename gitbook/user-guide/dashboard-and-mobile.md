@@ -21,6 +21,17 @@ The dashboard reads data from Solana RPC, Helius APIs, and optional local or dat
 
 The **My Capsule** page checks the connected wallet and redirects to the wallet owner's capsule when one exists. If no capsule exists, it guides the user to create one.
 
+## Embedded Wallet Controls
+
+Open the connected Privy wallet menu to:
+
+- Copy the Solana address.
+- Review and send SOL, classic SPL tokens, or compatible Token-2022 tokens.
+- See the network fee and any recipient token-account rent before signing.
+- Export the Privy embedded wallet private key through Privy's isolated export flow.
+
+The send flow validates the recipient, amount precision, current source account, balance, and transaction simulation before requesting a signature. Token transfers create the recipient's canonical associated token account when needed. Wallet export appears only for the connected Privy embedded wallet; Heres does not receive the exported key.
+
 ## Mobile App
 
 The Android module is a native MVP for monitoring and mobile-first capsule actions.
@@ -46,4 +57,3 @@ Current scope:
 The mobile API includes an activity score based on recent wallet activity. The score can recommend whether a user should extend or continue monitoring.
 
 This score is an application-level helper. The on-chain capsule state remains the source of truth for execution eligibility.
-

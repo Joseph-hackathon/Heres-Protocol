@@ -5,10 +5,54 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::token_2022::spl_token_2022::{
+    self,
+    extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions},
+    state::Mint as Token2022Mint,
+};
+use anchor_lang::solana_program::program_option::COption;
+use anchor_spl::token_2022::spl_token_2022::instruction::AuthorityType;
+use anchor_spl::token_interface::{
+    self, Mint, SetAuthority, TokenAccount, TokenInterface, TransferChecked,
+};
 
 use crate::error::ErrorCode;
 use crate::state::{CapsuleVault, IntentCapsule};
+
+/// Extensions that change transfer authorization, balances, fees, or required CPI accounts are not
+/// supported. Metadata and display-only extensions do not affect raw token settlement.
+fn is_supported_mint_extension(extension: &ExtensionType) -> bool {
+    matches!(
+        extension,
+        ExtensionType::MintCloseAuthority
+            | ExtensionType::InterestBearingConfig
+            | ExtensionType::MetadataPointer
+            | ExtensionType::TokenMetadata
+            | ExtensionType::GroupPointer
+            | ExtensionType::TokenGroup
+            | ExtensionType::GroupMemberPointer
+            | ExtensionType::TokenGroupMember
+            | ExtensionType::ScaledUiAmount
+    )
+}
+
+fn validate_mint_extensions(mint: &AccountInfo<'_>, token_program: &Pubkey) -> Result<()> {
+    if token_program != &spl_token_2022::ID {
+        return Ok(());
+    }
+
+    let data = mint.try_borrow_data()?;
+    let state = StateWithExtensions::<Token2022Mint>::unpack(&data)
+        .map_err(|_| error!(ErrorCode::InvalidTokenAccount))?;
+    let extensions = state
+        .get_extension_types()
+        .map_err(|_| error!(ErrorCode::InvalidTokenAccount))?;
+    require!(
+        extensions.iter().all(is_supported_mint_extension),
+        ErrorCode::UnsupportedTokenExtension
+    );
+    Ok(())
+}
 
 #[derive(Accounts)]
 pub struct Deposit<'info> {
@@ -50,7 +94,7 @@ pub struct Deposit<'info> {
     pub vault_token_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
 }
 
-/// Lock `amount` of an asset into the Vault. Owner only; capsule must be active.
+/// Lock `amount` of an asset into the Vault. Owner only; capsule must not have fired.
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
 
@@ -62,7 +106,7 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     if cap_ai.owner == &crate::ID {
         let data = cap_ai.try_borrow_data()?;
         let cap = IntentCapsule::try_deserialize(&mut &data[..])?;
-        require!(cap.is_active, ErrorCode::CapsuleInactive);
+        require!(cap.executed_at.is_none(), ErrorCode::CapsuleInactive);
     }
 
     if let Some(mint) = &ctx.accounts.mint {
@@ -81,7 +125,26 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
             .token_program
             .as_ref()
             .ok_or(ErrorCode::InvalidTokenAccount)?;
+        let token_program_id = token_program.key();
+        require!(
+            mint.to_account_info().owner == &token_program_id,
+            ErrorCode::InvalidTokenAccount
+        );
+        validate_mint_extensions(&mint.to_account_info(), &token_program_id)?;
         require!(to_ata.mint == mint.key(), ErrorCode::InvalidTokenAccount);
+        let vault_key = ctx.accounts.vault.key();
+        let registered = to_ata.close_authority == COption::Some(vault_key);
+        require!(
+            registered || to_ata.close_authority == COption::None,
+            ErrorCode::InvalidAssetManifest
+        );
+        let register_token = ctx.accounts.vault.uses_registered_token_markers() && !registered;
+        if register_token {
+            require!(
+                ctx.accounts.vault.register_token_asset(),
+                ErrorCode::InvalidAssetManifest
+            );
+        }
 
         // transfer_checked (mint + decimals) is required by Token-2022 and supported by classic SPL.
         let cpi_accounts = TransferChecked {
@@ -95,8 +158,30 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
             amount,
             mint.decimals,
         )?;
+        if register_token {
+            let owner_key = ctx.accounts.owner.key();
+            let vault_bump = ctx.bumps.vault;
+            let vault_seeds: &[&[u8]] = &[b"capsule_vault", owner_key.as_ref(), &[vault_bump]];
+            token_interface::set_authority(
+                CpiContext::new_with_signer(
+                    token_program.to_account_info(),
+                    SetAuthority {
+                        current_authority: ctx.accounts.vault.to_account_info(),
+                        account_or_mint: to_ata.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                AuthorityType::CloseAccount,
+                Some(vault_key),
+            )?;
+        }
         msg!("Deposited {} of mint {:?} into vault", amount, mint.key());
     } else {
+        let vault_ai = ctx.accounts.vault.to_account_info();
+        let rent_floor = Rent::get()?.minimum_balance(vault_ai.data_len());
+        if vault_ai.lamports() <= rent_floor {
+            ctx.accounts.vault.register_native_asset();
+        }
         let cpi_accounts = system_program::Transfer {
             from: ctx.accounts.owner.to_account_info(),
             to: ctx.accounts.vault.to_account_info(),
@@ -108,4 +193,28 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         msg!("Deposited {} lamports into vault", amount);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_extensions_that_change_settlement_behavior() {
+        assert!(!is_supported_mint_extension(
+            &ExtensionType::TransferFeeConfig
+        ));
+        assert!(!is_supported_mint_extension(&ExtensionType::TransferHook));
+        assert!(!is_supported_mint_extension(
+            &ExtensionType::PermanentDelegate
+        ));
+        assert!(!is_supported_mint_extension(&ExtensionType::Pausable));
+    }
+
+    #[test]
+    fn accepts_metadata_only_extensions() {
+        assert!(is_supported_mint_extension(&ExtensionType::MetadataPointer));
+        assert!(is_supported_mint_extension(&ExtensionType::TokenMetadata));
+        assert!(is_supported_mint_extension(&ExtensionType::GroupPointer));
+    }
 }

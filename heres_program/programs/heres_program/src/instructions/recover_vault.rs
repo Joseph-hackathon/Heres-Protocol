@@ -6,6 +6,7 @@
 //! frozen. Owner-only, pre-fire. Call once per asset (None mint = native SOL).
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -57,7 +58,7 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
     if cap_ai.owner == &crate::ID {
         let data = cap_ai.try_borrow_data()?;
         let cap = IntentCapsule::try_deserialize(&mut &data[..])?;
-        require!(cap.is_active, ErrorCode::CapsuleInactive);
+        require!(cap.executed_at.is_none(), ErrorCode::CapsuleInactive);
     }
 
     let owner_key = ctx.accounts.owner.key();
@@ -130,6 +131,9 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
             close_accounts,
             signer_seeds,
         ))?;
+        if vault_ata.close_authority == COption::Some(ctx.accounts.vault.key()) {
+            ctx.accounts.vault.unregister_token_asset();
+        }
         msg!(
             "Recovered {} SPL tokens of mint {:?} to owner",
             amount,
@@ -146,6 +150,7 @@ pub fn handler(ctx: Context<RecoverVault>) -> Result<()> {
             .owner
             .to_account_info()
             .try_borrow_mut_lamports()? += available;
+        ctx.accounts.vault.unregister_native_asset();
         msg!("Recovered {} lamports to owner", available);
     }
     Ok(())

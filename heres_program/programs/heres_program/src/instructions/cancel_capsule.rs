@@ -10,6 +10,7 @@
 //! crank_undelegate_beneficiaries, owner-gated) before cancelling.
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -63,8 +64,12 @@ pub struct CancelCapsule<'info> {
 
 /// Cancel an active (not-yet-fired) capsule: refund assets to the owner and close the accounts.
 pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
-    // Only a living owner can reclaim, and only before the switch fires.
-    require!(ctx.accounts.capsule.is_active, ErrorCode::CapsuleInactive);
+    // Only a living owner can reclaim, and only before the switch fires. Drafts are cancellable so
+    // an interrupted create flow cannot strand the owner's assets or per-owner PDAs.
+    require!(
+        ctx.accounts.capsule.executed_at.is_none(),
+        ErrorCode::CapsuleInactive
+    );
 
     if let Some(mint) = &ctx.accounts.mint {
         let vault_ata = ctx
@@ -135,7 +140,20 @@ pub fn handler(ctx: Context<CancelCapsule>) -> Result<()> {
             close_accounts,
             signer_seeds,
         ))?;
+        if vault_ata.close_authority == COption::Some(ctx.accounts.vault.key()) {
+            ctx.accounts.vault.unregister_token_asset();
+        }
         msg!("Refunded {} SPL tokens to owner on cancel", amount);
+    }
+
+    // close = owner sweeps native SOL and reclaimed token-account rent. Only a real SOL deposit is
+    // represented by the native manifest flag; clearing an absent flag is intentionally a no-op.
+    ctx.accounts.vault.unregister_native_asset();
+    if ctx.accounts.vault.tracks_assets() {
+        require!(
+            ctx.accounts.vault.asset_count() == 0,
+            ErrorCode::VaultNotEmpty
+        );
     }
 
     // `close = owner` on capsule + vault refunds their rent and, for SOL, the locked lamports.

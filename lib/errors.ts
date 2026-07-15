@@ -24,10 +24,23 @@ function rawMessage(err: unknown): string {
   return String(err)
 }
 
+function diagnosticMessage(err: unknown): string {
+  const raw = rawMessage(err)
+  if (typeof err !== 'object' || err == null) return raw
+  const logs = (err as { logs?: unknown }).logs
+  if (!Array.isArray(logs)) return raw
+  return [raw, ...logs.filter((line): line is string => typeof line === 'string')].join('\n')
+}
+
 /** Returns a friendly, user-facing message for a transaction/RPC failure. */
 export function normalizeTxError(err: unknown): string {
   const raw = rawMessage(err)
-  const lower = raw.toLowerCase()
+  const diagnostic = diagnosticMessage(err)
+  const lower = diagnostic.toLowerCase()
+
+  if (lower.includes('accountnotsigner') || lower.includes('account did not sign')) {
+    return 'The transaction could not verify a required signer. Reconnect your wallet and try again.'
+  }
 
   if (
     lower.includes('accountownedbywrongprogram') ||

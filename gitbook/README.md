@@ -20,8 +20,7 @@ Every step is executed deterministically by 100% on-chain smart contracts withou
 
 The fastest way to secure your legacy with Heres.
 
-* [**How Heres Protocol Works**](welcome/how-heres-protocol-works.md#the-assurance-pipeline): Understand the protocol mechanism.
-* [**Setup Your Account**](getting-started/wallets-and-networks.md#supported-wallets): Connect your wallet and start your subscription.
+* [**How Heres Protocol Works**](welcome/how-heres-protocol-works.md): Understand the protocol mechanism.
+* [**Review Capsule Parameters**](getting-started/wallets-and-networks.md): Understand beneficiaries, distribution weights, and the Silence Limit.
 * [**Create Your First Capsule**](user-guide/create-a-capsule.md#step-1-connect-wallet): Create your first Intent Capsule.
 * [**Monitor Status**](user-guide/dashboard-and-mobile.md#dashboard): Check your capsule status on the dashboard.
-

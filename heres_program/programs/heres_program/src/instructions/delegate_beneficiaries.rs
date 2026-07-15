@@ -15,11 +15,14 @@ use ephemeral_rollups_sdk::access_control::instructions::{
     CreatePermissionCpiBuilder, DelegatePermissionCpiBuilder,
 };
 use ephemeral_rollups_sdk::access_control::structs::{
-    Member, MembersArgs, ACCOUNT_SIGNATURES_FLAG, AUTHORITY_FLAG, TX_BALANCES_FLAG, TX_LOGS_FLAG,
-    TX_MESSAGE_FLAG,
+    Member, MembersArgs, ACCOUNT_SIGNATURES_FLAG, AUTHORITY_FLAG, PERMISSION_SEED,
+    TX_BALANCES_FLAG, TX_LOGS_FLAG, TX_MESSAGE_FLAG,
 };
-use ephemeral_rollups_sdk::anchor::delegate;
+use ephemeral_rollups_sdk::anchor::{delegate, DelegationProgram};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
+use ephemeral_rollups_sdk::pda::{
+    DELEGATE_BUFFER_TAG, DELEGATION_METADATA_TAG, DELEGATION_RECORD_TAG,
+};
 
 use crate::constants::{PERMISSION_PROGRAM_ID, TEE_VALIDATOR};
 
@@ -38,10 +41,10 @@ pub struct DelegateBeneficiariesInput<'info> {
     /// CHECK: the BeneficiarySet PDA to delegate; seeds [b"beneficiary_set", owner].
     #[account(mut, del, seeds = [b"beneficiary_set", owner.key().as_ref()], bump)]
     pub pda: AccountInfo<'info>,
-    /// CHECK: Magic program.
+    /// CHECK: retained for the stable client ABI. Base-layer delegation does not invoke the Magic
+    /// Program, which is only executable inside an ER, so it must not be executable-checked here.
     pub magic_program: AccountInfo<'info>,
-    /// CHECK: Delegation program.
-    pub delegation_program: AccountInfo<'info>,
+    pub delegation_program: Program<'info, DelegationProgram>,
     pub system_program: Program<'info, System>,
 
     // ---- PER permission lifecycle (access control inside the TEE) ----
@@ -49,16 +52,39 @@ pub struct DelegateBeneficiariesInput<'info> {
     #[account(address = PERMISSION_PROGRAM_ID)]
     pub permission_program: AccountInfo<'info>,
     /// CHECK: permission PDA [b"permission:", beneficiary_set] under the permission program; created if empty.
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [PERMISSION_SEED, pda.key().as_ref()],
+        bump,
+        seeds::program = permission_program.key()
+    )]
     pub permission: AccountInfo<'info>,
     /// CHECK: delegation buffer for the permission account.
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [DELEGATE_BUFFER_TAG, permission.key().as_ref()],
+        bump,
+        seeds::program = permission_program.key()
+    )]
     pub buffer_permission: AccountInfo<'info>,
     /// CHECK: delegation record for the permission account.
-    #[account(mut)]
+    // Keep the canonical ID expression here. SDK 0.15.5's #[delegate] macro treats lowercase
+    // "del" anywhere in an account attribute as its marker, so delegation_program.key() corrupts
+    // the generated constraint even though both expressions resolve to the same program ID.
+    #[account(
+        mut,
+        seeds = [DELEGATION_RECORD_TAG, permission.key().as_ref()],
+        bump,
+        seeds::program = ephemeral_rollups_sdk::id()
+    )]
     pub delegation_record_permission: AccountInfo<'info>,
     /// CHECK: delegation metadata for the permission account.
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [DELEGATION_METADATA_TAG, permission.key().as_ref()],
+        bump,
+        seeds::program = ephemeral_rollups_sdk::id()
+    )]
     pub delegation_metadata_permission: AccountInfo<'info>,
 }
 

@@ -6,6 +6,10 @@ import { SOLANA_CONFIG } from '@/constants'
 import { getCapsulePDA, getCapsuleVaultPDA, getBeneficiarySetPDA, getFeeConfigPDA, getRelayerPubkey } from '@/lib/program'
 import { daysToSeconds } from '@/utils/intent'
 import { isValidAmountString } from '@/lib/assets'
+import {
+  createInheritanceCommitment,
+  createInheritanceSalt,
+} from '@/lib/inheritance-commitment'
 
 type DummyWallet = {
   publicKey: PublicKey
@@ -84,9 +88,8 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : owner
 
-  // Lean flow as three base-layer instructions in one tx the mobile app signs once: create the Switch +
-  // BeneficiarySet (heartbeat_authority = relayer, so the off-chain liveness service can bump), set the
-  // single beneficiary at 100% (10000 bps), and fund the Vault. NOTE: this mobile path is still
+  // Base-layer fallback in one transaction: create the draft, set the single beneficiary, fund the
+  // Vault, seal the configuration, and arm the Switch. NOTE: this mobile path is still
   // base-only - it does NOT delegate to the TEE, so the single beneficiary is set on the public base
   // layer (known gap: gate or rework to the multi-step TEE flow before mobile ships).
   const createIx = await program.methods
@@ -108,6 +111,18 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
     .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
     .instruction()
 
+  const beneficiaries = [{ pubkey: beneficiaryAddress, shareBps: 10000 }]
+  const configSalt = createInheritanceSalt()
+  const configCommitment = await createInheritanceCommitment(owner, beneficiaries, [], configSalt)
+  const sealIx = await program.methods
+    .sealInheritance(Array.from(configSalt), Array.from(configCommitment))
+    .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
+    .instruction()
+  const armIx = await program.methods
+    .armCapsule(Array.from(configCommitment))
+    .accountsPartial({ capsule: capsulePDA, owner })
+    .instruction()
+
   const depositIx = await program.methods
     .deposit(new BN(lamports))
     .accountsPartial({
@@ -127,7 +142,7 @@ export async function buildCreateCapsuleUnsignedTx(input: CreateCapsuleTxInput):
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
 
   const tx = new Transaction({ feePayer: owner, blockhash, lastValidBlockHeight })
-  tx.add(createIx, updateIntentIx, depositIx)
+  tx.add(createIx, updateIntentIx, depositIx, sealIx, armIx)
 
   return {
     transactionBase64: txToBase64(tx),

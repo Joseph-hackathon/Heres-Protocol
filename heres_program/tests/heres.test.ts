@@ -3,7 +3,7 @@
 // Coverage (15 base-layer instructions + edge cases):
 //   fee config .......... update_fee_config (authority gate, fee cap)
 //   lifecycle ........... create_capsule, deposit (SOL+SPL/NFT), update_intent,
-//                        update_nft_assignments, cancel, recreate
+//                        update_nft_assignments, cancel, finalize
 //   firing .............. execute_intent (inactivity gate), update_activity (active-only bump)
 //   distribution ........ distribute_assets (SOL+SPL) + distribute_nft (explicit recipient)
 //   escape hatch ........ recover_vault (SOL+SPL, pre-fire only)
@@ -15,7 +15,7 @@
 //
 // Workstream A note: the private beneficiary list lives in its own BeneficiarySet account (delegated
 // to the TEE in production). Bankrun never delegates, so update_intent / distribute / cancel /
-// recreate exercise it directly on the base layer here.
+// finalize exercise it directly on the base layer here.
 
 // Each on-chain Beneficiary carries a reserved[14] pad (future cross-chain heir field); the TS arg
 // must include it or Anchor's coder rejects the encode.
@@ -24,6 +24,7 @@ const withReserved = (
 ) => list.map((b) => ({ ...b, reserved: Array(14).fill(0) }));
 
 import { assert, expect } from "chai";
+import { createHash } from "node:crypto";
 import { SystemProgram as SP } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
@@ -253,17 +254,76 @@ const cancelSplIx = (env: Env, owner: Keypair, mint: PublicKey) =>
     ownerTokenAccount: ataFor(owner.publicKey, mint),
   });
 
-const recreateIx = (env: Env, owner: Keypair, inactivity: number, targetDate: BN | null = null) =>
-  env.program.methods.recreateCapsule(new BN(inactivity), targetDate).accountsPartial({
+const finalizeIx = (
+  env: Env,
+  ownerPk: PublicKey,
+  authority: PublicKey,
+  feeRecipient = env.feeRecipient
+) =>
+  env.program.methods.finalizeCapsule().accountsPartial({
+    capsule: capsulePda(ownerPk),
+    beneficiarySet: beneficiarySetPda(ownerPk),
+    vault: vaultPda(ownerPk),
+    authority,
+    feeConfig: feeConfigPda(),
+    feeRecipient,
+  });
+
+const TEST_CONFIG_SALT = Array(32).fill(7);
+
+function inheritanceCommitment(
+  owner: PublicKey,
+  beneficiaries: { pubkey: PublicKey; shareBps: number }[],
+  nftAssignments: { mint: PublicKey; recipient: PublicKey }[],
+  salt = TEST_CONFIG_SALT
+): number[] {
+  const u16 = (value: number) => {
+    const bytes = Buffer.alloc(2);
+    bytes.writeUInt16LE(value);
+    return bytes;
+  };
+  const u32 = (value: number) => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32LE(value);
+    return bytes;
+  };
+  const parts = [
+    Buffer.from("heres:inheritance-config:v1"),
+    Buffer.from(owner.toBytes()),
+    u32(beneficiaries.length),
+  ];
+  for (const beneficiary of beneficiaries) {
+    parts.push(Buffer.from(beneficiary.pubkey.toBytes()), u16(beneficiary.shareBps));
+  }
+  parts.push(u32(nftAssignments.length));
+  for (const assignment of nftAssignments) {
+    parts.push(Buffer.from(assignment.mint.toBytes()), Buffer.from(assignment.recipient.toBytes()));
+  }
+  parts.push(Buffer.from(salt));
+  return Array.from(createHash("sha256").update(Buffer.concat(parts)).digest());
+}
+
+const sealInheritanceIx = (
+  env: Env,
+  owner: Keypair,
+  beneficiaries: { pubkey: PublicKey; shareBps: number }[],
+  nftAssignments: { mint: PublicKey; recipient: PublicKey }[],
+  salt = TEST_CONFIG_SALT
+) =>
+  env.program.methods
+    .sealInheritance(salt, inheritanceCommitment(owner.publicKey, beneficiaries, nftAssignments, salt))
+    .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey });
+
+const armCapsuleIx = (env: Env, owner: Keypair, commitment: number[]) =>
+  env.program.methods.armCapsule(commitment).accountsPartial({
     capsule: capsulePda(owner.publicKey),
-    beneficiarySet: beneficiarySetPda(owner.publicKey),
     owner: owner.publicKey,
   });
 
 // ----- shared scenario helpers -----
 const DAY = 24 * 60 * 60;
 
-// create an active capsule for a fresh funded owner; returns the owner keypair
+// Create an unarmed draft for a fresh funded owner; returns the owner keypair.
 async function freshCapsule(
   env: Env,
   inactivity = DAY,
@@ -280,8 +340,36 @@ async function freshCapsule(
   return owner;
 }
 
+async function sealAndArm(env: Env, owner: Keypair) {
+  const cap = await fetchCapsule(env, owner.publicKey);
+  if (cap.isActive) return;
+  if (cap.executedAt != null) throw new Error("cannot arm an executed capsule");
+
+  let set = await fetchBeneficiarySet(env, owner.publicKey);
+  if (set.beneficiaries.length === 0) {
+    const fallback = [{ pubkey: owner.publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, fallback), [owner]));
+    set = await fetchBeneficiarySet(env, owner.publicKey);
+  }
+  const beneficiaries = set.beneficiaries.map((beneficiary: any) => ({
+    pubkey: beneficiary.pubkey,
+    shareBps: beneficiary.shareBps,
+  }));
+  const nftAssignments = set.nftAssignments.map((assignment: any) => ({
+    mint: assignment.mint,
+    recipient: assignment.recipient,
+  }));
+  const commitment = inheritanceCommitment(owner.publicKey, beneficiaries, nftAssignments);
+  assertOk(
+    await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, nftAssignments), [owner]),
+    "seal_inheritance"
+  );
+  assertOk(await send(env, owner, armCapsuleIx(env, owner, commitment), [owner]), "arm_capsule");
+}
+
 // drive a capsule to the fired state (is_active=false, executed_at set)
 async function fire(env: Env, owner: Keypair, inactivity: number) {
+  await sealAndArm(env, owner);
   await warp(env, inactivity + 10);
   const res = await send(env, env.payer, executeIntentIx(env, owner.publicKey));
   assertOk(res, "execute_intent (fire)");
@@ -340,7 +428,7 @@ describe("heres: fee config", () => {
 });
 
 describe("heres: create_capsule", () => {
-  it("creates an active Switch + Vault with the expected state", async () => {
+  it("creates a draft Switch + Vault with the expected state", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await fundedKeypair(env, 50);
     const heartbeat = Keypair.generate().publicKey;
@@ -355,7 +443,7 @@ describe("heres: create_capsule", () => {
     const cap = await fetchCapsule(env, owner.publicKey);
     expect(cap.owner.toBase58()).to.eq(owner.publicKey.toBase58());
     expect(cap.inactivityPeriod.toNumber()).to.eq(DAY);
-    expect(cap.isActive).to.eq(true);
+    expect(cap.isActive).to.eq(false);
     expect(cap.executedAt).to.eq(null);
     expect(cap.heartbeatAuthority.toBase58()).to.eq(heartbeat.toBase58());
     expect(await accountExists(env, vaultPda(owner.publicKey))).to.eq(true);
@@ -667,10 +755,146 @@ describe("heres: update_nft_assignments", () => {
   });
 });
 
+describe("heres: sealed inheritance boundary", () => {
+  it("seals the configuration and arms the draft", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const commitment = inheritanceCommitment(owner.publicKey, beneficiaries, []);
+    assertOk(
+      await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]),
+      "seal_inheritance"
+    );
+    assertOk(await send(env, owner, armCapsuleIx(env, owner, commitment), [owner]), "arm_capsule");
+
+    const cap = await fetchCapsule(env, owner.publicKey);
+    expect(cap.isActive).to.eq(true);
+  });
+
+  it("rejects every beneficiary edit after sealing", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+
+    const replacement = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    const res = await send(env, owner, updateIntentIx(env, owner, replacement), [owner]);
+    assertErr(res, "InheritanceAlreadySealed");
+  });
+
+  it("rejects a commitment that does not match the private configuration", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const wrongCommitment = Array(32).fill(99);
+    const res = await send(
+      env,
+      owner,
+      env.program.methods
+        .sealInheritance(TEST_CONFIG_SALT, wrongCommitment)
+        .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey }),
+      [owner]
+    );
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+
+  it("rejects a zero salt", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    const zeroSalt = Array(32).fill(0);
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      env.program.methods
+        .sealInheritance(
+          zeroSalt,
+          inheritanceCommitment(owner.publicKey, beneficiaries, [], zeroSalt)
+        )
+        .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey }),
+      [owner]
+    );
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+
+  it("rejects a zero configuration commitment", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      env.program.methods
+        .sealInheritance(TEST_CONFIG_SALT, Array(32).fill(0))
+        .accountsPartial({ beneficiarySet: beneficiarySetPda(owner.publicKey), owner: owner.publicKey }),
+      [owner]
+    );
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+
+  it("rejects re-arming an active capsule", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    const commitment = inheritanceCommitment(owner.publicKey, beneficiaries, []);
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+    assertOk(await send(env, owner, armCapsuleIx(env, owner, commitment), [owner]));
+
+    const res = await send(env, owner, armCapsuleIx(env, owner, Array(32).fill(55)), [owner]);
+    assertErr(res, "CapsuleNotDraft");
+  });
+
+  it("rejects NFT assignment edits after sealing", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const beneficiaries = [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+
+    const res = await send(
+      env,
+      owner,
+      updateNftAssignmentsIx(env, owner, [{
+        mint: Keypair.generate().publicKey,
+        recipient: beneficiaries[0].pubkey,
+      }]),
+      [owner]
+    );
+    assertErr(res, "InheritanceAlreadySealed");
+  });
+
+  it("refuses settlement if the Switch was armed with a different commitment", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    const recipient = Keypair.generate().publicKey;
+    const beneficiaries = [{ pubkey: recipient, shareBps: 10000 }];
+    assertOk(await send(env, owner, updateIntentIx(env, owner, beneficiaries), [owner]));
+    assertOk(await send(env, owner, sealInheritanceIx(env, owner, beneficiaries, []), [owner]));
+    assertOk(await send(env, owner, armCapsuleIx(env, owner, Array(32).fill(55)), [owner]));
+    assertOk(await send(env, owner, depositSolIx(env, owner, LAMPORTS_PER_SOL), [owner]));
+
+    await warp(env, 200);
+    assertOk(await send(env, env.payer, executeIntentIx(env, owner.publicKey)));
+    const res = await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient]));
+    assertErr(res, "InvalidConfigurationCommitment");
+  });
+});
+
 describe("heres: execute_intent", () => {
   it("rejects firing before the inactivity period elapses", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, DAY);
+    await sealAndArm(env, owner);
     await warp(env, DAY - 60); // still 60s short
     const res = await send(env, env.payer, executeIntentIx(env, owner.publicKey));
     assertErr(res, "InactivityPeriodNotMet");
@@ -679,6 +903,7 @@ describe("heres: execute_intent", () => {
   it("fires permissionlessly once inactivity elapses", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
+    await sealAndArm(env, owner);
     await warp(env, 200);
     const cranker = await fundedKeypair(env, 5); // not the owner
     const res = await send(env, cranker, executeIntentIx(env, owner.publicKey));
@@ -714,6 +939,7 @@ describe("heres: execute_intent target_date", () => {
       [owner]
     );
     assertOk(created, "create_capsule (with target_date)");
+    await sealAndArm(env, owner);
 
     await warp(env, 300); // past target_date, nowhere near the 30-day inactivity deadline
     const cranker = await fundedKeypair(env, 5); // permissionless: not the owner
@@ -736,6 +962,7 @@ describe("heres: execute_intent target_date", () => {
       [owner]
     );
     assertOk(created, "create_capsule (with target_date)");
+    await sealAndArm(env, owner);
 
     await warp(env, 100); // before both triggers
     const res = await send(env, env.payer, executeIntentIx(env, owner.publicKey));
@@ -760,6 +987,7 @@ describe("heres: update_activity", () => {
   it("owner bumps the liveness clock", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, DAY);
+    await sealAndArm(env, owner);
     await warp(env, 1000);
     const now = await getNow(env);
     assertOk(
@@ -773,6 +1001,7 @@ describe("heres: update_activity", () => {
     const env = await startEnv({ creationFee: 0 });
     const heartbeat = await fundedKeypair(env, 5);
     const owner = await freshCapsule(env, DAY, heartbeat.publicKey);
+    await sealAndArm(env, owner);
     assertOk(
       await send(
         env,
@@ -801,6 +1030,7 @@ describe("heres: update_activity", () => {
   it("rejects a stranger", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, DAY);
+    await sealAndArm(env, owner);
     const stranger = await fundedKeypair(env, 5);
     const res = await send(
       env,
@@ -832,6 +1062,7 @@ describe("heres: distribute_assets (SOL)", () => {
     const recipients = shares.map(() => Keypair.generate().publicKey);
     const list = recipients.map((pubkey, i) => ({ pubkey, shareBps: shares[i] }));
     assertOk(await send(env, owner, updateIntentIx(env, owner, list), [owner]));
+    await sealAndArm(env, owner);
     return { owner, recipients };
   }
 
@@ -895,13 +1126,64 @@ describe("heres: distribute_assets (SOL)", () => {
     assertErr(res, "NothingToDistribute");
   });
 
-  it("rejects distribution when no beneficiaries are set", async () => {
+  it("rejects sealing when no beneficiaries are set", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
     assertOk(await send(env, owner, depositSolIx(env, owner, LAMPORTS_PER_SOL), [owner]));
-    await fire(env, owner, 100); // never set beneficiaries
-    const res = await send(env, env.payer, distributeSolIx(env, owner.publicKey, []));
+    const res = await send(
+      env,
+      owner,
+      sealInheritanceIx(env, owner, [], []),
+      [owner]
+    );
     assertErr(res, "NoBeneficiaries");
+  });
+});
+
+describe("heres: beneficiary validation", () => {
+  it("rejects duplicate beneficiary addresses", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const recipient = Keypair.generate().publicKey;
+    const res = await send(
+      env,
+      owner,
+      updateIntentIx(env, owner, [
+        { pubkey: recipient, shareBps: 5000 },
+        { pubkey: recipient, shareBps: 5000 },
+      ]),
+      [owner]
+    );
+    assertErr(res, "InvalidBeneficiaryAddress");
+  });
+
+  it("rejects zero-share beneficiaries", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const res = await send(
+      env,
+      owner,
+      updateIntentIx(env, owner, [
+        { pubkey: Keypair.generate().publicKey, shareBps: 10000 },
+        { pubkey: Keypair.generate().publicKey, shareBps: 0 },
+      ]),
+      [owner]
+    );
+    assertErr(res, "InvalidBeneficiaryAddress");
+  });
+
+  it("rejects the capsule vault as a beneficiary", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const res = await send(
+      env,
+      owner,
+      updateIntentIx(env, owner, [
+        { pubkey: vaultPda(owner.publicKey), shareBps: 10000 },
+      ]),
+      [owner]
+    );
+    assertErr(res, "InvalidBeneficiaryAddress");
   });
 });
 
@@ -943,6 +1225,65 @@ describe("heres: distribute_assets (SPL)", () => {
     const vaultAta = ataFor(vaultPda(owner.publicKey), mint, true);
     expect(await accountExists(env, vaultAta)).to.eq(false);
   });
+
+  it("does not let an unregistered mint consume a registered manifest leg", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    const mintAuth = await fundedKeypair(env, 5);
+    const registeredMint = await createMint(env, mintAuth.publicKey);
+    const spamMint = await createMint(env, mintAuth.publicKey);
+    const ownerAta = await createAta(env, owner.publicKey, registeredMint);
+    await mintTo(env, registeredMint, ownerAta, mintAuth, 10n);
+    assertOk(
+      await send(env, owner, depositSplIx(env, owner, 10n, registeredMint, ownerAta), [owner])
+    );
+
+    // A third party can create and fund the vault's canonical ATA directly, but cannot set its
+    // close-authority marker because only the vault PDA can sign for that change.
+    const spamVaultAta = await createAta(env, vaultPda(owner.publicKey), spamMint, true);
+    await mintTo(env, spamMint, spamVaultAta, mintAuth, 20n);
+
+    const recipient = Keypair.generate().publicKey;
+    const registeredRecipientAta = await createAta(env, recipient, registeredMint);
+    const spamRecipientAta = await createAta(env, recipient, spamMint);
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [{ pubkey: recipient, shareBps: 10000 }]),
+        [owner]
+      )
+    );
+    await fire(env, owner, 100);
+
+    assertOk(
+      await send(env, env.payer, distributeSplIx(env, owner.publicKey, spamMint, [spamRecipientAta]))
+    );
+    assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient])));
+
+    const premature = await send(
+      env,
+      owner,
+      finalizeIx(env, owner.publicKey, owner.publicKey),
+      [owner]
+    );
+    assertErr(premature, "VaultNotEmpty");
+    expect(await tokenBalance(env, registeredRecipientAta)).to.eq(0n);
+
+    assertOk(
+      await send(
+        env,
+        env.payer,
+        distributeSplIx(env, owner.publicKey, registeredMint, [registeredRecipientAta])
+      )
+    );
+    assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient])));
+    assertOk(
+      await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner])
+    );
+    expect(await tokenBalance(env, registeredRecipientAta)).to.eq(10n);
+    expect(await tokenBalance(env, spamRecipientAta)).to.eq(20n);
+  });
 });
 
 describe("heres: distribute_nft", () => {
@@ -961,6 +1302,14 @@ describe("heres: distribute_nft", () => {
         env,
         owner,
         updateNftAssignmentsIx(env, owner, [{ mint, recipient }]),
+        [owner]
+      )
+    );
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [{ pubkey: recipient, shareBps: 10000 }]),
         [owner]
       )
     );
@@ -995,32 +1344,17 @@ describe("heres: distribute_nft", () => {
 
   it("rejects bypassing an NFT assignment through proportional SPL distribution", async () => {
     const env = await startEnv({ creationFee: 0 });
-    const { owner, mint } = await nftCapsule(env);
-    const b0 = Keypair.generate().publicKey;
-    const b1 = Keypair.generate().publicKey;
-    const b0Ata = await createAta(env, b0, mint);
-    const b1Ata = await createAta(env, b1, mint);
-    assertOk(
-      await send(
-        env,
-        owner,
-        updateIntentIx(env, owner, [
-          { pubkey: b0, shareBps: 5000 },
-          { pubkey: b1, shareBps: 5000 },
-        ]),
-        [owner]
-      )
-    );
+    const { owner, mint, recipientAta } = await nftCapsule(env);
 
     const res = await send(
       env,
       env.payer,
-      distributeSplIx(env, owner.publicKey, mint, [b0Ata, b1Ata])
+      distributeSplIx(env, owner.publicKey, mint, [recipientAta])
     );
     assertErr(res, "NftRequiresAssignedDistribution");
   });
 
-  it("rejects NFT distribution for a fungible mint but permits proportional fallback", async () => {
+  it("never permits proportional fallback for an explicitly assigned mint", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
     const mintAuth = await fundedKeypair(env, 5);
@@ -1055,15 +1389,13 @@ describe("heres: distribute_nft", () => {
     );
     assertErr(res, "InvalidNftMint");
 
-    assertOk(
-      await send(
-        env,
-        env.payer,
-        distributeSplIx(env, owner.publicKey, mint, [recipientAta])
-      ),
-      "proportional fallback"
+    const fallback = await send(
+      env,
+      env.payer,
+      distributeSplIx(env, owner.publicKey, mint, [recipientAta])
     );
-    expect(await tokenBalance(env, recipientAta)).to.eq(1n);
+    assertErr(fallback, "NftRequiresAssignedDistribution");
+    expect(await tokenBalance(env, recipientAta)).to.eq(0n);
   });
 });
 
@@ -1151,6 +1483,26 @@ describe("heres: cancel_capsule", () => {
     expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(false);
   });
 
+  it("refuses to close a multi-mint vault until every token leg is recovered", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, DAY);
+    const mintAuth = await fundedKeypair(env, 5);
+    const mintA = await createMint(env, mintAuth.publicKey);
+    const mintB = await createMint(env, mintAuth.publicKey);
+    const ownerAtaA = await createAta(env, owner.publicKey, mintA);
+    const ownerAtaB = await createAta(env, owner.publicKey, mintB);
+    await mintTo(env, mintA, ownerAtaA, mintAuth, 10n);
+    await mintTo(env, mintB, ownerAtaB, mintAuth, 20n);
+    assertOk(await send(env, owner, depositSplIx(env, owner, 10n, mintA, ownerAtaA), [owner]));
+    assertOk(await send(env, owner, depositSplIx(env, owner, 20n, mintB, ownerAtaB), [owner]));
+
+    const res = await send(env, owner, cancelSplIx(env, owner, mintA), [owner]);
+    assertErr(res, "VaultNotEmpty");
+    expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(true);
+    expect(await tokenBalance(env, ataFor(vaultPda(owner.publicKey), mintA, true))).to.eq(10n);
+    expect(await tokenBalance(env, ataFor(vaultPda(owner.publicKey), mintB, true))).to.eq(20n);
+  });
+
   it("rejects cancel after the switch has fired", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
@@ -1160,34 +1512,115 @@ describe("heres: cancel_capsule", () => {
   });
 });
 
-describe("heres: recreate_capsule", () => {
-  it("resets a fired capsule's lifecycle in place", async () => {
-    const env = await startEnv({ creationFee: 0 });
-    const owner = await freshCapsule(env, 100);
-    assertOk(await send(env, owner, updateIntentIx(env, owner, [{ pubkey: Keypair.generate().publicKey, shareBps: 10000 }]), [owner]));
-    await fire(env, owner, 100);
-
-    assertOk(await send(env, owner, recreateIx(env, owner, 7 * DAY), [owner]), "recreate");
-    const cap = await fetchCapsule(env, owner.publicKey);
-    expect(cap.isActive).to.eq(true);
-    expect(cap.executedAt).to.eq(null);
-    expect(cap.inactivityPeriod.toNumber()).to.eq(7 * DAY);
-    const bs = await fetchBeneficiarySet(env, owner.publicKey);
-    expect(bs.beneficiaries.length).to.eq(0);
-  });
-
-  it("rejects recreate on an active capsule", async () => {
+describe("heres: finalize_capsule", () => {
+  it("rejects finalization before execution", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, DAY);
-    const res = await send(env, owner, recreateIx(env, owner, DAY), [owner]);
+    await sealAndArm(env, owner);
+    const res = await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner]);
     assertErr(res, "CapsuleActive");
   });
 
-  it("rejects a zero inactivity period on recreate", async () => {
+  it("rejects finalization while a tracked asset remains", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    assertOk(await send(env, owner, depositSolIx(env, owner, LAMPORTS_PER_SOL), [owner]));
+    await fire(env, owner, 100);
+    const res = await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner]);
+    assertErr(res, "VaultNotEmpty");
+  });
+
+  it("rejects a rent destination that is not the configured fee recipient", async () => {
     const env = await startEnv({ creationFee: 0 });
     const owner = await freshCapsule(env, 100);
     await fire(env, owner, 100);
-    const res = await send(env, owner, recreateIx(env, owner, 0), [owner]);
-    assertErr(res, "InvalidInactivityPeriod");
+    const wrongRecipient = Keypair.generate().publicKey;
+    const res = await send(
+      env,
+      owner,
+      finalizeIx(env, owner.publicKey, owner.publicKey, wrongRecipient),
+      [owner]
+    );
+    assertErr(res, "InvalidFeeConfig");
+  });
+
+  it("rejects finalization by an unrelated signer", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100);
+    const attacker = await fundedKeypair(env, 1);
+    await fire(env, owner, 100);
+    const res = await send(
+      env,
+      attacker,
+      finalizeIx(env, owner.publicKey, attacker.publicKey),
+      [attacker]
+    );
+    assertErr(res, "Unauthorized");
+  });
+
+  it("lets the owner close a settled legacy capsule", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100, env.payer.publicKey);
+    await fire(env, owner, 100);
+
+    const vaultAddress = vaultPda(owner.publicKey);
+    const legacyVault = await env.client.getAccount(vaultAddress);
+    expect(legacyVault).to.not.eq(null);
+    const data = Buffer.from(legacyVault!.data);
+    data[8] = 1;
+    env.context.setAccount(vaultAddress, { ...legacyVault!, data });
+
+    const relayerAttempt = await send(
+      env,
+      env.payer,
+      finalizeIx(env, owner.publicKey, env.payer.publicKey)
+    );
+    assertErr(relayerAttempt, "Unauthorized");
+    assertOk(
+      await send(env, owner, finalizeIx(env, owner.publicKey, owner.publicKey), [owner])
+    );
+    expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(false);
+  });
+
+  it("closes settled accounts to the protocol and permits fresh creation at the same PDAs", async () => {
+    const env = await startEnv({ creationFee: 0 });
+    const owner = await freshCapsule(env, 100, env.payer.publicKey);
+    const recipient = Keypair.generate().publicKey;
+    assertOk(
+      await send(
+        env,
+        owner,
+        updateIntentIx(env, owner, [{ pubkey: recipient, shareBps: 10000 }]),
+        [owner]
+      )
+    );
+    assertOk(await send(env, owner, depositSolIx(env, owner, LAMPORTS_PER_SOL), [owner]));
+    await fire(env, owner, 100);
+    assertOk(await send(env, env.payer, distributeSolIx(env, owner.publicKey, [recipient])));
+
+    const protocolBefore = await lamportsOf(env, env.feeRecipient);
+    assertOk(
+      await send(env, env.payer, finalizeIx(env, owner.publicKey, env.payer.publicKey)),
+      "finalize settled capsule"
+    );
+    const protocolAfter = await lamportsOf(env, env.feeRecipient);
+    expect(protocolAfter).to.be.greaterThan(protocolBefore);
+    expect(await accountExists(env, capsulePda(owner.publicKey))).to.eq(false);
+    expect(await accountExists(env, beneficiarySetPda(owner.publicKey))).to.eq(false);
+    expect(await accountExists(env, vaultPda(owner.publicKey))).to.eq(false);
+
+    assertOk(
+      await send(
+        env,
+        owner,
+        createCapsuleIx(env, owner, 7 * DAY, owner.publicKey),
+        [owner]
+      ),
+      "create fresh capsule at the same PDAs"
+    );
+    const fresh = await fetchCapsule(env, owner.publicKey);
+    expect(fresh).to.not.eq(null);
+    expect(fresh.executedAt).to.eq(null);
+    expect(fresh.inactivityPeriod.toNumber()).to.eq(7 * DAY);
   });
 });

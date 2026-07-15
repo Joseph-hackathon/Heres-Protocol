@@ -5,6 +5,7 @@
 //! happened to be last. The assignment is instead authorized by the revealed TEE BeneficiarySet.
 
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anchor_spl::token_interface::{
     self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked,
@@ -48,6 +49,17 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
     let capsule = &ctx.accounts.capsule;
     require!(!capsule.is_active, ErrorCode::CapsuleActive);
     require!(capsule.executed_at.is_some(), ErrorCode::CapsuleNotExecuted);
+    if capsule.requires_config_commitment() {
+        require!(
+            ctx.accounts.beneficiary_set.requires_seal()
+                && ctx.accounts.beneficiary_set.is_sealed(),
+            ErrorCode::InheritanceNotSealed
+        );
+        require!(
+            capsule.config_commitment() == ctx.accounts.beneficiary_set.config_commitment(),
+            ErrorCode::InvalidConfigurationCommitment
+        );
+    }
 
     let mint = &ctx.accounts.mint;
     require!(
@@ -85,6 +97,11 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
             && vault_ata.owner == ctx.accounts.vault.key()
             && vault_ata.amount == 1,
         ErrorCode::InvalidTokenAccount
+    );
+    let registered = vault_ata.close_authority == COption::Some(ctx.accounts.vault.key());
+    require!(
+        registered || vault_ata.close_authority == COption::None,
+        ErrorCode::InvalidAssetManifest
     );
     require!(
         recipient_ata.key()
@@ -126,6 +143,9 @@ pub fn handler(ctx: Context<DistributeNft>, recipient: Pubkey) -> Result<()> {
         },
         signer_seeds,
     ))?;
+    if registered {
+        ctx.accounts.vault.unregister_token_asset();
+    }
 
     emit!(NftDistributed {
         capsule: capsule.key(),

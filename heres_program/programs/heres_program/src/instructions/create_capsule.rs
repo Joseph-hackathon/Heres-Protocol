@@ -103,7 +103,9 @@ pub fn handler(
     capsule.owner = ctx.accounts.owner.key();
     capsule.inactivity_period = inactivity_period;
     capsule.last_activity = now;
-    capsule.is_active = true;
+    // New capsules begin as drafts. The private TEE configuration is written and sealed first;
+    // arm_capsule then activates this Switch with the matching commitment on the regular ER.
+    capsule.is_active = false;
     capsule.executed_at = None;
     capsule.bump = ctx.bumps.capsule;
     capsule.vault_bump = ctx.bumps.vault;
@@ -121,7 +123,7 @@ pub fn handler(
     beneficiary_set.nft_assignments = Vec::new();
     beneficiary_set.reserved = [0u8; 64];
 
-    ctx.accounts.vault.version = CapsuleVault::CURRENT_VERSION;
+    ctx.accounts.vault.initialize_tracked();
 
     msg!(
         "Switch + BeneficiarySet + Vault created for owner: {:?}",

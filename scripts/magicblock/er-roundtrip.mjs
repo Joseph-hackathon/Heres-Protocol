@@ -8,14 +8,17 @@
  *   deposit SOL    (base)              fund the Vault (Vault is NEVER delegated)
  *   delegate_capsule (base)            delegate the Switch to a REGULAR ER (no permission, no TEE)
  *   delegate_beneficiaries (base)      delegate the BeneficiarySet to the TEE (owner-only permission)
+ *   update_intent + seal (TEE, owner)  atomically set and seal the PRIVATE beneficiary list
+ *   arm_capsule (REGULAR ER)           bind the Switch to the sealed settlement commitment
  *   update_activity (REGULAR ER)       heartbeat path: relayer bumps last_activity - NO TEE TOKEN
- *   update_intent   (TEE, owner)       set the PRIVATE beneficiary list inside the enclave
  *   schedule_execute_intent (REG ER)   register the autonomous ScheduleTask crank on the Switch
  *   <wait>                             MagicBlock fires execute_intent on the regular ER (no crank)
  *   crank_undelegate (REG ER)          commit + undelegate the Switch back to base (fired state lands)
  *   crank_undelegate_beneficiaries (TEE)  *** THE CROSS-ER PROOF *** the TEE ix reads the now-base
  *                                      Switch to confirm it fired, then reveals the BeneficiarySet
- *   verify (base)                      Switch fired; beneficiaries round-tripped, now public
+ *   distribute_assets (base)           pay beneficiaries after both delegated accounts settle
+ *   finalize_capsule (base)            close the three core PDAs to the protocol fee recipient
+ *   verify (base)                       payouts landed and all capsule accounts are gone
  *
  * THE LOAD-BEARING ASSERTION (the whole split rests on it): a TEE-ER instruction can read the
  * just-undelegated base Switch to gate the privacy reveal. If this passes, the split ships; if it
@@ -25,9 +28,6 @@
  *   - the relayer heartbeat uses NO TEE auth token (it hits the regular ER) - the hot path is token-free;
  *   - the BeneficiarySet is private in the TEE while the Switch is public-but-harmless on a regular ER;
  *   - the reveal is gated cross-ER and only opens AFTER the Switch fires + commits to base.
- *
- * distribute_assets is NOT exercised here. Immediate settlement is covered by bankrun and the
- * live devnet NFT path is covered by nft-inheritance-check.mjs.
  *
  * Run:  node scripts/magicblock/er-roundtrip.mjs
  * Env:  BASE_RPC, SWITCH_ER_RPC (regular ER), TEE_RPC, SWITCH_VALIDATOR, TEE_VALIDATOR,
@@ -42,7 +42,7 @@ import anchor from '@coral-xyz/anchor';
 import nacl from 'tweetnacl';
 import { getAuthToken } from '@magicblock-labs/ephemeral-rollups-sdk';
 import { getCollateral, verify, Quote } from '@phala/dcap-qvl';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -98,6 +98,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const sol = n => (n / LAMPORTS_PER_SOL).toFixed(6);
 const loadKp = p => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(p, 'utf-8'))));
 const sk = p => join(homedir(), '.config/solana', p);
+const u16le = n => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
+const u32le = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+const configCommitment = (owner, beneficiaries, nftAssignments, salt) => {
+  const parts = [Buffer.from('heres:inheritance-config:v1'), owner.toBuffer(), u32le(beneficiaries.length)];
+  for (const beneficiary of beneficiaries) {
+    parts.push(beneficiary.pubkey.toBuffer(), u16le(beneficiary.shareBps));
+  }
+  parts.push(u32le(nftAssignments.length));
+  for (const assignment of nftAssignments) {
+    parts.push(assignment.mint.toBuffer(), assignment.recipient.toBuffer());
+  }
+  parts.push(salt);
+  return Array.from(createHash('sha256').update(Buffer.concat(parts)).digest());
+};
 
 const timeoutFetch = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(15000) });
 const connOpts = { commitment: 'confirmed', fetch: timeoutFetch };
@@ -171,7 +185,7 @@ async function sendER(ixs, signers, feePayer, conn) {
       const s = (await conn.getSignatureStatuses([sig]))?.value?.[0];
       if (!s) continue;
       if (s.err) throw new Error('tx err: ' + JSON.stringify(s.err));
-      if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus)) return sig;
+      if (s.confirmationStatus === 'finalized') return sig;
     }
     throw new Error('confirm timeout for ' + sig.slice(0, 16));
   }, 3, 2000);
@@ -264,6 +278,11 @@ try {
   console.log(`1. funded owner ${FUND_SOL} SOL`);
 
   // ---- 2. create_capsule (base; 3 PDAs; no beneficiaries; heartbeat_authority = relayer) ----
+  const feeConfigInfo = await getAcct(baseConn, feeConfig);
+  if (!feeConfigInfo) throw new Error('FeeConfig is missing on base devnet');
+  const feeState = accountsCoder.decode('FeeConfig', feeConfigInfo.data);
+  const feeRecipient = feeState.fee_recipient ?? feeState.feeRecipient;
+  if (!feeRecipient) throw new Error('FeeConfig has no fee recipient');
   // In date mode use a long inactivity so the date is the only trigger that can fire the switch.
   const effectiveInactivity = MODE === 'date' ? Math.max(INACTIVITY, 3600) : INACTIVITY;
   const targetDateUnix = MODE === 'date' ? Math.floor(Date.now() / 1000) + DATE_OFFSET_S : null;
@@ -272,7 +291,7 @@ try {
     .createCapsule(new BN(effectiveInactivity), relayerKp.publicKey, targetDateUnix != null ? new BN(targetDateUnix) : null)
     .accountsPartial({
       capsule, beneficiarySet: benSet, vault, owner: ownerKp.publicKey, feeConfig,
-      platformFeeRecipient: PROGRAM_ID,
+      platformFeeRecipient: feeRecipient,
       systemProgram: SystemProgram.programId,
     })
     .instruction();
@@ -356,7 +375,35 @@ try {
   const vaultInfo = await getAcct(baseConn, vault);
   check('Vault NOT delegated (still owned by program)', vaultInfo?.owner.equals(PROGRAM_ID));
 
-  // ---- 5. heartbeat via the relayer on the REGULAR ER - NO TEE TOKEN (the hot-path win) ----
+  // ---- 5. atomically set + seal private beneficiaries, then arm the regular-ER Switch ----
+  const beneficiaries = [
+    { pubkey: ben1.publicKey, shareBps: 6000, reserved: Array(14).fill(0) },
+    { pubkey: ben2.publicKey, shareBps: 4000, reserved: Array(14).fill(0) },
+  ];
+  const nftAssignments = [{ mint: nftMint, recipient: ben1.publicKey }];
+  const salt = randomBytes(32);
+  const commitment = configCommitment(ownerKp.publicKey, beneficiaries, nftAssignments, salt);
+  const setIx = await program.methods
+    .updateIntent(beneficiaries)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  const setNftIx = await program.methods
+    .updateNftAssignments(nftAssignments)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  const sealIx = await program.methods
+    .sealInheritance(Array.from(salt), commitment)
+    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
+    .instruction();
+  await sendER([setIx, setNftIx, sealIx], [ownerKp], ownerKp, ownerTee);
+  const armIx = await program.methods
+    .armCapsule(commitment)
+    .accountsPartial({ capsule, owner: ownerKp.publicKey })
+    .instruction();
+  await sendER([armIx], [ownerKp], ownerKp, switchEr);
+  console.log('5. sealed private settlement configuration and armed Switch');
+
+  // ---- 5a. heartbeat via the relayer on the REGULAR ER - NO TEE TOKEN (the hot-path win) ----
   let hbOk = false;
   try {
     const hbIx = await program.methods
@@ -370,22 +417,9 @@ try {
   check('relayer heartbeat on regular ER (token-free hot path)', hbOk && tokenFree,
     tokenFree ? 'no TEE auth token used' : 'WARNING: switchEr carries a token');
 
-  // ---- 6. set PRIVATE beneficiaries on the TEE (owner) ----
-  const beneficiaries = [
-    { pubkey: ben1.publicKey, shareBps: 6000, reserved: Array(14).fill(0) },
-    { pubkey: ben2.publicKey, shareBps: 4000, reserved: Array(14).fill(0) },
-  ];
-  const setIx = await program.methods
-    .updateIntent(beneficiaries)
-    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
-    .instruction();
-  const setNftIx = await program.methods
-    .updateNftAssignments([{ mint: nftMint, recipient: ben1.publicKey }])
-    .accountsPartial({ beneficiarySet: benSet, owner: ownerKp.publicKey })
-    .instruction();
-  await sendER([setIx, setNftIx], [ownerKp], ownerKp, ownerTee);
-  console.log('6. set beneficiaries on TEE:', ben1.publicKey.toBase58().slice(0, 8), '60% /', ben2.publicKey.toBase58().slice(0, 8), '40%');
-  console.log('   set NFT assignment on TEE:', nftMint.toBase58().slice(0, 8), '->', ben1.publicKey.toBase58().slice(0, 8));
+  // ---- 6. verify the sealed configuration remains private on the TEE ----
+  console.log('6. beneficiaries sealed on TEE:', ben1.publicKey.toBase58().slice(0, 8), '60% /', ben2.publicKey.toBase58().slice(0, 8), '40%');
+  console.log('   NFT assignment sealed on TEE:', nftMint.toBase58().slice(0, 8), '->', ben1.publicKey.toBase58().slice(0, 8));
 
   // not visible on the base BeneficiarySet (delegated/empty there)
   const baseBen = await getAcct(baseConn, benSet);
@@ -436,6 +470,13 @@ try {
     rDetail = `vault ${sol(vbBefore)} -> ${sol(vbAfter)} SOL (Switch delegated)`;
   } catch (e) { rDetail = 'recover err: ' + (e.message?.slice(0, 90) ?? ''); }
   check('escape hatch: owner recover_vault while Switch DELEGATED returns funds', recovered, rDetail);
+
+  // Re-fund after proving recovery so the post-fire path must perform a real payout before it can
+  // finalize. Deposit accepts the delegated Switch as a raw account and remains a base-layer action.
+  await sendBase([depositIx], [ownerKp]);
+  const refilledVault = await retry(() => baseConn.getBalance(vault));
+  check('deposit SOL while Switch DELEGATED re-funds settlement',
+    refilledVault >= Math.floor(DEPOSIT_SOL * LAMPORTS_PER_SOL), `vault=${sol(refilledVault)} SOL`);
 
   // ---- 7. wait out the trigger, then schedule the autonomous crank on the regular ER ----
   // Schedule only once the capsule is actually due, so the first ScheduleTask iteration succeeds.
@@ -548,7 +589,59 @@ try {
       && nftAssignments[0].recipient.equals(ben1.publicKey);
     check('base: private NFT assignment round-tripped intact (now public)', nftRoundTrip,
       `count=${nftAssignments.length}`);
-    console.log('   distribute_assets is covered separately and is not run here.');
+  }
+
+  // ---- 12. distribute the live SOL leg on base, then verify the exact 60/40 beneficiary split ----
+  if (switchBack && benBack) {
+    const vaultBeforeDistribution = await retry(() => baseConn.getBalance(vault));
+    const vaultInfoBeforeDistribution = await getAcct(baseConn, vault);
+    const rentFloor = await baseConn.getMinimumBalanceForRentExemption(vaultInfoBeforeDistribution.data.length);
+    const distributable = vaultBeforeDistribution - rentFloor;
+    const ben1Before = await retry(() => baseConn.getBalance(ben1.publicKey));
+    const ben2Before = await retry(() => baseConn.getBalance(ben2.publicKey));
+    const distributeIx = await program.methods
+      .distributeAssets()
+      .accountsPartial({
+        capsule, beneficiarySet: benSet, vault, systemProgram: SystemProgram.programId,
+        tokenProgram: null, mint: null, vaultTokenAccount: null,
+      })
+      .remainingAccounts([
+        { pubkey: ben1.publicKey, isSigner: false, isWritable: true },
+        { pubkey: ben2.publicKey, isSigner: false, isWritable: true },
+      ])
+      .instruction();
+    const distributeSig = await sendBase([distributeIx], [ownerKp]);
+    console.log('12. distributed live SOL leg on base:', distributeSig);
+    const ben1After = await retry(() => baseConn.getBalance(ben1.publicKey));
+    const ben2After = await retry(() => baseConn.getBalance(ben2.publicKey));
+    const expectedBen1 = Math.floor(distributable * 6000 / 10_000);
+    const expectedBen2 = distributable - expectedBen1;
+    check('base payout: beneficiary 1 receives exact 60% share', ben1After - ben1Before === expectedBen1,
+      `${ben1After - ben1Before} lamports`);
+    check('base payout: beneficiary 2 receives exact 40% + remainder', ben2After - ben2Before === expectedBen2,
+      `${ben2After - ben2Before} lamports`);
+
+    // ---- 13. close the settled lifecycle and prove every core PDA is actually gone ----
+    const protocolBefore = await retry(() => baseConn.getBalance(feeRecipient));
+    const finalizeIx = await program.methods
+      .finalizeCapsule()
+      .accountsPartial({
+        capsule, beneficiarySet: benSet, vault, authority: ownerKp.publicKey,
+        feeConfig, feeRecipient,
+      })
+      .instruction();
+    const finalizeSig = await sendBase([finalizeIx], [ownerKp]);
+    console.log('13. finalized capsule on base:', finalizeSig);
+    const [capsuleAfter, benSetAfter, vaultAfter] = await Promise.all([
+      getAcct(baseConn, capsule).catch(() => null),
+      getAcct(baseConn, benSet).catch(() => null),
+      getAcct(baseConn, vault).catch(() => null),
+    ]);
+    const protocolAfter = await retry(() => baseConn.getBalance(feeRecipient));
+    check('finalize closes Switch + BeneficiarySet + Vault on base',
+      capsuleAfter === null && benSetAfter === null && vaultAfter === null);
+    check('finalize sends reclaimed rent to configured protocol recipient', protocolAfter > protocolBefore,
+      `reclaimed=${protocolAfter - protocolBefore} lamports`);
   }
 } catch (e) {
   console.error('\nFATAL:', e.message);

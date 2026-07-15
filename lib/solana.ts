@@ -45,6 +45,11 @@ import {
   getVaultTokenAccounts,
 } from '@/lib/spl'
 import { confirmTransactionOrThrow } from '@/lib/transaction-confirmation'
+import { isDurableErConfirmation } from '@/lib/er-confirmation'
+import {
+  createInheritanceCommitment,
+  createInheritanceSalt,
+} from '@/lib/inheritance-commitment'
 import { MAX_FUNGIBLE_ASSETS } from '@/lib/fungible-assets'
 import {
   classifyCapsuleAccountOwner,
@@ -240,7 +245,7 @@ async function sendEr(
     const s = (await connection.getSignatureStatuses([sig]))?.value?.[0]
     if (!s) continue
     if (s.err) throw new Error('ER tx err: ' + JSON.stringify(s.err))
-    if (['processed', 'confirmed', 'finalized'].includes(s.confirmationStatus ?? '')) return sig
+    if (isDurableErConfirmation(s.confirmationStatus)) return sig
   }
   throw new Error('ER confirm timeout for ' + sig.slice(0, 16))
 }
@@ -703,8 +708,6 @@ export type CreateDelegatedCapsuleParams = {
   heartbeatAuthority?: PublicKey
   /** Override the delegation validator; defaults to the TEE node (VALIDATOR_TEE). */
   validator?: PublicKey
-  /** True to reuse an executed capsule in place (recreate) instead of create. */
-  recreate?: boolean
   /** Autonomous ScheduleTask cadence overrides. */
   schedule?: { taskId?: BN; executionIntervalMillis?: BN; iterations?: BN }
   /** UI progress callback. */
@@ -765,25 +768,20 @@ export async function createDelegatedCapsule(
     ? new PublicKey(SOLANA_CONFIG.PLATFORM_FEE_RECIPIENT)
     : programId // sentinel when no fee recipient is configured
 
-  // ---- base ix 1: create (or recreate) the Switch + BeneficiarySet (+ Vault on create) ----
+  // ---- base ix 1: create the Switch + BeneficiarySet + Vault ----
   const targetDateBN = params.targetDateSeconds != null ? new BN(params.targetDateSeconds) : null
-  const createIx = params.recreate
-    ? await program.methods
-        .recreateCapsule(new BN(params.inactivitySeconds), targetDateBN)
-        .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner })
-        .instruction()
-    : await program.methods
-        .createCapsule(new BN(params.inactivitySeconds), hb, targetDateBN)
-        .accountsPartial({
-          capsule: capsulePDA,
-          beneficiarySet: beneficiarySetPDA,
-          vault: vaultPDA,
-          owner,
-          feeConfig: feeConfigPDA,
-          platformFeeRecipient,
-          systemProgram: SystemProgram.programId,
-        })
-        .instruction()
+  const createIx = await program.methods
+    .createCapsule(new BN(params.inactivitySeconds), hb, targetDateBN)
+    .accountsPartial({
+      capsule: capsulePDA,
+      beneficiarySet: beneficiarySetPDA,
+      vault: vaultPDA,
+      owner,
+      feeConfig: feeConfigPDA,
+      platformFeeRecipient,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction()
 
   // ---- base ix 2+: deposit assets (Vault is never delegated) ----
   const baseConnection = getSolanaConnection()
@@ -916,26 +914,7 @@ export async function createDelegatedCapsule(
     await sleep(2500)
   }
 
-  // ---- regular ER: schedule the autonomous execute_intent crank on the Switch (token-free) ----
-  params.onStep?.('Waiting for ER sync...')
-  const erConn = regularErConnection()
-  for (let i = 0; i < 16; i++) {
-    const info = await erConn.getAccountInfo(capsulePDA).catch(() => null)
-    if (info) break
-    await sleep(2500)
-  }
-  const taskId = params.schedule?.taskId ?? new BN(Date.now())
-  const executionIntervalMillis =
-    params.schedule?.executionIntervalMillis ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS || 10000)
-  const iterations = params.schedule?.iterations ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_ITERATIONS || 100_000)
-  const scheduleIx = await program.methods
-    .scheduleExecuteIntent({ taskId, executionIntervalMillis, iterations })
-    .accountsPartial({ magicProgram: MAGIC_PROGRAM_ID, payer: owner, capsule: capsulePDA })
-    .instruction()
-  params.onStep?.('Scheduling autonomous crank...')
-  const scheduleSig = await sendEr(erConn, wallet, [scheduleIx])
-
-  // ---- TEE: set the PRIVATE beneficiary list (only ever written inside the TEE) ----
+  // ---- TEE: atomically write and seal the PRIVATE settlement configuration ----
   // Mint the per-key TEE auth token (signMessage). Cache it so the immediate post-create read can show
   // live private state without re-prompting.
   params.onStep?.('Authorizing TEE access...')
@@ -963,10 +942,48 @@ export async function createDelegatedCapsule(
         .instruction()
     )
   }
+  const configSalt = createInheritanceSalt()
+  const configCommitment = await createInheritanceCommitment(
+    owner,
+    params.beneficiaries,
+    nftAssignments,
+    configSalt
+  )
+  teeIxs.push(
+    await program.methods
+      .sealInheritance(Array.from(configSalt), Array.from(configCommitment))
+      .accountsPartial({ beneficiarySet: beneficiarySetPDA, owner })
+      .instruction()
+  )
   params.onStep?.(
-    nftAssignments.length > 0 ? 'Setting private NFT recipients...' : 'Setting private beneficiaries...'
+    nftAssignments.length > 0
+      ? 'Setting and sealing private NFT recipients...'
+      : 'Setting and sealing private beneficiaries...'
   )
   const teeSig = await sendEr(teeConn, wallet, teeIxs)
+
+  // ---- regular ER: arm the sealed Switch and schedule execution in one transaction ----
+  params.onStep?.('Waiting for ER sync...')
+  const erConn = regularErConnection()
+  for (let i = 0; i < 16; i++) {
+    const info = await erConn.getAccountInfo(capsulePDA).catch(() => null)
+    if (info) break
+    await sleep(2500)
+  }
+  const armIx = await program.methods
+    .armCapsule(Array.from(configCommitment))
+    .accountsPartial({ capsule: capsulePDA, owner })
+    .instruction()
+  const taskId = params.schedule?.taskId ?? new BN(Date.now())
+  const executionIntervalMillis =
+    params.schedule?.executionIntervalMillis ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_INTERVAL_MS || 10000)
+  const iterations = params.schedule?.iterations ?? new BN(MAGICBLOCK_ER.CRANK_DEFAULT_ITERATIONS || 100_000)
+  const scheduleIx = await program.methods
+    .scheduleExecuteIntent({ taskId, executionIntervalMillis, iterations })
+    .accountsPartial({ magicProgram: MAGIC_PROGRAM_ID, payer: owner, capsule: capsulePDA })
+    .instruction()
+  params.onStep?.('Arming capsule and scheduling autonomous crank...')
+  const scheduleSig = await sendEr(erConn, wallet, [armIx, scheduleIx])
 
   return { baseSigs, teeSig, scheduleSig, capsule: capsulePDA, token }
 }
@@ -1163,24 +1180,34 @@ export async function updateActivity(wallet: HeresWallet, ownerPublicKey?: Publi
   return sendBase(getSolanaConnection(), wallet, [ix])
 }
 
-/**
- * Recreate a capsule from an executed (terminal) state, resetting the inactivity timer.
- */
-export async function recreateCapsule(
-  wallet: HeresWallet,
-  inactivityPeriodSeconds: number,
-  targetDateSeconds?: number | null
-): Promise<string> {
+/** Close a fully settled capsule and send its account rent to FeeConfig.fee_recipient. */
+export async function finalizeCapsule(wallet: HeresWallet, ownerPublicKey?: PublicKey): Promise<string> {
   const program = getProgram(wallet)
   if (!program) throw new Error('Wallet not connected')
 
-  const [capsulePDA] = getCapsulePDA(wallet.publicKey!)
-  const [beneficiarySetPDA] = getBeneficiarySetPDA(wallet.publicKey!)
+  const owner = ownerPublicKey ?? wallet.publicKey!
+  const [capsulePDA] = getCapsulePDA(owner)
+  const [beneficiarySetPDA] = getBeneficiarySetPDA(owner)
+  const [vaultPDA] = getCapsuleVaultPDA(owner)
+  const [feeConfigPDA] = getFeeConfigPDA()
+  const feeConfig = await (program.account as any).feeConfig.fetch(feeConfigPDA)
+  const feeRecipientRaw = feeConfig.feeRecipient ?? feeConfig.fee_recipient
+  if (!feeRecipientRaw) throw new Error('Protocol fee recipient is not configured')
+  const feeRecipient = new PublicKey(feeRecipientRaw)
 
-  return program.methods
-    .recreateCapsule(new BN(inactivityPeriodSeconds), targetDateSeconds != null ? new BN(targetDateSeconds) : null)
-    .accountsPartial({ capsule: capsulePDA, beneficiarySet: beneficiarySetPDA, owner: wallet.publicKey! })
-    .rpc()
+  const ix = await program.methods
+    .finalizeCapsule()
+    .accountsPartial({
+      capsule: capsulePDA,
+      beneficiarySet: beneficiarySetPDA,
+      vault: vaultPDA,
+      authority: wallet.publicKey!,
+      feeConfig: feeConfigPDA,
+      feeRecipient,
+    })
+    .instruction()
+
+  return sendBase(getSolanaConnection(), wallet, [ix])
 }
 
 /**
@@ -1217,8 +1244,20 @@ async function decodeDelegatedCapsule(
 async function readPrivateInheritance(
   owner: PublicKey,
   token?: string
-): Promise<{ beneficiaries: OnChainBeneficiary[]; nftAssignments: OnChainNftAssignment[] }> {
-  const empty = { beneficiaries: [], nftAssignments: [] }
+): Promise<{
+  beneficiaries: OnChainBeneficiary[]
+  nftAssignments: OnChainNftAssignment[]
+  version?: number
+  isSealed: boolean
+  isDelegated: boolean
+}> {
+  const empty = {
+    beneficiaries: [],
+    nftAssignments: [],
+    version: undefined,
+    isSealed: false,
+    isDelegated: false,
+  }
   const [benSetPDA] = getBeneficiarySetPDA(owner)
   try {
     const baseInfo = await getSolanaConnection().getAccountInfo(benSetPDA)
@@ -1240,13 +1279,14 @@ async function readPrivateInheritance(
       if (authToken) await tryRead(getTeeConnection(authToken))
       for (const buf of candidates) {
         const decoded = tryDecodeBeneficiarySetData(buf)
-        if (decoded) return decoded
+        if (decoded) return { ...decoded, isDelegated: true }
       }
-      return empty
+      return { ...empty, isDelegated: true }
     }
 
     // Base-resident (pre-delegation or post-reveal): decode directly.
-    return tryDecodeBeneficiarySetData(Buffer.from(baseInfo.data)) ?? empty
+    const decoded = tryDecodeBeneficiarySetData(Buffer.from(baseInfo.data))
+    return decoded ? { ...decoded, isDelegated: false } : empty
   } catch {
     return empty
   }
@@ -1321,6 +1361,8 @@ export async function getCapsule(owner: PublicKey, token?: string): Promise<Inte
     const inheritance = await readPrivateInheritance(owner, token ?? getCachedTeeToken(owner))
     capsule.beneficiaries = inheritance.beneficiaries
     capsule.nftAssignments = inheritance.nftAssignments
+    capsule.inheritanceSealed = inheritance.isSealed
+    capsule.inheritanceDelegated = inheritance.isDelegated
     return capsule
   } catch (error) {
     console.error('Error fetching capsule:', error, 'owner:', owner.toString())
@@ -1357,6 +1399,8 @@ export async function getCapsuleByAddress(
     )
     capsule.beneficiaries = inheritance.beneficiaries
     capsule.nftAssignments = inheritance.nftAssignments
+    capsule.inheritanceSealed = inheritance.isSealed
+    capsule.inheritanceDelegated = inheritance.isDelegated
     return { ...capsule, capsuleAddress: capsulePda.toBase58() }
   } catch (error) {
     console.error('Error fetching capsule by address:', error, 'capsule:', capsulePda.toBase58())
