@@ -7,6 +7,10 @@ export interface CapsuleAccountLocations {
   beneficiarySetAddress: string
 }
 
+export function isCapsulePreFire(executedAt: number | null): boolean {
+  return executedAt == null
+}
+
 export function classifyCapsuleAccountOwner(
   owner: string | null,
   programId: string,

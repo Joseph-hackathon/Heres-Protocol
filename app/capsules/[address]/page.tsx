@@ -59,6 +59,7 @@ import {
   areCapsuleAccountsOnBase,
   capsuleSettlementGuidance,
   hasDelegatedCapsuleAccounts,
+  isCapsulePreFire,
 } from '@/lib/capsule-lifecycle'
 
 const CHART_RANGES = [
@@ -1020,7 +1021,7 @@ export default function CapsuleDetailPage() {
             // the accounts undelegated to base first, so it is gated on !isDelegated. Withdraw also
             // requires the vault to actually hold something - the button no longer lingers on an
             // emptied vault.
-            const preFire = Boolean(capsule.isActive)
+            const preFire = isCapsulePreFire(capsule.executedAt)
             const canRecover = Boolean(
               preFire &&
               vaultAssets.hasWithdrawable &&
@@ -1276,7 +1277,7 @@ export default function CapsuleDetailPage() {
                         disabled={!canRecover || !!actionLoading}
                         title={
                           canRecover
-                            ? 'Withdraw funds from the capsule back to your wallet. The capsule stays active and armed.'
+                            ? 'Withdraw funds from the capsule back to your wallet. The capsule remains open.'
                             : vaultAssetsLoading || vaultAssetsError
                               ? 'Waiting for the vault balance check'
                               : 'No funds to withdraw'

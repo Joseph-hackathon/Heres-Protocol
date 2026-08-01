@@ -6,11 +6,24 @@ import {
   classifyCapsuleAccountOwner,
   hasDelegatedCapsuleAccounts,
   hasExistingCapsuleAccounts,
+  isCapsulePreFire,
 } from '../lib/capsule-lifecycle.ts'
 import { normalizeTxError } from '../lib/errors.ts'
 
 const programId = 'HeresProgram'
 const delegationProgramId = 'MagicDelegation'
+
+test('pre-fire includes interrupted drafts and armed capsules but excludes fired capsules', () => {
+  const states = [
+    { name: 'draft', isActive: false, executedAt: null, expected: true },
+    { name: 'armed', isActive: true, executedAt: null, expected: true },
+    { name: 'fired', isActive: false, executedAt: 1_720_000_000, expected: false },
+  ] as const
+
+  for (const state of states) {
+    assert.equal(isCapsulePreFire(state.executedAt), state.expected, state.name)
+  }
+})
 
 test('account ownership classification distinguishes all lifecycle locations', () => {
   assert.equal(classifyCapsuleAccountOwner(programId, programId, delegationProgramId), 'base')
