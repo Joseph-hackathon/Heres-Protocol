@@ -449,7 +449,15 @@ async function selectDueOwners(now: number): Promise<{ owners: string[]; fullSca
  * On-chain guards make every step idempotent (structural drain-and-close, not a flag), so a mid-tick
  * failure is recovered on the next tick.
  */
-export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineResult> {
+export async function runCrankPipeline(
+  crankKeypair: Keypair,
+  options: { maxBatchSize?: number; timeBudgetMs?: number } = {}
+): Promise<PipelineResult> {
+  const maxBatch = options.maxBatchSize ?? 6
+  const timeBudget = options.timeBudgetMs
+    ? options.timeBudgetMs
+    : 20_000
+  const startTime = Date.now()
   const connection = getSolanaConnection()
   const now = Math.floor(Date.now() / 1000)
   const { owners, fullScan } = await selectDueOwners(now)
@@ -470,7 +478,8 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
 
   let infos: Map<string, OwnerBaseInfos>
   try {
-    infos = await fetchBaseInfos(owners)
+    const selectedBatch = owners.slice(0, maxBatch)
+    infos = await fetchBaseInfos(selectedBatch)
   } catch (e) {
     result.ok = false
     result.errors.push(`base fetch failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -498,7 +507,11 @@ export async function runCrankPipeline(crankKeypair: Keypair): Promise<PipelineR
     return { conn: teeConn, prog: teeProgram }
   }
 
-  for (const ownerStr of owners) {
+  const selectedBatch = owners.slice(0, maxBatch)
+  for (const ownerStr of selectedBatch) {
+    if (Date.now() - startTime > timeBudget) {
+      break
+    }
     let owner: PublicKey
     try {
       owner = new PublicKey(ownerStr)
