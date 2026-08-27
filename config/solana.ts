@@ -1,3 +1,4 @@
+
 /**
  * Solana configuration and utilities
  */
@@ -15,10 +16,9 @@ let cachedFallbackConnection: Connection | null = null
 export function getSolanaConnection(): Connection {
   if (cachedConnection) return cachedConnection
 
-  const rpcUrl = HELIUS_CONFIG.RPC_URL
+  const rpcUrl = process.env.SOLANA_RPC_URL?.trim() || HELIUS_CONFIG.RPC_URL
   cachedConnection = new Connection(rpcUrl, {
     commitment: 'confirmed',
-    wsEndpoint: HELIUS_CONFIG.RPC_URL.replace('https', 'wss'),
   })
   return cachedConnection
 }

@@ -1,12 +1,3 @@
-/**
- * Cron endpoint: undelegate executed capsules from the ER back to the base layer.
- *
- * Option B: undelegation is now one step of the unified crank pipeline (lib/crank.ts).
- * This route is retained for backward-compat with any external scheduler still calling it -
- * it simply runs the same pipeline, so whichever cron fires advances every capsule's state.
- * The execute-intent cron runs the identical pipeline; the two schedules can be collapsed to one.
- */
-
 import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
@@ -30,6 +21,16 @@ function getCrankKeypair(): Keypair | null {
   }
 }
 
+function isAuthorized(request: NextRequest, secret: string): boolean {
+  const auth = request.headers.get('authorization')
+  if (auth === 'Bearer ' + secret) return true
+  const querySecret = request.nextUrl.searchParams.get('secret') ?? request.nextUrl.searchParams.get('key')
+  if (querySecret === secret) return true
+  const customHeader = request.headers.get('x-cron-secret') ?? request.headers.get('x-cron-key')
+  if (customHeader === secret) return true
+  return false
+}
+
 export async function GET(request: NextRequest) {
   return handle(request)
 }
@@ -39,12 +40,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function handle(request: NextRequest) {
-  const auth = request.headers.get('authorization')
   const secret = process.env.CRON_SECRET
   if (!secret || !secret.trim()) {
     return NextResponse.json({ error: 'CRON_SECRET is required' }, { status: 503 })
   }
-  if (auth !== `Bearer ${secret}`) {
+  if (!isAuthorized(request, secret.trim())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

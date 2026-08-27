@@ -1,7 +1,7 @@
 /**
  * Cron endpoint: run the unified dead-man's-switch crank pipeline over all registered capsules.
  * Each tick advances every capsule one step: execute (base or ER) -> undelegate -> distribute.
- * Call at intervals (e.g. every 1-5 min) via Vercel Cron or external cron.
+ * Call at intervals (e.g. every 1-5 min) via Vercel Cron or external cron (cron-job.org).
  * Set CRANK_WALLET_PRIVATE_KEY (base58, base64, or JSON array of 64 bytes) and optionally
  * CRON_SECRET for auth.
  */
@@ -30,6 +30,16 @@ function getCrankKeypair(): Keypair | null {
   }
 }
 
+function isAuthorized(request: NextRequest, secret: string): boolean {
+  const auth = request.headers.get('authorization')
+  if (auth === 'Bearer ' + secret) return true
+  const querySecret = request.nextUrl.searchParams.get('secret') ?? request.nextUrl.searchParams.get('key')
+  if (querySecret === secret) return true
+  const customHeader = request.headers.get('x-cron-secret') ?? request.headers.get('x-cron-key')
+  if (customHeader === secret) return true
+  return false
+}
+
 export async function GET(request: NextRequest) {
   return handleCron(request)
 }
@@ -39,12 +49,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleCron(request: NextRequest) {
-  const auth = request.headers.get('authorization')
   const secret = process.env.CRON_SECRET
   if (!secret || !secret.trim()) {
     return NextResponse.json({ error: 'CRON_SECRET is required' }, { status: 503 })
   }
-  if (auth !== `Bearer ${secret}`) {
+  if (!isAuthorized(request, secret.trim())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

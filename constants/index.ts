@@ -154,9 +154,9 @@ export const MAGICBLOCK_ER = {
   // The buffer/delegation PDAs are owned by our program, so this is always the program ID.
   BUFFER_SEED_PROGRAM_ID: idl.address,
   MAGIC_CONTEXT: process.env.NEXT_PUBLIC_MAGIC_CONTEXT || 'MagicContext1111111111111111111111111111111',
-  ER_RPC_URL: process.env.NEXT_PUBLIC_ER_RPC_URL || 'https://devnet-as.magicblock.app',
-  ER_WS_URL: process.env.NEXT_PUBLIC_ER_WS_URL || 'wss://devnet-as.magicblock.app',
-  ROUTER_DEVNET: 'https://devnet-router.magicblock.app',
+  ER_RPC_URL: process.env.NEXT_PUBLIC_ER_RPC_URL || 'https://devnet-eu.magicblock.app',
+  ER_WS_URL: process.env.NEXT_PUBLIC_ER_WS_URL || 'wss://devnet-router.magicblock.app',
+  ROUTER_DEVNET: 'https://devnet-eu.magicblock.app',
   ROUTER_WS: 'wss://devnet-router.magicblock.app',
   ACTIVE_VALIDATOR: process.env.NEXT_PUBLIC_ER_VALIDATOR || 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57',
   VALIDATOR_ASIA: 'MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57',
