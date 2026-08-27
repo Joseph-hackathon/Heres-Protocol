@@ -237,7 +237,28 @@ async function sendEr(
 ): Promise<string> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
   const tx = new Transaction({ feePayer: wallet.publicKey!, blockhash, lastValidBlockHeight })
-  instructions.forEach((ix) => tx.add(ix))
+
+  // Normalize writability across all instructions to prevent InvalidWritableAccount errors
+  const writableKeys = new Set<string>()
+  if (wallet.publicKey) writableKeys.add(wallet.publicKey.toBase58())
+  for (const ix of instructions) {
+    for (const k of ix.keys) {
+      if (k.isWritable) writableKeys.add(k.pubkey.toBase58())
+    }
+  }
+
+  for (const ix of instructions) {
+    tx.add({
+      programId: ix.programId,
+      data: ix.data,
+      keys: ix.keys.map((k) => ({
+        pubkey: k.pubkey,
+        isSigner: k.isSigner,
+        isWritable: k.isWritable || writableKeys.has(k.pubkey.toBase58()),
+      })),
+    })
+  }
+
   const signed = await wallet.signTransaction!(tx)
   const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true })
   for (let i = 0; i < 25; i++) {
