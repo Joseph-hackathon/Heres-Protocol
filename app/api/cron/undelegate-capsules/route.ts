@@ -1,3 +1,6 @@
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
 import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'

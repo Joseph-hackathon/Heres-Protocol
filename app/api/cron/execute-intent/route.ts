@@ -1,3 +1,6 @@
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
 /**
  * Cron endpoint: run the unified dead-man's-switch crank pipeline over all registered capsules.
  * Each tick advances every capsule one step: execute (base or ER) -> undelegate -> distribute.

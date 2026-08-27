@@ -1,3 +1,6 @@
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
 import { NextRequest, NextResponse } from 'next/server'
 import { reconcileIntentReminders } from '@/lib/intent-delivery/reminder-service'
 
