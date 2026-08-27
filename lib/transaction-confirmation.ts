@@ -28,6 +28,24 @@ export async function confirmTransactionOrThrow(
   strategy: BlockheightBasedTransactionConfirmationStrategy,
   commitment: Commitment = 'confirmed'
 ): Promise<void> {
+  const conn = connection as any
+  if (typeof conn.getSignatureStatuses === 'function') {
+    const start = Date.now()
+    while (Date.now() - start < 30_000) {
+      await new Promise((r) => setTimeout(r, 800))
+      const res = await conn.getSignatureStatuses([strategy.signature])
+      const s = res?.value?.[0]
+      if (s) {
+        if (s.err) {
+          throw new Error(`Transaction ${strategy.signature} failed: ${JSON.stringify(s.err)}`)
+        }
+        if (['confirmed', 'finalized'].includes(s.confirmationStatus ?? '')) {
+          return
+        }
+      }
+    }
+  }
+
   const confirmation = await connection.confirmTransaction(strategy, commitment)
   if (!confirmation.value.err) return
 

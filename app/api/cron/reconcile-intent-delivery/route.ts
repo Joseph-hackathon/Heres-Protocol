@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { reconcileIntentDeliveries } from '@/lib/intent-delivery/service'
 
-function isAuthorized(request: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret || !secret.trim()) return false
+function isAuthorized(request: NextRequest, secret: string): boolean {
   const auth = request.headers.get('authorization')
-  return auth === `Bearer ${secret}`
+  if (auth === 'Bearer ' + secret) return true
+  const querySecret = request.nextUrl.searchParams.get('secret') ?? request.nextUrl.searchParams.get('key')
+  if (querySecret === secret) return true
+  const customHeader = request.headers.get('x-cron-secret') ?? request.headers.get('x-cron-key')
+  if (customHeader === secret) return true
+  return false
 }
 
 export async function GET(request: NextRequest) {
@@ -17,11 +20,12 @@ export async function POST(request: NextRequest) {
 }
 
 async function handle(request: NextRequest) {
-  if (!process.env.CRON_SECRET || !process.env.CRON_SECRET.trim()) {
+  const secret = process.env.CRON_SECRET
+  if (!secret || !secret.trim()) {
     return NextResponse.json({ error: 'CRON_SECRET is required' }, { status: 503 })
   }
 
-  if (!isAuthorized(request)) {
+  if (!isAuthorized(request, secret.trim())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

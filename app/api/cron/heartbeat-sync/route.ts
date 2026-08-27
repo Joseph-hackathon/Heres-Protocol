@@ -1,13 +1,3 @@
-/**
- * Cron endpoint: off-chain liveness sync. Polls each registered owner's wallet activity via Helius and
- * bumps last_activity (as the relayer / heartbeat_authority) on genuinely new activity. This is the
- * proof-of-life input to the dead-man's-switch: using your wallet keeps you alive. Run on a short
- * interval (e.g. every 1-5 min) via Vercel Cron or external cron.
- *
- * Auth: Bearer CRON_SECRET. Signer: CRANK_WALLET_PRIVATE_KEY (must match NEXT_PUBLIC_CRANK_WALLET_PUBLIC_KEY,
- * which is the default heartbeat_authority + interact-only TEE permission member).
- */
-
 import { NextRequest, NextResponse } from 'next/server'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
@@ -31,6 +21,16 @@ function getRelayerKeypair(): Keypair | null {
   }
 }
 
+function isAuthorized(request: NextRequest, secret: string): boolean {
+  const auth = request.headers.get('authorization')
+  if (auth === 'Bearer ' + secret) return true
+  const querySecret = request.nextUrl.searchParams.get('secret') ?? request.nextUrl.searchParams.get('key')
+  if (querySecret === secret) return true
+  const customHeader = request.headers.get('x-cron-secret') ?? request.headers.get('x-cron-key')
+  if (customHeader === secret) return true
+  return false
+}
+
 export async function GET(request: NextRequest) {
   return handleCron(request)
 }
@@ -40,12 +40,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleCron(request: NextRequest) {
-  const auth = request.headers.get('authorization')
   const secret = process.env.CRON_SECRET
   if (!secret || !secret.trim()) {
     return NextResponse.json({ error: 'CRON_SECRET is required' }, { status: 503 })
   }
-  if (auth !== `Bearer ${secret}`) {
+  if (!isAuthorized(request, secret.trim())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
